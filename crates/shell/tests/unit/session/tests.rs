@@ -2015,6 +2015,69 @@ fn system_status_users_share_admin_view_permissions() {
 }
 
 #[test]
+fn system_status_drag_uses_rendered_column_stride_at_the_gap_boundary() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::User);
+    state.enter_screen(ShellScreen::SystemStatus);
+    state.begin_system_status_dashboard_edit();
+    let draft = state
+        .pages
+        .system_status
+        .system_status_dashboard_draft
+        .as_mut()
+        .unwrap();
+    draft.widgets = vec![storage::SystemStatusWidgetKind::Cpu];
+    draft.wide.placements = vec![storage::WidgetPlacement {
+        kind: storage::SystemStatusWidgetKind::Cpu,
+        column: 0,
+        row: 0,
+        size: storage::SystemStatusWidgetSize::Small,
+    }];
+    let (_, layout) = state.system_status_layout().unwrap();
+    let kind = ui::SystemStatusWidgetKind::Cpu;
+    let card = layout
+        .widgets
+        .iter()
+        .find(|card| card.kind == kind)
+        .unwrap();
+    state.begin_system_status_widget_drag(
+        kind,
+        (card.area.x + layout.column_stride - 1, card.area.y + 1),
+    );
+    assert_eq!(
+        state
+            .pages
+            .system_status
+            .system_status_widget_drag
+            .as_ref()
+            .unwrap()
+            .grab_column,
+        0
+    );
+    state.update_system_status_widget_drag((
+        layout.canvas.x + layout.column_stride * 2 - 1,
+        layout.canvas.y + (ui::LOGICAL_ROW_HEIGHT + ui::LOGICAL_ROW_GAP) * 3 + 1,
+    ));
+    let draft = state
+        .pages
+        .system_status
+        .system_status_dashboard_draft
+        .as_ref()
+        .unwrap();
+    let placement = draft
+        .wide
+        .placements
+        .iter()
+        .find(|placement| placement.kind == storage::SystemStatusWidgetKind::Cpu)
+        .unwrap();
+    assert_eq!((placement.column, placement.row), (1, 3));
+}
+
+#[test]
 fn system_status_drag_changes_only_active_profile_and_clears_capture() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),

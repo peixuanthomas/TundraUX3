@@ -15,14 +15,15 @@ pub(super) fn render_overview(
 ) {
     let metrics = &model.dashboard.overview_metrics;
     if metrics.is_empty() {
-        EmptyState::new(i18n::tr!("ui-system-status-loading-system-metrics")).render_frame(
-            frame,
-            layout.canvas,
-            context,
-        );
+        EmptyState::new(format!(
+            "{} {}",
+            crate::components::BusyIndicator::from_motion(context.motion).symbol(),
+            i18n::tr!("ui-system-status-loading-system-metrics")
+        ))
+        .render_frame(frame, layout.canvas, context);
         return;
     }
-    let [summary, grid] =
+    let [summary, _] =
         Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(layout.canvas);
     if let Some(overview) = model.detail_widget(SystemStatusDetail::Overview) {
         // These rows are supplied by the shell with labels resolved in the same snapshot.
@@ -47,20 +48,50 @@ pub(super) fn render_overview(
             summary,
         );
     }
+    for (metric, area) in metrics
+        .iter()
+        .zip(metric_areas(layout.canvas, metrics.len()))
+    {
+        render_metric(frame, area, metric, context);
+    }
+}
+
+fn metric_areas(canvas: Rect, count: usize) -> Vec<Rect> {
+    let [_, grid] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(canvas);
     let columns = if grid.width >= 104 || (grid.width >= 72 && grid.height < 20) {
         4
     } else {
         2
     };
-    let rows = metrics.len().div_ceil(columns);
-    let row_areas = Layout::vertical(vec![Constraint::Ratio(1, rows as u32); rows]).split(grid);
-    for (row, chunk) in metrics.chunks(columns).enumerate() {
-        let areas = Layout::horizontal(vec![Constraint::Ratio(1, columns as u32); columns])
-            .split(row_areas[row]);
-        for (metric, area) in chunk.iter().zip(areas.iter()) {
-            render_metric(frame, *area, metric, context);
-        }
+    let rows = count.div_ceil(columns).max(1);
+    let row_areas = Layout::vertical(vec![Constraint::Ratio(1, rows as u32); rows])
+        .spacing(1)
+        .split(grid);
+    row_areas
+        .iter()
+        .flat_map(|row| {
+            Layout::horizontal(vec![Constraint::Ratio(1, columns as u32); columns])
+                .spacing(2)
+                .split(*row)
+                .to_vec()
+        })
+        .take(count)
+        .collect()
+}
+
+pub(super) fn busy_visible(canvas: Rect, metrics: &[SystemStatusWidgetViewModel]) -> bool {
+    if canvas.is_empty() {
+        return false;
     }
+    metrics.is_empty()
+        || metrics
+            .iter()
+            .zip(metric_areas(canvas, metrics.len()))
+            .any(|(metric, area)| {
+                metric.state == SystemStatusWidgetState::Loading
+                    && area.width >= 3
+                    && area.height >= 3
+            })
 }
 
 fn render_metric(
@@ -87,7 +118,7 @@ fn render_metric(
     } else {
         title
     };
-    let surface = Surface::new().titled(title).bordered(true).raised(true);
+    let surface = Surface::new().titled(title);
     surface.render_frame(frame, area, context);
     let inner = surface.inner(area);
     if inner.is_empty() {
@@ -95,7 +126,11 @@ fn render_metric(
     }
     let placeholder = match &metric.state {
         SystemStatusWidgetState::Loading => Some((
-            i18n::tr!("ui-system-status-loading"),
+            format!(
+                "{} {}",
+                crate::components::BusyIndicator::from_motion(context.motion).symbol(),
+                i18n::tr!("ui-system-status-loading")
+            ),
             i18n::tr!("ui-system-status-waiting-for-a-sample"),
         )),
         SystemStatusWidgetState::Unavailable { message } => {

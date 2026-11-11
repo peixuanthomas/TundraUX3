@@ -1,6 +1,6 @@
 use super::model::*;
 use crate::components::{Dialog, DialogAction, ScrollbarOrientation};
-use crate::screens::shell::{inset_rect, line_in_rect, rect_contains, usize_to_u16};
+use crate::screens::shell::{line_in_rect, rect_contains, usize_to_u16};
 use crate::{
     DiagnosticsContentLayout, DiagnosticsHitTarget, DiagnosticsRepairDialogLayout,
     diagnostics_content_hit_test, diagnostics_content_layout, diagnostics_repair_dialog_hit_test,
@@ -64,6 +64,7 @@ pub struct SystemStatusLayout {
     pub diagnostics_button: Rect,
     pub profile: SystemStatusDashboardProfile,
     pub column_count: u16,
+    pub column_stride: u16,
     pub widgets: Vec<SystemStatusWidgetLayout>,
     pub picker_items: Vec<SystemStatusRowLayout>,
     pub picker_viewport_start: usize,
@@ -118,7 +119,7 @@ pub(super) fn system_status_picker_area(
 
 pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> SystemStatusLayout {
     let panel = main;
-    let inner = inset_rect(panel, 1);
+    let inner = crate::components::Surface::new().titled("").inner(panel);
     let header = line_in_rect(inner, inner.y);
     let footer_height = match model.route {
         SystemStatusRoute::Detail(detail) if detail.diagnostics_tab().is_some() => {
@@ -141,14 +142,8 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         inner.width,
         footer.y.saturating_sub(header.bottom()),
     );
-    let compact_processes = model.route == SystemStatusRoute::Detail(SystemStatusDetail::Processes)
-        && content_panel.height < 4;
-    let canvas = if compact_processes {
-        content_panel
-    } else {
-        inset_rect(content_panel, 1)
-    };
-    let wide = content_panel.width.saturating_sub(7) / 8 >= 10;
+    let canvas = content_panel;
+    let wide = content_panel.width.saturating_sub(14) / 8 >= 10;
     let profile = if wide {
         SystemStatusDashboardProfile::Wide
     } else {
@@ -191,8 +186,9 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
     let grid_width = canvas
         .width
         .saturating_sub(if dashboard_scrollbar.is_some() { 2 } else { 0 });
-    let gaps = column_count.saturating_sub(1);
+    let gaps = column_count.saturating_sub(1).saturating_mul(2);
     let cell_w = grid_width.saturating_sub(gaps) / column_count;
+    let column_stride = cell_w.saturating_add(2);
     let rect_for = |column: u16, row: u16, size: SystemStatusWidgetSize| {
         let stride = i32::from(LOGICAL_ROW_HEIGHT + LOGICAL_ROW_GAP);
         let full_y = i32::from(canvas.y) + (i32::from(row) - i32::from(visible_row_start)) * stride;
@@ -211,11 +207,13 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
             .min(i32::from(canvas.bottom()))
             .max(clipped_y);
         Rect::new(
-            canvas.x.saturating_add(column.saturating_mul(cell_w + 1)),
+            canvas
+                .x
+                .saturating_add(column.saturating_mul(column_stride)),
             u16::try_from(clipped_y).unwrap_or(canvas.y),
             size.cols()
                 .saturating_mul(cell_w)
-                .saturating_add(size.cols().saturating_sub(1)),
+                .saturating_add(size.cols().saturating_sub(1).saturating_mul(2)),
             u16::try_from(clipped_bottom.saturating_sub(clipped_y)).unwrap_or(0),
         )
         .intersection(canvas)
@@ -347,7 +345,7 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
     let process_sort_headers =
         if detail == Some(SystemStatusDetail::Processes) && !rows_area.is_empty() {
             let columns = Layout::horizontal(PROCESS_COLUMN_WIDTHS)
-                .spacing(1)
+                .spacing(2)
                 .flex(Flex::Start)
                 .split(Rect::new(rows_area.x, rows_area.y, rows_area.width, 1));
             vec![
@@ -499,6 +497,7 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         diagnostics_button,
         profile,
         column_count,
+        column_stride,
         widgets,
         picker_items,
         picker_viewport_start,
