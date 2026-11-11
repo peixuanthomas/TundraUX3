@@ -617,31 +617,117 @@ def check_permission_draft(master, slave, output, child, path):
     print("PASS: physical Space and Enter toggle permission drafts; cancel preserves draft and discard leaves metadata unchanged")
 
 
-def check_animation_settings(master, output, child):
+def check_animation_settings(master, output, child, cli, env):
+    """Read current control values while exercising real keyboard input."""
+    def node(frame, suffix):
+        return next((item for item in frame["nodes"]
+                     if item["id"].endswith("/" + suffix) and item["actionable"]), None)
+
+    def value(item):
+        return item["text"].replace("_", "").strip()
+
+    def wait_frame(description, predicate):
+        deadline = time.monotonic() + 5.0
+        while True:
+            frame = control_snapshot(master, output, child, cli, env)
+            if predicate(frame):
+                return frame
+            if time.monotonic() >= deadline:
+                focused = [(item["id"], item["text"]) for item in frame["nodes"] if item["focused"]]
+                raise SystemExit(f"{description}; page={frame['page']}, focused={focused}")
+            read_available(master, output, 0.05)
+
+    def expect_value(suffix, expected):
+        return wait_frame(f"{suffix} did not show {expected}",
+                          lambda frame: (item := node(frame, suffix)) is not None and value(item) == expected)
+
+    def select_field(suffix):
+        for _ in range(32):
+            frame = control_snapshot(master, output, child, cli, env)
+            if (item := node(frame, suffix)) is not None and item["focused"]:
+                return
+            os.write(master, b"\x1b[B")
+        raise SystemExit(f"Keyboard navigation did not reach {suffix}")
+
+    fields = [f"management.field.settings.animation.phase-{index}" for index in range(9)]
+    advanced = "settings.field.animationadvanced"
+    speed = "settings.field.animationspeed"
+    number = "management.field.settings.number.number"
+
+    def expect_phases(expected):
+        return wait_frame(f"Animation draft did not show all nine values {expected}",
+                          lambda frame: all((item := node(frame, suffix)) is not None
+                                            and value(item) == str(expected[index])
+                                            for index, suffix in enumerate(fields)))
+
+    def close_draft():
+        os.write(master, b"\x1b")
+        wait_frame("Animation draft did not close", lambda frame: node(frame, advanced) is not None)
+
+    def open_draft():
+        select_field(advanced)
+        os.write(master, b"\r")
+        return wait_frame("Animation timing did not expose all nine fields",
+                          lambda frame: all(node(frame, suffix) is not None for suffix in fields))
+
+    def reset_draft(expected):
+        os.write(master, b"\t" * 9)
+        wait_frame("Tab did not reach Restore animation defaults",
+                   lambda frame: (item := node(frame, "management.reset.settings.animation")) is not None
+                   and item["focused"])
+        os.write(master, b"\r")
+        expect_phases(expected)
+
     os.write(master, b"\x1b[F\x1b[D\r")
-    if not wait_for_painted_text(master, output, "Animation speed", child):
-        raise SystemExit("Settings did not paint the animation percentage")
-    os.write(master, b"\x1b[B" * 5 + b"\r\x1b[C\r\x1b[B\r")
-    if not wait_for_painted_text(master, output, "Acceleration", child):
-        raise SystemExit("Animation advanced options did not open as a dialog")
-    os.write(master, b"\r41\r")
-    if not wait_for_painted_text(master, output, "41 ms", child):
-        raise SystemExit("Page acceleration did not increase by one millisecond")
-    os.write(master, b"\x1b[F\x1b[A\r\x1b")
-    wait_for_output_quiet(master, output, child, quiet_period=0.2)
-    os.write(master, b"\x1b[H" + b"\x1b[B" * 5)
-    if not wait_for_painted_text(master, output, "100%", child):
-        raise SystemExit("Restore animation defaults did not restore the percentage")
-    os.write(master, b"\x1b[B\r")
-    if not wait_for_painted_text(master, output, "40 ms", child):
-        raise SystemExit("Restore animation defaults did not restore phase times")
+    wait_frame("Settings did not expose its animation controls", lambda frame: node(frame, speed) is not None)
+    select_field(speed)
+    os.write(master, b"\r")
+    expect_value(number, "100")
+    os.write(master, b"+")
+    expect_value(number, "125")
+    os.write(master, b"\x1b[21~")
+    expect_value(speed, "125%")
+
+    frame = open_draft()
+    defaults = tuple(int(value(node(frame, suffix))) for suffix in fields)
+    os.write(master, b"\x01999")
+    expect_value(fields[0], "999")
+    close_draft()
+    open_draft()
+    expect_phases(defaults)
+
+    os.write(master, b"\x0199999\x1b[21~")
+    wait_frame("Invalid animation duration was not rejected",
+               lambda frame: (item := node(frame, fields[0])) is not None
+               and item["focused"] and value(item) == "99999"
+               and any("2000" in line for line in frame["lines"]))
+    changed = (41, 82, 43, 46, 92, 47, 31, 62, 33)
+    for index, suffix in enumerate(fields):
+        wait_frame(f"Tab did not focus phase {index}",
+                   lambda frame: (item := node(frame, suffix)) is not None and item["focused"])
+        os.write(master, b"\x01" + str(changed[index]).encode())
+        expect_value(suffix, str(changed[index]))
+        if index < 8:
+            os.write(master, b"\t")
+    os.write(master, b"\x1b[21~")
+    wait_frame("Saving all animation phases did not close the form", lambda frame: node(frame, advanced) is not None)
+    open_draft()
+    expect_phases(changed)
+
+    reset_draft(defaults)
+    close_draft()
+    expect_value(speed, "125%")
+    open_draft()
+    expect_phases(changed)
+    reset_draft(defaults)
+    os.write(master, b"\x1b[21~")
+    expect_value(speed, "100%")
+    open_draft()
+    expect_phases(defaults)
+    close_draft()
     os.write(master, b"\x1b")
-    wait_for_output_quiet(master, output, child, quiet_period=0.2)
-    os.write(master, b"\x1b")
-    if not wait_for_painted_text(master, output, "Launcher", child):
-        raise SystemExit("Animation settings did not return to Home")
-    wait_for_output_quiet(master, output, child, quiet_period=0.2)
-    print("PASS: animation number dialogs confirm arrow and typed values and restore phase times and percentage")
+    wait_frame("Animation settings did not return to Home", lambda frame: frame["page"] == "Home")
+    print("PASS: keyboard numeric input and nine animation phases save, cancel, validate, and reset together")
 
 
 def check_system_settings_environment(master, output, child):
@@ -966,7 +1052,7 @@ def main() -> int:
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
             raise SystemExit("Home did not settle before pointer regression")
 
-        check_animation_settings(master, output, child)
+        check_animation_settings(master, output, child, cli, env)
         check_editor_resize(master, slave, output, child, isolated)
         check_system_settings_environment(master, output, child)
         check_status_details(master, output, child, cli, env)
