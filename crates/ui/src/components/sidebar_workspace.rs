@@ -1,4 +1,7 @@
-use ratatui::{Frame, layout::Rect};
+use ratatui::{
+    Frame,
+    layout::{HorizontalAlignment, Rect},
+};
 
 use super::Button;
 use crate::RenderContext;
@@ -38,9 +41,9 @@ pub struct SidebarWorkspaceLayout {
 }
 
 impl SidebarWorkspaceLayout {
-    /// Spaced list items stay compact when fewer than two three-row items fit.
-    pub const fn list_item_height(available_height: u16) -> u16 {
-        if available_height >= 6 { 3 } else { 1 }
+    /// Ordinary navigation and list items occupy one terminal row.
+    pub const fn list_item_height(_available_height: u16) -> u16 {
+        1
     }
 
     pub fn new(area: Rect, labels: &[String]) -> Self {
@@ -53,16 +56,13 @@ impl SidebarWorkspaceLayout {
     }
 
     fn layout(area: Rect, labels: &[String], active: Option<usize>) -> Self {
-        let capacity =
-            usize::from((area.height / 3).max(u16::from(area.height > 0))).min(labels.len());
-        let vertical = area.width >= 92
-            && capacity > 0
-            && (active.is_some() || area.height >= labels.len() as u16 * 3);
+        let capacity = usize::from(area.height).min(labels.len());
+        let vertical = area.width >= 92 && capacity > 0;
         let mut navigation = Vec::new();
         let content = if vertical {
             let width = labels
                 .iter()
-                .map(|label| super::terminal_width(label) as u16 + 7)
+                .map(|label| (super::terminal_width(label) as u16).saturating_add(2))
                 .max()
                 .unwrap_or(0)
                 .min(area.width / 3);
@@ -70,46 +70,36 @@ impl SidebarWorkspaceLayout {
                 .unwrap_or(0)
                 .saturating_sub(capacity - 1)
                 .min(labels.len() - capacity);
-            let height = (area.height / capacity as u16).min(5);
             for index in 0..labels.len() {
                 if index < start || index >= start + capacity {
                     navigation.push(Rect::default());
                     continue;
                 }
-                navigation.push(Rect::new(
-                    area.x,
-                    area.y + (index - start) as u16 * height,
-                    width.saturating_sub(1),
-                    if height < 3 {
-                        height
-                    } else {
-                        height.saturating_sub(1).max(3)
-                    },
-                ));
+                navigation.push(Rect::new(area.x, area.y + (index - start) as u16, width, 1));
             }
             Rect::new(
-                area.x + width,
+                area.x + width + 2,
                 area.y,
-                area.width.saturating_sub(width),
+                area.width.saturating_sub(width + 2),
                 area.height,
             )
         } else {
             let mut x = area.x;
             let mut y = area.y;
             for label in labels {
-                let width = (super::terminal_width(label) as u16 + 4).min(area.width);
+                let width = (super::terminal_width(label) as u16 + 2).min(area.width);
                 if x > area.x && x.saturating_add(width) > area.right() {
                     x = area.x;
                     y = y.saturating_add(1);
                 }
                 navigation
                     .push(Rect::new(x, y, width, u16::from(y < area.bottom())).intersection(area));
-                x = x.saturating_add(width);
+                x = x.saturating_add(width).saturating_add(2);
             }
             let top = if labels.is_empty() {
                 area.y
             } else {
-                y.saturating_add(1).min(area.bottom())
+                y.saturating_add(2).min(area.bottom())
             };
             Rect::new(area.x, top, area.width, area.bottom().saturating_sub(top))
         };
@@ -125,16 +115,23 @@ impl SidebarWorkspaceLayout {
             return (Rect::default(), area);
         }
         if area.width >= 74 {
-            let width = area.width * 3 / 5;
+            let available = area.width.saturating_sub(2);
+            let width = available * 3 / 5;
             (
                 Rect::new(area.x, area.y, width, area.height),
-                Rect::new(area.x + width, area.y, area.width - width, area.height),
+                Rect::new(area.x + width + 2, area.y, available - width, area.height),
             )
         } else {
-            let height = area.height / 2;
+            let available = area.height.saturating_sub(1);
+            let height = available / 2;
             (
                 Rect::new(area.x, area.y, area.width, height),
-                Rect::new(area.x, area.y + height, area.width, area.height - height),
+                Rect::new(
+                    area.x,
+                    area.y + height + u16::from(area.height > 0),
+                    area.width,
+                    available - height,
+                ),
             )
         }
     }
@@ -153,19 +150,20 @@ impl SidebarWorkspaceLayout {
             }
             let mut button = button
                 .clone()
-                .with_centered_label(true)
+                .with_label_alignment(HorizontalAlignment::Left)
                 .with_bracketed_label(false)
+                .with_capture_name(button.label.clone())
                 .with_current(index == active);
             button.label = format!(
                 "{} {}",
-                if index == active { "->" } else { "  " },
+                if button.state.focused && theme.keyboard_focus_visible() {
+                    ">"
+                } else {
+                    " "
+                },
                 button.label
             );
-            if self.vertical && area.height >= 3 {
-                button.render_frame(frame, *area, &theme);
-            } else {
-                button.render_borderless_frame(frame, *area, &theme);
-            }
+            button.render_borderless_frame(frame, *area, &theme);
         }
     }
 }

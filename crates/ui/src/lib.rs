@@ -59,6 +59,7 @@ pub mod ui_test;
 pub use animate;
 
 pub use assets::*;
+pub use components::BusyIndicator;
 pub use editor_media::{
     EDITOR_IMAGE_MAX_PIXELS, EditorGraphicsProtocol, EditorImagePicker, EditorMediaError,
     PreparedEditorImage, TerminalGraphicsProbe, TerminalGraphicsProbeStatus,

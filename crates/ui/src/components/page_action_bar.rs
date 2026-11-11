@@ -31,7 +31,7 @@ impl PageAction {
             enabled: true,
             emphasis: ButtonEmphasis::Normal,
             latched: false,
-            bracketed_label: true,
+            bracketed_label: false,
         }
     }
 

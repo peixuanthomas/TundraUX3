@@ -47,7 +47,7 @@ impl<'a> UpdateActivity<'a> {
     }
 
     pub fn height(&self) -> u16 {
-        if self.0.show_build_details { 17 } else { 3 }
+        if self.0.show_build_details { 15 } else { 2 }
     }
 
     pub fn render_scrolled(
@@ -57,26 +57,17 @@ impl<'a> UpdateActivity<'a> {
         y: i32,
         context: &RenderContext,
     ) {
-        let progress_height = if self.0.show_build_details { 4 } else { 3 };
-        if let Some((area, _)) = visible_scrolled_rect(clip.x, y, clip.width, progress_height, clip)
-        {
-            Surface::new()
-                .titled(i18n::tr!("ui-components-progress-padded"))
-                .bordered(true)
-                .raised(true)
-                .render_frame(frame, area, context);
-        }
+        let progress_height = if self.0.show_build_details { 3 } else { 2 };
+        Surface::new()
+            .titled(i18n::tr!("ui-components-progress-padded"))
+            .render_scrolled_frame(frame, clip, y, progress_height, context);
         for (index, meter) in std::iter::once(&self.0.download)
             .chain(self.0.show_build_details.then_some(&self.0.compilation))
             .enumerate()
         {
-            if let Some((area, _)) = visible_scrolled_rect(
-                clip.x.saturating_add(1),
-                y + 1 + index as i32,
-                clip.width.saturating_sub(2),
-                1,
-                clip,
-            ) {
+            if let Some((area, _)) =
+                visible_scrolled_rect(clip.x, y + 1 + index as i32, clip.width, 1, clip)
+            {
                 frame.render_widget(
                     ProgressGauge::new(
                         meter.label.render_current(),
@@ -86,7 +77,11 @@ impl<'a> UpdateActivity<'a> {
                                 .unwrap_or(meter.percent.unwrap_or(0).min(100) * 100)
                                 .min(10_000),
                         ) / 10_000.0,
-                        context.theme.accent,
+                        if meter.percent.is_some_and(|percent| percent >= 100) {
+                            context.theme.success
+                        } else {
+                            context.theme.accent
+                        },
                         context.theme.surface,
                         &context.theme,
                     ),
@@ -97,21 +92,13 @@ impl<'a> UpdateActivity<'a> {
         if !self.0.show_build_details {
             return;
         }
-        let log_y = y + 5;
-        if let Some((area, _)) = visible_scrolled_rect(clip.x, log_y, clip.width, 12, clip) {
-            Surface::new()
-                .titled(i18n::tr!("ui-components-live-output-padded"))
-                .bordered(true)
-                .raised(true)
-                .render_frame(frame, area, context);
-        }
-        if let Some((area, skipped)) = visible_scrolled_rect(
-            clip.x.saturating_add(1),
-            log_y + 1,
-            clip.width.saturating_sub(2),
-            10,
-            clip,
-        ) {
+        let log_y = y + 4;
+        Surface::new()
+            .titled(i18n::tr!("ui-components-live-output-padded"))
+            .render_scrolled_frame(frame, clip, log_y, 11, context);
+        if let Some((area, skipped)) =
+            visible_scrolled_rect(clip.x, log_y + 1, clip.width, 10, clip)
+        {
             let rows = self
                 .0
                 .output

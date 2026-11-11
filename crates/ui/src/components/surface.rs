@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, Borders, Widget};
 
 use crate::{RenderContext, TundraTheme};
 
-/// A neutral Glacier Night container. Accent colour is intentionally excluded
+/// A neutral container. Accent colour is intentionally excluded
 /// from normal surfaces; it is reserved for focus and interaction state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Surface {
@@ -59,12 +59,19 @@ impl Surface {
     }
 
     pub fn inner(&self, area: Rect) -> Rect {
-        if self.bordered && area.width > 2 && area.height > 2 {
+        if self.bordered {
             Rect::new(
-                area.x.saturating_add(1),
-                area.y.saturating_add(1),
+                area.x.saturating_add(area.width.min(1)),
+                area.y.saturating_add(area.height.min(1)),
                 area.width.saturating_sub(2),
                 area.height.saturating_sub(2),
+            )
+        } else if self.title.is_some() {
+            Rect::new(
+                area.x,
+                area.y.saturating_add(area.height.min(1)),
+                area.width,
+                area.height.saturating_sub(1),
             )
         } else {
             area
@@ -158,16 +165,23 @@ impl Surface {
                 );
         }
         if let Some(title) = &self.title {
-            block = block.title(title.as_str()).title_style(
-                Style::default()
-                    .fg(tokens.accent)
-                    .bg(if self.bordered {
-                        tokens.canvas
-                    } else {
-                        style.bg.unwrap_or(tokens.surface)
-                    })
-                    .add_modifier(Modifier::BOLD),
-            );
+            let mut title_style = Style::default()
+                .fg(tokens.text)
+                .bg(if self.bordered {
+                    tokens.canvas
+                } else {
+                    style.bg.unwrap_or(tokens.surface)
+                })
+                .add_modifier(Modifier::BOLD);
+            if self.focused
+                && context
+                    .buttons
+                    .as_ref()
+                    .is_none_or(|buttons| buttons.keyboard_focus_visible)
+            {
+                title_style = title_style.add_modifier(Modifier::UNDERLINED);
+            }
+            block = block.title(title.as_str()).title_style(title_style);
         }
         block
     }

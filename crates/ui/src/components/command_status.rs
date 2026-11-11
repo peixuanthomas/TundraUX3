@@ -17,7 +17,9 @@ impl CommandStatus {
             Self::Pending => ("○", theme.muted_style()),
             Self::Succeeded => (
                 "●",
-                Style::default().fg(theme.accent_color).bg(theme.background),
+                Style::default()
+                    .fg(theme.tokens().success)
+                    .bg(theme.background),
             ),
             Self::Failed => ("×", theme.error_style()),
         };

@@ -10,7 +10,7 @@ use crate::TundraTheme;
 
 use super::{
     ComponentEvent, ComponentId, ComponentState, ComponentTone, InputEvent, Key, MouseButton,
-    MouseKind, contains_point, inner_area, item_style, tone_color,
+    MouseKind, Surface, contains_point, item_style, tone_color,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -285,7 +285,7 @@ impl List {
     }
 
     fn item_index_at(&self, area: Rect, column: u16, row: u16, bordered: bool) -> Option<usize> {
-        let inner = if bordered { inner_area(area) } else { area };
+        let inner = self.inner(area, bordered);
         if !contains_point(inner, column, row) {
             return None;
         }
@@ -309,13 +309,13 @@ impl List {
                     None => item.label.clone(),
                 };
                 let mut style = item_style(
-                    self.state.focused,
+                    self.state.focused && self.selected == Some(index),
                     self.hovered == Some(index),
                     false,
                     item.disabled,
                     theme,
                 );
-                if !item.disabled && self.selected != Some(index) {
+                if !item.disabled && self.selected != Some(index) && self.hovered != Some(index) {
                     style = style.fg(tone_color(item.tone, theme));
                 }
                 RatatuiListItem::new(label).style(style)
@@ -325,7 +325,7 @@ impl List {
             .and_then(|index| self.items.get(index))
             .is_some_and(|item| item.disabled);
         let widget = RatatuiList::new(items)
-            .style(theme.raised_style())
+            .style(theme.surface_style())
             .highlight_symbol(self.highlight_symbol.as_deref().unwrap_or(""))
             .highlight_spacing(if self.highlight_symbol.is_some() {
                 HighlightSpacing::Always
@@ -340,7 +340,7 @@ impl List {
                 theme,
             ));
 
-        if !bordered {
+        if !bordered && self.title.is_none() {
             return widget;
         }
 
@@ -348,14 +348,14 @@ impl List {
             Some(title) => theme
                 .block()
                 .title(title)
-                .title_style(if self.state.focused {
-                    theme.title_style()
+                .title_style(theme.title_style())
+                .borders(if bordered {
+                    Borders::ALL
                 } else {
-                    theme.raised_style()
+                    Borders::NONE
                 })
-                .borders(Borders::ALL)
                 .border_style(theme.selectable_border_style(self.state.focused))
-                .style(theme.raised_style()),
+                .style(theme.surface_style()),
             None => theme
                 .block()
                 .borders(Borders::ALL)
@@ -390,7 +390,7 @@ impl List {
             self.title.as_deref().unwrap_or(""),
             area,
         );
-        let inner = if bordered { inner_area(area) } else { area };
+        let inner = self.inner(area, bordered);
         let start = self.viewport_offset(area, bordered);
         for (index, item) in self
             .items
@@ -415,11 +415,7 @@ impl List {
     }
 
     fn viewport_offset(&self, area: Rect, bordered: bool) -> usize {
-        let height = if bordered {
-            inner_area(area).height as usize
-        } else {
-            area.height as usize
-        };
+        let height = usize::from(self.inner(area, bordered).height);
         if height == 0 {
             return 0;
         }
@@ -429,6 +425,12 @@ impl List {
                 .map(|selected| Self::automatic_viewport_start(selected, height))
                 .unwrap_or(0)
         })
+    }
+
+    fn inner(&self, area: Rect, bordered: bool) -> Rect {
+        let mut surface = Surface::new().bordered(bordered);
+        surface.title = self.title.clone();
+        surface.inner(area)
     }
 }
 

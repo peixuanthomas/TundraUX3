@@ -1,4 +1,4 @@
-//! Glacier Night visual tokens and the compatibility theme used by existing
+//! Neutral terminal visual tokens and the compatibility theme used by existing
 //! screens. New components consume [`ThemeTokens`]; the small `TundraTheme`
 //! facade keeps older view models source-compatible while they are migrated.
 
@@ -10,11 +10,10 @@ use ratatui::widgets::{Block, BorderType};
 /// Animated frames target 30 FPS; input-driven redraws keep their own deadlines.
 pub const ANIMATION_FRAME_INTERVAL: Duration = Duration::from_nanos(33_333_334);
 
-/// Spacing for the selected Spring card composition. Small terminals retain
-/// compact geometry rather than spending their content area on decoration.
+/// Shared compact spacing for page compositions.
 pub struct SpringStyle;
 impl SpringStyle {
-    pub const CARD_GAP: u16 = 2;
+    pub const CARD_GAP: u16 = 1;
     pub const PAGE_INSET: u16 = 1;
 }
 
@@ -95,7 +94,7 @@ impl RenderCapabilities {
     }
 }
 
-/// Complete Glacier Night colour vocabulary.
+/// Complete terminal colour vocabulary.
 ///
 /// The names are semantic rather than widget-specific, allowing a screen to
 /// state intent without inventing another local palette.
@@ -130,30 +129,30 @@ impl ThemeTokens {
             .bg(background)
     }
 
-    /// The fixed Glacier Night base palette.
+    /// The neutral base palette. The established name remains source-compatible.
     pub const fn glacier_night() -> Self {
         Self {
             border_shape: BorderShape::Rounded,
-            canvas: Color::Rgb(0x07, 0x11, 0x16),
+            canvas: Color::Rgb(0x10, 0x10, 0x10),
             editor_canvas: Color::Black,
-            surface: Color::Rgb(0x0D, 0x1B, 0x22),
-            raised: Color::Rgb(0x13, 0x26, 0x2F),
-            border: Color::Rgb(0x29, 0x43, 0x4E),
-            text: Color::Rgb(0xE6, 0xF1, 0xF4),
-            muted: Color::Rgb(0x8E, 0xA7, 0xB0),
+            surface: Color::Rgb(0x18, 0x18, 0x18),
+            raised: Color::Rgb(0x24, 0x24, 0x24),
+            border: Color::Rgb(0x3A, 0x3A, 0x3A),
+            text: Color::Rgb(0xE6, 0xE6, 0xE6),
+            muted: Color::Rgb(0x99, 0x99, 0x99),
             accent: Color::Rgb(0x63, 0xD3, 0xE5),
-            accent_soft: Color::Rgb(0x15, 0x3B, 0x46),
+            accent_soft: Color::Rgb(0x2F, 0x50, 0x56),
             accent_strong: Color::Rgb(0x76, 0xE1, 0xF1),
             focus: Color::Rgb(0xA4, 0xF1, 0xFA),
             success: Color::Rgb(0x79, 0xD6, 0x9B),
             warning: Color::Rgb(0xEB, 0xCB, 0x78),
             danger: Color::Rgb(0xF2, 0x7D, 0x89),
-            shadow: Color::Rgb(0x02, 0x06, 0x08),
+            shadow: Color::Rgb(0x08, 0x08, 0x08),
         }
     }
 
     /// Applies a user accent while deriving its dependent roles. The neutral
-    /// Glacier colours remain fixed, so a preference cannot turn ordinary
+    /// surface colours remain fixed, so a preference cannot turn ordinary
     /// cards into large accent-coloured fields.
     pub fn with_accent(mut self, accent: Color) -> Self {
         self.accent = accent;
@@ -895,7 +894,7 @@ impl TundraTheme {
     pub fn title_style(&self) -> Style {
         let tokens = self.tokens();
         Style::default()
-            .fg(tokens.accent)
+            .fg(tokens.text)
             .bg(tokens.canvas)
             .add_modifier(Modifier::BOLD)
     }

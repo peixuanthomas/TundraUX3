@@ -95,14 +95,15 @@ impl Picker {
             &["click", "key"],
         );
         let tokens = context.theme;
+        let focused = self.state.focused && context.compatibility_theme().keyboard_focus_visible();
         let selected = self.selected_value().unwrap_or("—");
-        let marker = if self.state.focused { "‹ " } else { "  " };
-        let suffix = if self.state.focused { " ›" } else { "  " };
+        let marker = if focused { "‹ " } else { "  " };
+        let suffix = if focused { " ›" } else { "  " };
         let style = if self.state.disabled {
             ratatui::style::Style::default()
                 .fg(tokens.muted)
                 .bg(tokens.surface)
-        } else if self.state.focused {
+        } else if focused {
             ratatui::style::Style::default()
                 .fg(tokens.focus)
                 .bg(tokens.accent_soft)
@@ -118,11 +119,7 @@ impl Picker {
                 .borders(Borders::ALL)
                 .border_style(
                     ratatui::style::Style::default()
-                        .fg(if self.state.focused {
-                            tokens.focus
-                        } else {
-                            tokens.border
-                        })
+                        .fg(if focused { tokens.focus } else { tokens.border })
                         .bg(tokens.surface),
                 );
         }

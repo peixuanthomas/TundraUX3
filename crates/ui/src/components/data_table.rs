@@ -3,13 +3,13 @@ use ratatui::buffer::Buffer;
 use ratatui::buffer::CellWidth;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Borders, Paragraph, Widget};
+use ratatui::widgets::{Paragraph, Widget};
 
 use crate::RenderContext;
 
 use super::{
     ComponentEvent, ComponentId, ComponentState, ComponentTone, InputEvent, Key, MouseButton,
-    MouseKind, contains_point,
+    MouseKind, Surface, contains_point, interactive_style,
 };
 
 /// A lightweight, component-owned table suitable for selectable data rows.
@@ -56,7 +56,7 @@ impl DataTable {
             viewport_start: 0,
             show_header: true,
             row_tones: Vec::new(),
-            bordered: true,
+            bordered: false,
             interactive: true,
             capture_focused_row: None,
             row_ids: Vec::new(),
@@ -149,22 +149,15 @@ impl DataTable {
             area,
         );
         let tokens = context.theme;
-        let mut block = Block::default()
-            .style(Style::default().fg(tokens.text).bg(tokens.surface))
-            .border_style(Style::default().fg(tokens.border).bg(tokens.surface));
-        if self.bordered {
-            block = block.borders(Borders::ALL);
-        }
-        if let Some(title) = &self.title {
-            block = block.title(title.as_str());
-        }
-        let inner = block.inner(area);
-        block.render(area, buffer);
+        let surface = self.surface();
+        let inner = surface.inner(area);
+        surface.render(area, buffer, context);
         if inner.height == 0 || inner.width == 0 {
             return;
         }
 
-        let row_tokens = context.compatibility_theme().tokens();
+        let theme = context.compatibility_theme();
+        let row_tokens = theme.tokens();
         let capture = crate::automation::enabled();
         let header_height = u16::from(self.show_header);
         if self.show_header {
@@ -182,8 +175,8 @@ impl DataTable {
             .alignment(HorizontalAlignment::Left)
             .style(
                 Style::default()
-                    .fg(tokens.muted)
-                    .bg(tokens.raised)
+                    .fg(tokens.text)
+                    .bg(tokens.surface)
                     .add_modifier(Modifier::BOLD),
             )
             .render(Rect::new(inner.x, inner.y, inner.width, 1), buffer);
@@ -230,18 +223,17 @@ impl DataTable {
                 },
             );
             self.capture_cells("cell", "cell", row, row_area);
-            let style = if selected {
-                Style::default().fg(tokens.accent).bg(tokens.accent_soft)
-            } else {
-                Style::default()
+            let mut style = interactive_style(state, &theme);
+            if !selected && !state.focused && !state.disabled {
+                style = style
                     .fg(self
                         .row_tones
                         .get(index)
                         .copied()
                         .unwrap_or_default()
                         .color(&row_tokens))
-                    .bg(tokens.surface)
-            };
+                    .bg(tokens.surface);
+            }
             Paragraph::new(join_row(row, inner.width, self.column_widths.as_deref()))
                 .alignment(HorizontalAlignment::Left)
                 .style(style)
@@ -269,6 +261,7 @@ impl DataTable {
             return;
         }
         let mut x = area.x;
+        let last = cells.len().saturating_sub(1);
         for (index, (cell, width)) in cells
             .iter()
             .zip(column_widths(
@@ -278,18 +271,23 @@ impl DataTable {
             ))
             .enumerate()
         {
-            let width = width.min(area.right().saturating_sub(x));
+            let content_width = if self.column_widths.is_some() && index < last {
+                width.saturating_sub(2)
+            } else {
+                width
+            };
+            let content_width = content_width.min(area.right().saturating_sub(x));
             crate::automation::control(
                 &format!("{prefix}.{index}"),
                 role,
                 cell,
-                Rect::new(x, area.y, width, 1),
+                Rect::new(x, area.y, content_width, 1),
                 Default::default(),
                 &[],
             );
             x = x
                 .saturating_add(width)
-                .saturating_add(u16::from(self.column_widths.is_none()));
+                .saturating_add(if self.column_widths.is_none() { 2 } else { 0 });
         }
     }
 
@@ -310,15 +308,19 @@ impl DataTable {
         }
     }
     fn row_at(&self, area: Rect, column: u16, row: u16) -> Option<usize> {
-        if !contains_point(area, column, row) {
+        let inner = self.surface().inner(area);
+        if !contains_point(inner, column, row) {
             return None;
         }
-        row.checked_sub(
-            area.y
-                .saturating_add(u16::from(self.bordered) + u16::from(self.show_header)),
-        )
-        .map(|offset| self.viewport_start.saturating_add(usize::from(offset)))
-        .filter(|index| *index < self.rows.len())
+        row.checked_sub(inner.y.saturating_add(u16::from(self.show_header)))
+            .map(|offset| self.viewport_start.saturating_add(usize::from(offset)))
+            .filter(|index| *index < self.rows.len())
+    }
+
+    fn surface(&self) -> Surface {
+        let mut surface = Surface::new().bordered(self.bordered);
+        surface.title = self.title.clone();
+        surface
     }
 }
 
@@ -333,10 +335,15 @@ fn join_row(cells: &[String], width: u16, explicit_widths: Option<&[u16]>) -> St
         .enumerate()
     {
         if index > 0 && explicit_widths.is_none() {
-            row.push(' ');
+            row.push_str("  ");
         }
         let cell_width = usize::from(cell_width);
-        let cell = super::truncate_to_terminal_width(cell, cell_width);
+        let content_width = if explicit_widths.is_some() && index + 1 < cells.len() {
+            cell_width.saturating_sub(2)
+        } else {
+            cell_width
+        };
+        let cell = super::truncate_to_terminal_width(cell, content_width);
         let padding = cell_width.saturating_sub(usize::from(cell.cell_width()));
         row.push_str(&cell);
         row.extend(std::iter::repeat_n(' ', padding));
@@ -352,7 +359,7 @@ fn column_widths(
     let separators = if explicit_widths.is_some() {
         0
     } else {
-        count.saturating_sub(1)
+        count.saturating_sub(1).saturating_mul(2)
     };
     let fallback = usize::from(width).saturating_sub(separators) / count.max(1);
     (0..count).map(move |index| {
