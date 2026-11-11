@@ -60,7 +60,7 @@ fn detail_motion_keeps_stable_readable_text_and_current_hit_regions() {
                     for x in 0..layout.details_text.width.min(settled.details_text.width) {
                         assert_eq!(
                             buffer[(layout.details_text.x + x, layout.details_text.y + y)].symbol(),
-                            reference[(settled.details_text.x + x, settled.details_text.y + y)]
+                            reference[(layout.details_text.x + x, layout.details_text.y + y)]
                                 .symbol(),
                             "{width}x{height} expanded={expanded} progress={progress} at ({x}, {y})"
                         );
@@ -558,6 +558,42 @@ fn management_action_labels_fit_touch_regions_in_small_windows() {
             .collect::<String>();
         assert!(painted.contains("Close"));
         model.form = None;
+    }
+}
+
+#[test]
+fn paged_action_labels_use_their_visible_canvas_without_a_second_index_offset() {
+    let model = ManagementViewModel {
+        actions: (0..20)
+            .map(|index| {
+                (
+                    if index % 2 == 0 {
+                        format!("A{index}")
+                    } else {
+                        format!("Action {index} with a longer visible label")
+                    },
+                    true,
+                )
+            })
+            .collect(),
+        action_scroll: Some(1),
+        selected_action: 1,
+        ..Default::default()
+    };
+    let area = Rect::new(0, 0, 120, 24);
+    let layout = management_layout(area, &model);
+    assert_eq!(layout.action_start, 1);
+    let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+    terminal
+        .draw(|frame| render_management_content(frame, area, &model, &RenderContext::default()))
+        .unwrap();
+    for (offset, rect) in layout.actions.iter().enumerate() {
+        let label = &model.actions[layout.action_start + offset].0;
+        let text = rect
+            .positions()
+            .map(|point| terminal.backend().buffer()[point].symbol())
+            .collect::<String>();
+        assert!(text.contains(label), "missing {label:?}: {text:?}");
     }
 }
 

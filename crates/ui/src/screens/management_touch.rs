@@ -603,11 +603,13 @@ pub struct ManagementLayout {
     pub column_widths: Vec<usize>,
     pub details: Rect,
     pub details_text: Rect,
+    /// Final content geometry; `details_text` is its visible intersection.
     pub details_canvas: Rect,
     pub detail_actions_panel: Rect,
     pub detail_actions_canvas: Rect,
     pub actions_panel: Rect,
     pub actions: Vec<Rect>,
+    /// Full rectangles indexed alongside `actions`, before viewport clipping.
     pub action_canvases: Vec<Rect>,
     pub primary_action_bar: crate::components::PageActionBarLayout,
     pub action_start: usize,
@@ -1035,8 +1037,8 @@ fn management_content_layout(
         offset += width;
     }
     let list_capacity = usize::from(list_rows.height);
-    let mut details_text = text_area(pane_inner(details));
     details_canvas = text_area(pane_inner(details_canvas));
+    let mut details_text = text_area(pane_inner(details)).intersection(details_canvas);
     let output_text = text_area(content);
     let mut scrollbars = Vec::new();
     if let Some(bar) = management_scrollbar(
@@ -1074,10 +1076,14 @@ fn management_content_layout(
             bottom_track(details_text),
             width,
             usize::from(details_text.width),
-            usize::from(model.details_horizontal_scroll),
+            usize::from(model.details_horizontal_scroll)
+                .min(width.saturating_sub(usize::from(details_canvas.width))),
             true,
         ) {
             details_text.height = details_text.height.saturating_sub(1);
+            details_canvas.height = details_canvas
+                .height
+                .saturating_sub(u16::from(width > usize::from(details_canvas.width)));
             scrollbars.push(bar);
         }
         if let Some(bar) = management_scrollbar(
@@ -1090,17 +1096,30 @@ fn management_content_layout(
             ),
             lines.len(),
             usize::from(details_text.height),
-            usize::from(model.details_scroll),
+            usize::from(model.details_scroll).min(
+                lines
+                    .len()
+                    .saturating_sub(usize::from(details_canvas.height)),
+            ),
             false,
         ) {
             scrollbars.push(bar);
         }
     } else if let Some(bar) = management_scrollbar(
         ManagementScrollTarget::Details,
-        right_track(pane_inner(details)),
+        Rect::new(
+            details_text.right(),
+            details_text.y,
+            u16::from(!details_text.is_empty()),
+            details_text.height,
+        ),
         management_wrapped_lines(&model.details, details_canvas.width).len(),
         usize::from(details_text.height),
-        usize::from(model.details_scroll),
+        usize::from(model.details_scroll).min(
+            management_wrapped_lines(&model.details, details_canvas.width)
+                .len()
+                .saturating_sub(usize::from(details_canvas.height)),
+        ),
         false,
     ) {
         scrollbars.push(bar);
@@ -1888,8 +1907,18 @@ pub fn render_management_content(
                         .collect::<Vec<_>>(),
                 )
                 .scroll((
-                    offset(ManagementScrollTarget::Details),
-                    offset(ManagementScrollTarget::DetailsColumns),
+                    offset(ManagementScrollTarget::Details).saturating_add(
+                        layout
+                            .details_text
+                            .y
+                            .saturating_sub(layout.details_canvas.y),
+                    ),
+                    offset(ManagementScrollTarget::DetailsColumns).saturating_add(
+                        layout
+                            .details_text
+                            .x
+                            .saturating_sub(layout.details_canvas.x),
+                    ),
                 ))
                 .style(theme.body_style()),
                 layout.details_text,
@@ -1899,17 +1928,23 @@ pub fn render_management_content(
             let offset = usize::from(model.details_scroll).min(
                 lines
                     .len()
-                    .saturating_sub(usize::from(layout.details_text.height)),
+                    .saturating_sub(usize::from(layout.details_canvas.height)),
             );
             frame.render_widget(
-                Paragraph::new(
-                    lines
-                        .into_iter()
-                        .skip(offset)
-                        .map(Line::from)
-                        .collect::<Vec<_>>(),
-                )
-                .style(theme.body_style()),
+                Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>())
+                    .scroll((
+                        (offset.min(usize::from(u16::MAX)) as u16).saturating_add(
+                            layout
+                                .details_text
+                                .y
+                                .saturating_sub(layout.details_canvas.y),
+                        ),
+                        layout
+                            .details_text
+                            .x
+                            .saturating_sub(layout.details_canvas.x),
+                    ))
+                    .style(theme.body_style()),
                 layout.details_text,
             );
         }
@@ -1924,7 +1959,7 @@ pub fn render_management_content(
                 continue;
             }
             if let Some((label, enabled)) = model.actions.get(index) {
-                let canvas = layout.action_canvases.get(index).copied().unwrap_or(*area);
+                let canvas = layout.action_canvases.get(offset).copied().unwrap_or(*area);
                 let hidden = usize::from(area.x.saturating_sub(canvas.x));
                 let label = management_wrapped_lines(label, canvas.width)
                     .into_iter()
