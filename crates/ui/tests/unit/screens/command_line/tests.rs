@@ -4,11 +4,11 @@ use crate::command_line_terminal_area;
 #[test]
 fn minimum_outer_size_uses_the_standard_shell_main_panel() {
     assert_eq!(
-        command_line_terminal_area(Rect::new(0, 0, 108, 22)),
-        Some(Rect::new(1, 4, 106, 14))
+        command_line_terminal_area(Rect::new(0, 0, 108, 20)),
+        Some(Rect::new(0, 1, 108, 18))
     );
-    assert!(command_line_terminal_area(Rect::new(0, 0, 107, 22)).is_none());
-    assert!(command_line_terminal_area(Rect::new(0, 0, 108, 21)).is_none());
+    assert!(command_line_terminal_area(Rect::new(0, 0, 107, 20)).is_none());
+    assert!(command_line_terminal_area(Rect::new(0, 0, 108, 19)).is_none());
 }
 
 #[test]

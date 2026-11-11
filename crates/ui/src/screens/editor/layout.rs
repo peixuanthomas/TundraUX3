@@ -1,7 +1,7 @@
 use super::document::*;
 use super::source::*;
 use super::*;
-use crate::components::{Scrollbar, ScrollbarOrientation, Surface, terminal_width};
+use crate::components::{Scrollbar, ScrollbarOrientation, terminal_width};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EditorMenuLayout {
@@ -520,7 +520,7 @@ impl EditorLayout {
 }
 
 pub fn editor_vim_terminal_area(area: Rect) -> Rect {
-    let inner = Surface::new().bordered(true).inner(area);
+    let inner = area;
     let header_height = u16::from(inner.height > 0);
     Rect::new(
         inner.x,
@@ -531,7 +531,7 @@ pub fn editor_vim_terminal_area(area: Rect) -> Rect {
 }
 
 pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
-    let inner = Surface::new().bordered(true).inner(area);
+    let inner = area;
     let menu_height = u16::from(inner.height > 0);
     if let Some(terminal) = &model.vim_terminal {
         let canvas = editor_vim_terminal_area(area);

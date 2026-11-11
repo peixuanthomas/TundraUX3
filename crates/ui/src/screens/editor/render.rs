@@ -44,9 +44,7 @@ pub fn render_editor_contextual_with_terminal_images(
     let theme = &context.compatibility_theme();
     let layout = editor_layout(area, model);
     frame.render_widget(Clear, area);
-    Surface::new()
-        .bordered(true)
-        .render_frame(frame, area, context);
+    Surface::new().render_frame(frame, area, context);
     if let Some(terminal) = &model.vim_terminal {
         let mut vim_toggle = Button::new("editor.vim-toggle", i18n::tr!("ui-editor-vim-enabled"))
             .with_bracketed_label(false)
@@ -165,9 +163,7 @@ fn render_menu_bar(
     if layout.menu_bar.is_empty() {
         return;
     }
-    Surface::new()
-        .raised(true)
-        .render_frame(frame, layout.menu_bar, context);
+    Surface::new().render_frame(frame, layout.menu_bar, context);
     for item in &layout.menus {
         let active = model.open_menu == Some(item.menu)
             || (model.focus == EditorFocus::MenuBar && model.selected_menu == item.menu);

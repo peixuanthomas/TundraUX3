@@ -44,11 +44,11 @@ pub fn render_script_contextual_with_terminal_images(
         editor_images.clear();
         output_images.clear();
         Surface::new()
-            .bordered(true)
+            .bordered(false)
             .render_frame(frame, layout.editor_area, context);
         for (_, rect) in &layout.panes {
             Surface::new()
-                .bordered(true)
+                .bordered(false)
                 .render_frame(frame, *rect, context);
         }
         return layout;
@@ -63,7 +63,7 @@ pub fn render_script_contextual_with_terminal_images(
     );
     for (pane, rect) in &layout.panes {
         Surface::new()
-            .bordered(true)
+            .bordered(false)
             .titled(pane.title())
             .focused(model.focus == *pane)
             .render_frame(frame, *rect, context);
@@ -195,8 +195,8 @@ pub fn render_script_contextual_with_terminal_images(
                     output
                         .scrollback_rows
                         .saturating_sub(output.scrollback_offset),
-                    output.scrollback_rows + usize::from(output.rows),
-                    scrollbar.track.height,
+                    output.scrollback_rows + usize::from(output.rows.min(scrollbar.track.height)),
+                    output.rows.min(scrollbar.track.height),
                 )
             }),
             ScriptPane::Source => (0, 0, 0),

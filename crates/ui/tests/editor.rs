@@ -36,14 +36,14 @@ fn native_vim_owns_the_canvas_including_mode_commands_and_messages() {
     };
     let area = Rect::new(2, 3, 40, 12);
     let canvas = ui::editor_vim_terminal_area(area);
-    assert_eq!(canvas, Rect::new(3, 5, 38, 9));
+    assert_eq!(canvas, Rect::new(2, 4, 40, 11));
     let mut snapshot = CommandLineTerminalSnapshot::blank(canvas.width, canvas.height);
     snapshot.cursor_style = CommandLineCursorStyle::SteadyBar;
     for (row, text) in [
         (0, "Vim buffer"),
-        (6, "-- INSERT --"),
-        (7, "E486: Pattern not found"),
-        (8, ":%s/old/new/g"),
+        (canvas.height - 3, "-- INSERT --"),
+        (canvas.height - 2, "E486: Pattern not found"),
+        (canvas.height - 1, ":%s/old/new/g"),
     ] {
         for (column, character) in text.chars().enumerate() {
             snapshot.set_cell(
@@ -53,10 +53,10 @@ fn native_vim_owns_the_canvas_including_mode_commands_and_messages() {
                     symbol: character.to_string(),
                     style: CommandLineCellStyle {
                         foreground: CommandLineColor::Indexed(3),
-                        italic: row == 8,
+                        italic: row == canvas.height - 1,
                         ..Default::default()
                     },
-                    cursor: row == 8 && column == 7,
+                    cursor: row == canvas.height - 1 && column == 7,
                     ..Default::default()
                 },
             );
@@ -110,7 +110,7 @@ fn native_vim_owns_the_canvas_including_mode_commands_and_messages() {
     ] {
         assert!(!text.contains(hidden), "{hidden}: {text}");
     }
-    let cell = &terminal.backend().buffer()[(canvas.x + 7, canvas.y + 8)];
+    let cell = &terminal.backend().buffer()[(canvas.x + 7, canvas.bottom() - 1)];
     assert!(cell.modifier.contains(Modifier::ITALIC));
     assert!(!cell.modifier.contains(Modifier::REVERSED));
     assert!(
@@ -120,7 +120,7 @@ fn native_vim_owns_the_canvas_including_mode_commands_and_messages() {
     );
     assert_eq!(
         terminal.get_cursor_position().unwrap(),
-        (canvas.x + 7, canvas.y + 8).into()
+        (canvas.x + 7, canvas.bottom() - 1).into()
     );
 }
 

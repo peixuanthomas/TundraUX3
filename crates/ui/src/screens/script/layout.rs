@@ -95,10 +95,10 @@ impl ScriptLayout {
 
 pub(super) fn inset(area: Rect) -> Rect {
     Rect::new(
-        area.x.saturating_add(u16::from(area.width > 1)),
-        area.y.saturating_add(u16::from(area.height > 1)),
-        area.width.saturating_sub(2),
-        area.height.saturating_sub(2),
+        area.x,
+        area.y.saturating_add(u16::from(area.height > 0)),
+        area.width,
+        area.height.saturating_sub(1),
     )
 }
 
@@ -267,12 +267,23 @@ pub fn script_layout(area: Rect, model: &ScriptViewModel) -> ScriptLayout {
         let mut inner = inset(*rect);
         match pane {
             ScriptPane::Output => {
-                output_area = Rect::new(
-                    inner.x,
-                    inner.y,
-                    inner.width.saturating_sub(1),
-                    inner.height,
-                );
+                output_area = model.output.as_ref().map_or(inner, |output| {
+                    crate::command_line_content_area(inner, output)
+                });
+                if let Some(scrollbar) = model
+                    .output
+                    .as_ref()
+                    .and_then(|output| crate::command_line_scrollbar_layout(inner, output))
+                {
+                    scrollbars.push((
+                        *pane,
+                        EditorScrollbarLayout {
+                            track: scrollbar.track,
+                            thumb: scrollbar.thumb,
+                        },
+                    ));
+                }
+                continue;
             }
             ScriptPane::Expression => {
                 expression_lines = model
