@@ -615,18 +615,16 @@ fn render_setup_shape_buttons(
             crate::BorderShape::Rounded => i18n::tr!("ui-auth-rounded"),
             crate::BorderShape::Square => i18n::tr!("ui-auth-square"),
         };
-        render_setup_inline_button(
-            frame,
-            button_area,
+        let mut button = Button::new(
             match shape {
                 crate::BorderShape::Rounded => "setup.appearance.shape.rounded",
                 crate::BorderShape::Square => "setup.appearance.shape.square",
             },
-            label.to_string(),
-            selected,
-            false,
-            theme,
-        );
+            label,
+        )
+        .with_current(selected);
+        button.set_focused(focused && selected);
+        button.render_borderless_frame(frame, button_area, theme);
     }
 }
 
@@ -662,19 +660,11 @@ fn render_setup_color_palette(
             format!("setup.appearance.{field_id}.{}", option.value),
             &option.label,
         );
-        button.state.selected = selected;
+        button = button.with_current(selected);
+        button.set_focused(focused && selected);
         button.set_disabled(disabled);
-
-        // Button derives its colors from a theme. Adapt a local copy so each
-        // palette option retains its catalog color while selected and disabled
-        // states continue to be represented by the shared component.
         let mut option_theme = theme.clone();
-        if selected && !disabled {
-            option_theme.background = option.color;
-            option_theme.accent_color = theme.background;
-        } else {
-            option_theme.foreground = option.color;
-        }
+        option_theme.foreground = option.color;
         button.render_borderless_frame(frame, button_area, &option_theme);
     }
 }

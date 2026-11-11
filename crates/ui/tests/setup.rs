@@ -269,3 +269,36 @@ fn minimum_setup_keeps_admin_submit_and_default_completion_visible_together() {
     }
     assert_eq!(ui::setup_defaults_area(main).y, viewport.area.bottom());
 }
+
+#[test]
+fn appearance_values_remain_current_while_only_the_active_field_has_keyboard_focus() {
+    let mut model = sample_model(SetupStep::Appearance, None);
+    model.focused_field = SetupField::AppearanceThemeColor;
+    let main = Rect::new(0, 1, 108, 18);
+    let capture = ui::automation::FrameCapture::begin(Rect::new(0, 0, 108, 20), "setup");
+    let mut terminal = Terminal::new(TestBackend::new(108, 20)).unwrap();
+    terminal
+        .draw(|frame| ui::render_setup_content(frame, main, &model, &ui::RenderContext::default()))
+        .unwrap();
+    let snapshot = capture.finish(terminal.backend().buffer());
+    let shape = snapshot
+        .nodes
+        .iter()
+        .find(|node| node.id.ends_with("/setup.appearance.shape.rounded"))
+        .unwrap();
+    assert!(shape.selected && !shape.focused);
+    let selected_color = snapshot
+        .nodes
+        .iter()
+        .find(|node| node.id.ends_with("/setup.appearance.theme.white"))
+        .unwrap();
+    assert!(selected_color.selected && selected_color.focused);
+    assert_eq!(
+        snapshot
+            .nodes
+            .iter()
+            .filter(|node| node.role == "button" && node.focused)
+            .count(),
+        1
+    );
+}
