@@ -588,9 +588,17 @@ def check_permission_draft(master, slave, output, child, path):
     column = screen[owner_row].index("[x]")
     if screen_after(b" ")[owner_row][column:column + 3] != "[ ]":
         raise SystemExit("physical Space did not clear the selected permission box")
-    if screen_after(b"\r")[owner_row][column:column + 3] != "[x]":
-        raise SystemExit("Enter did not restore the selected permission box")
-    screen = screen_after(b"\t\t")
+    if screen_after(b" ")[owner_row][column:column + 3] != "[x]":
+        raise SystemExit("physical Space did not restore the selected permission box")
+    directories = next((i for i, line in enumerate(screen) if line.strip() == "Directories"), len(screen))
+    directory_owner = next((i for i in range(directories + 1, len(screen)) if "Owner" in screen[i]), None)
+    if directory_owner is None or "[-]" not in screen[directory_owner]:
+        raise SystemExit("directory permission draft was not painted mixed:\n" + "\n".join(screen))
+    directory_column = screen[directory_owner].index("[-]")
+    screen = screen_after(b"\r ")
+    if screen[owner_row][column:column + 3] != "[x]" or screen[directory_owner][directory_column:directory_column + 3] != "[x]":
+        raise SystemExit("Enter did not move Space to the directory permission field")
+    screen = screen_after(b"\t")
     recursive_row = next((i + 1 for i, line in enumerate(screen[:-1]) if "Include directory contents" in line), None)
     if recursive_row is None or "[ ]" not in screen[recursive_row]:
         raise SystemExit("recursive checkbox was not painted unchecked:\n" + "\n".join(screen))
@@ -614,7 +622,7 @@ def check_permission_draft(master, slave, output, child, path):
         original.st_mode, original.st_uid, original.st_gid, original.st_ctime_ns
     ):
         raise SystemExit("permission draft changed filesystem metadata without applying")
-    print("PASS: physical Space and Enter toggle permission drafts; cancel preserves draft and discard leaves metadata unchanged")
+    print("PASS: Space toggles permission drafts and Enter advances fields; cancel preserves draft and discard leaves metadata unchanged")
 
 
 def check_animation_settings(master, output, child, cli, env):
