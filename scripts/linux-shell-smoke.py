@@ -213,29 +213,56 @@ def control_snapshot(master, output, child, cli, env, timeout=5.0):
 def control_position(snapshot, identifier):
     node = next((node for node in snapshot["nodes"] if node["id"] == identifier), None)
     if node is None or not node["actionable"]:
-        raise SystemExit(f"Control {identifier!r} is unavailable on {snapshot['page']}")
+        raise SystemExit(f"Control {identifier!r} is unavailable: {snapshot}")
     rect = node["rect"]
     return rect["x"] + rect["width"] // 2 + 1, rect["y"] + rect["height"] // 2 + 1
 
 
+def open_home_entry(master, output, child, cli, env, label):
+    frame = control_snapshot(master, output, child, cli, env)
+    entry = next((item for item in frame["nodes"]
+                  if item["id"].startswith("page/home.entry.")
+                  and item["name"] == label and item["actionable"]), None)
+    if frame["page"] != "Home" or entry is None:
+        raise SystemExit(f"Home entry {label!r} is unavailable: {frame}\n" + output_diagnostic(output))
+    x, y = control_position(frame, entry["id"])
+    os.write(master, f"\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m".encode())
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        frame = control_snapshot(master, output, child, cli, env)
+        if frame["page"] == label:
+            return frame
+        read_available(master, output, 0.05)
+    raise SystemExit(f"Home entry {label!r} did not open its page: {frame}\n" + output_diagnostic(output))
+
+
 def check_status_details(master, output, child, cli, env):
-    x, y = control_position(control_snapshot(master, output, child, cli, env), "chrome/shell.status")
-    offset = len(output)
+    frame = control_snapshot(master, output, child, cli, env)
+    page = frame["page"]
+    x, y = control_position(frame, "chrome/shell.status")
     os.write(master, f"\x1b[<0;{x};{y}M".encode())
     read_available(master, output, 0.1)
-    if b"Status details" in output[offset:]:
-        raise SystemExit("status details opened before mouse release")
-    os.write(master, f"\x1b[<0;{x};{y}m".encode())
-    if not wait_for_output(master, output, b"Status details", child, 5.0, offset):
-        raise SystemExit("status message did not open its details:\n" + output_diagnostic(output[offset:]))
-    # Let modal entry finish before testing its keyboard dismissal.
-    deadline = time.monotonic() + 0.7
-    while time.monotonic() < deadline:
-        read_available(master, output, 0.05)
-    os.write(master, b"\x1b")
-    deadline = time.monotonic() + 0.7
-    while time.monotonic() < deadline:
-        read_available(master, output, 0.05)
+    frame = control_snapshot(master, output, child, cli, env)
+    if frame["page"] != page or any(item["id"].startswith("modal/") for item in frame["nodes"]):
+        raise SystemExit(f"status details opened before mouse release: {frame}")
+    for keys, opened in [(f"\x1b[<0;{x};{y}m".encode(), True), (b"\x1b", False)]:
+        os.write(master, keys)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            frame = control_snapshot(master, output, child, cli, env)
+            close = any(item["id"].startswith("modal/notification.")
+                        and item["id"].endswith(".action.close") and item["actionable"]
+                        for item in frame["nodes"])
+            modal = any(item["id"] == "modal" or item["id"].startswith("modal/")
+                        for item in frame["nodes"])
+            if frame["page"] == page and (
+                close and any("Status details" in line for line in frame["lines"])
+                if opened else not modal
+            ):
+                break
+            read_available(master, output, 0.05)
+        else:
+            raise SystemExit(f"status details did not become open={opened} on {page}: {frame}\n" + output_diagnostic(output))
 
 
 def painted_screen_lines(data: bytes, columns: int, rows: int) -> list[str]:
@@ -442,10 +469,10 @@ def check_package_and_log_views(master: int, slave: int, output: bytearray, chil
     step(b"\x1b", b"Explorer", "Packages did not return to Home")
     step(b"\x1b[H" + b"\x1b[C" * 11 + b"\r", b"UX log", "Logs did not open")
     step(b"f", b"Service scope", "Visible log filter shortcut did not open its form")
-    step(b"\x1b", b"UX events", "Log filter cancellation did not restore its page")
+    step(b"\x1b", b"UX log", "Log filter cancellation did not restore its page")
     step(b"\x1b[21~", b"L Level", "Log More actions did not open")
     # End selects the explicit close action, and Space activates it.
-    step(b"\x1b[F ", b"UX events", "Log menu close did not restore its page")
+    step(b"\x1b[F ", b"UX log", "Log menu close did not restore its page")
     step(b"\x1b[21~", b"L Level", "Log menu did not reopen")
     # Clicking outside the centered menu closes it without opening a covered
     # category or toolbar control. The layout tests check exact bounds/colors.
@@ -504,14 +531,14 @@ def check_keyboard_paste(master, output, child, start, cli, env):
     print("PASS: rapid screen-keyboard clicks with small held movements, repeated unavailable-clipboard clicks and subsequent terminal command")
 
 
-def check_crash_screen(master: int, output: bytearray, child: subprocess.Popen, isolated: Path) -> None:
+def check_crash_screen(master: int, output: bytearray, child: subprocess.Popen, isolated: Path, cli, env) -> None:
     # The existing final check leaves the power dialog open on Home.
     os.write(master, b"\x1b")
     wait_for_output_quiet(master, output, child, quiet_period=0.3)
-    offset = len(output)
-    os.write(master, b"\x1b[F\x1b[D\x1b[D\r")
-    if not wait_for_output(master, output, b"Command Line", child, 5.0, offset):
-        raise SystemExit("could not open Launcher for crash-page test")
+    frame = open_home_entry(master, output, child, cli, env, "Launcher")
+    if not any("builtin.command-line" in item["id"] and item["actionable"]
+               for item in frame["nodes"]):
+        raise SystemExit(f"Launcher did not offer Command Line for the crash-page test: {frame}")
     wait_for_output_quiet(master, output, child, quiet_period=0.3)
     offset = len(output)
     os.write(master, b"\r")
@@ -739,34 +766,40 @@ def check_animation_settings(master, output, child, cli, env):
     print("PASS: keyboard numeric input and nine animation phases save, cancel, validate, and reset together")
 
 
-def check_system_settings_environment(master, output, child):
-    if Path("/proc/1/comm").read_text().strip() == "systemd":
+def check_system_settings_environment(master, output, child, cli, env):
+    process = Path("/proc/1/comm").read_text().strip()
+    if process == "systemd":
         return
-    offset = len(output)
-    os.write(master, b"\x1b[F\x1b[D\r")
-    if not wait_for_output(master, output, b"OS settings", child, 5.0, offset):
-        raise SystemExit("Settings did not expose the operating system entry")
-    wait_for_output_quiet(master, output, child, quiet_period=0.3)
-    offset = len(output)
+
+    def wait_page(page, *markers):
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            frame = control_snapshot(master, output, child, cli, env)
+            visible = "".join("".join(frame["lines"]).split())
+            if frame["page"] == page and all("".join(marker.split()) in visible for marker in markers):
+                return frame
+            read_available(master, output, 0.05)
+        raise SystemExit(f"OS settings did not reach {page} with {markers}: {frame}\n" + output_diagnostic(output))
+
+    frame = open_home_entry(master, output, child, cli, env, "Settings")
+    control_position(frame, "page/settings.operating-system")
     os.write(master, b"\x1b[19~")
-    if not wait_for_output(master, output, b"This environment does not support the feature", child, 5.0, offset, ignore_spaces=True):
-        raise SystemExit("OS settings did not explain the unavailable systemd environment:\n" + output_diagnostic(output[offset:]))
-    wait_for_output_quiet(master, output, child, quiet_period=0.3)
-    offset = len(output)
+    wait_page("Management", "Unavailable in this environment")
     os.write(master, b"\x1bOS")
-    if not wait_for_output(master, output, b"PID 1", child, 5.0, offset, ignore_spaces=True):
-        raise SystemExit("OS settings F4 details omitted the specific systemd cause:\n" + output_diagnostic(output[offset:]))
-    for marker in [b"systemd", b"extra permissions cannot"]:
-        if not wait_for_output(master, output, marker, child, 5.0, offset, ignore_spaces=True):
-            raise SystemExit(f"OS settings details omitted {marker!r}:\n" + output_diagnostic(output[offset:]))
-    os.write(master, b"\x1b")
-    wait_for_output_quiet(master, output, child, quiet_period=0.3)
-    for marker in [b"OS settings", b"Launcher"]:
-        wait_for_output_quiet(master, output, child, quiet_period=0.3)
-        offset = len(output)
+    frame = wait_page(
+        "Management", "Requires systemd and the system D-Bus.",
+        f"System services require systemd; this system was started by {process}.",
+    )
+    if any(item["id"] == "authorization" or item["id"].startswith("authorization/")
+           or item["actionable"] and "authorize" in item["id"].lower()
+           for item in frame["nodes"]):
+        raise SystemExit(f"OS environment limitation incorrectly offered authorization: {frame}")
+    for page in ["Management", "Settings", "Home"]:
         os.write(master, b"\x1b")
-        if not wait_for_output(master, output, marker, child, 5.0, offset, ignore_spaces=True):
-            raise SystemExit("OS settings did not return through its original navigation path")
+        wait_for_output_quiet(master, output, child, quiet_period=0.3)
+        frame = wait_page(page)
+        if page == "Settings":
+            control_position(frame, "page/settings.operating-system")
     print("PASS: unsupported OS settings shows an environment limit and F4 explains systemd requirements without authorization")
 
 
@@ -1083,15 +1116,15 @@ def main() -> int:
 
         check_animation_settings(master, output, child, cli, env)
         check_editor_resize(master, slave, output, child, isolated, cli, env)
-        check_system_settings_environment(master, output, child)
+        check_system_settings_environment(master, output, child, cli, env)
         check_status_details(master, output, child, cli, env)
 
         # Exercise the companion CLI launched by the real Shell, not just a
         # standalone REPL. Rebuilding Shell alone can leave an older CLI beside it.
-        launcher_offset = len(output)
-        os.write(master, b"\x1b[F\x1b[D\x1b[D\r")
-        if not wait_for_output(master, output, b"Command Line", child, 5.0, launcher_offset):
-            raise SystemExit("Launcher did not show Command Line")
+        frame = open_home_entry(master, output, child, cli, env, "Launcher")
+        if not any("builtin.command-line" in item["id"] and item["actionable"]
+                   for item in frame["nodes"]):
+            raise SystemExit(f"Launcher did not offer Command Line: {frame}")
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
             raise SystemExit("Launcher did not settle")
         prompt_offset = len(output)
@@ -1279,7 +1312,7 @@ def main() -> int:
             raise SystemExit("releasing Back did not open the power dialog")
 
         if CHECK_CRASH_SCREEN:
-            check_crash_screen(master, output, child, isolated)
+            check_crash_screen(master, output, child, isolated, cli, env)
 
         if child.poll() is None:
             signal_process_group(child, signal.SIGTERM)

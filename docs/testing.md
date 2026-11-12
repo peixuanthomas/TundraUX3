@@ -60,6 +60,8 @@ These scripts use isolated XDG directories and real PTYs to check initial setup,
 
 Readiness and global-button targeting use automation snapshots and control IDs. Page assertions use business content and painted screens, so changes to decorative frames or bar coordinates do not change the workflow contract. Shell and its companion CLI must come from the same build.
 
+Home application entries and the OS settings entry use current controls and page identity. The unsupported-systemd check verifies the actual PID 1 process and D-Bus requirement through F4, rejects authorization as a remedy, and returns through Settings to Home. Status details must open on release and close back onto the same page.
+
 The resize workflow first checks the imported document in Vim's native viewport, its Insert indicator, Esc, undo, and return to the standard editor without saving. Permission drafts check Space toggling, Enter advancing to the next field, and cancellation without applying filesystem changes.
 
 The native Trash round-trip test creates only temporary items:
