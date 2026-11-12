@@ -62,6 +62,8 @@ Readiness and global-button targeting use automation snapshots and control IDs. 
 
 Home application entries and the OS settings entry use current controls and page identity. The unsupported-systemd check verifies the actual PID 1 process and D-Bus requirement through F4, rejects authorization as a remedy, and returns through Settings to Home. Status details must open on release and close back onto the same page.
 
+Network and Packages open the shared Management page; Logs opens its own page. More actions uses the current control rectangle and actual menu state for press, drag-out, and release checks. The malformed-input regression still uses physical End and Enter after checking that the last Home entry is System Status.
+
 The resize workflow first checks the imported document in Vim's native viewport, its Insert indicator, Esc, undo, and return to the standard editor without saving. Permission drafts check Space toggling, Enter advancing to the next field, and cancellation without applying filesystem changes.
 
 The native Trash round-trip test creates only temporary items:

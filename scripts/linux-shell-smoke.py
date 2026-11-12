@@ -218,19 +218,24 @@ def control_position(snapshot, identifier):
     return rect["x"] + rect["width"] // 2 + 1, rect["y"] + rect["height"] // 2 + 1
 
 
-def open_home_entry(master, output, child, cli, env, label):
-    frame = control_snapshot(master, output, child, cli, env)
-    entry = next((item for item in frame["nodes"]
-                  if item["id"].startswith("page/home.entry.")
-                  and item["name"] == label and item["actionable"]), None)
-    if frame["page"] != "Home" or entry is None:
+def open_home_entry(master, output, child, cli, env, label, page):
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        frame = control_snapshot(master, output, child, cli, env)
+        entry = next((item for item in frame["nodes"]
+                      if item["id"].startswith("page/home.entry.")
+                      and item["name"] == label and item["actionable"]), None)
+        if frame["page"] == "Home" and entry is not None:
+            break
+        read_available(master, output, 0.05)
+    else:
         raise SystemExit(f"Home entry {label!r} is unavailable: {frame}\n" + output_diagnostic(output))
     x, y = control_position(frame, entry["id"])
     os.write(master, f"\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m".encode())
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
         frame = control_snapshot(master, output, child, cli, env)
-        if frame["page"] == label:
+        if frame["page"] == page:
             return frame
         read_available(master, output, 0.05)
     raise SystemExit(f"Home entry {label!r} did not open its page: {frame}\n" + output_diagnostic(output))
@@ -328,7 +333,7 @@ def wait_for_painted_text(fd, output, label, child, present=True, timeout=5.0):
         read_available(fd, output, 0.1)
 
 
-def check_management_menu(master: int, slave: int, output: bytearray, child: subprocess.Popen) -> None:
+def check_management_menu(master: int, slave: int, output: bytearray, child: subprocess.Popen, cli, env) -> None:
     """Exercise the real Network UI without submitting any system operation."""
     interfaces = json.loads(subprocess.check_output(["ip", "-j", "address", "show"]))
     first_interface = next(
@@ -337,41 +342,54 @@ def check_management_menu(master: int, slave: int, output: bytearray, child: sub
     )
     if first_interface is None:
         raise SystemExit("management PTY requires a visible network interface")
-    offset = len(output)
     os.write(master, b"\x1b")
-    if not wait_for_output(master, output, b"Explorer", child, 5.0, offset):
-        raise SystemExit("Launcher did not return to Home")
-    # Network is the fifth Home entry on Linux.
-    os.write(master, b"\x1b[H" + b"\x1b[C" * 4 + b"\r")
-    if not wait_for_output(master, output, b"More actions", child, 10.0, offset):
-        raise SystemExit("Network did not load its operation menu:\n" + output_diagnostic(output[offset:]))
-    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
-        raise SystemExit("Network query did not settle")
+    open_home_entry(master, output, child, cli, env, "Network", "Management")
+
+    def more_button(columns, rows, timeout=10.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            frame = control_snapshot(master, output, child, cli, env)
+            more = next((item for item in frame["nodes"]
+                         if "management.action.Some(Network).more_actions." in item["id"]
+                         and item["actionable"]), None)
+            if frame["page"] == "Management" and (frame["width"], frame["height"]) == (columns, rows) and more:
+                return frame, more
+            read_available(master, output, 0.05)
+        raise SystemExit(f"Network did not expose More actions at {columns}x{rows}: {frame}\n" + output_diagnostic(output))
+
+    def menu_shown(frame):
+        return any(item["role"] == "dialog" and ".more-actions" in item["id"]
+                   for item in frame["nodes"])
+
+    more_button(*os.get_terminal_size(master))
 
     # Read the button from the resized frame: common actions can move it.
     repaint_offset = len(output)
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 22, 108, 0, 0))
     os.kill(child.pid, signal.SIGWINCH)
-    if not wait_for_output(master, output, b"More actions", child, 5.0, repaint_offset, ignore_spaces=True):
-        raise SystemExit("Network did not repaint its actions after resizing:\n" + output_diagnostic(output[repaint_offset:]))
-    more_x, more_y = painted_label_position(bytes(output[repaint_offset:]), "More actions", 108, 22)
+    frame, more = more_button(108, 22, timeout=5.0)
+    more_x, more_y = control_position(frame, more["id"])
     press_more = f"\x1b[<0;{more_x};{more_y}M".encode()
     release_more = f"\x1b[<0;{more_x};{more_y}m".encode()
     offset = len(output)
     os.write(master, f"\x1b[<35;{more_x};{more_y}M".encode() + press_more)
     read_available(master, output, 0.2)
-    if b"Esc Close" in output[offset:]:
+    if menu_shown(control_snapshot(master, output, child, cli, env)):
         raise SystemExit("More actions opened on mouse-down")
     os.write(master, b"\x1b[<32;108;3M\x1b[<0;108;3m")
     if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
         raise SystemExit("management drag-out did not settle:\n" + output_diagnostic(output[offset:]))
-    if b"Esc Close" in output[offset:]:
+    if menu_shown(control_snapshot(master, output, child, cli, env)):
         raise SystemExit("dragging out of More actions executed it")
     os.write(master, press_more + release_more)
-    if not wait_for_output(master, output, b"Esc Close", child, 5.0, offset, ignore_spaces=True):
-        raise SystemExit("More actions did not open after release:\n" + output_diagnostic(output[offset:]))
-    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
-        raise SystemExit("management menu did not settle")
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        frame = control_snapshot(master, output, child, cli, env)
+        if menu_shown(frame):
+            break
+        read_available(master, output, 0.05)
+    else:
+        raise SystemExit(f"More actions did not open after release: {frame}\n" + output_diagnostic(output[offset:]))
     offset = len(output)
     os.write(master, b"n")
     if not wait_for_output(master, output, b"TCP port", child, 5.0, offset, ignore_spaces=True):
@@ -412,7 +430,7 @@ def check_management_menu(master: int, slave: int, output: bytearray, child: sub
         raise SystemExit("Home did not settle after management verification")
 
 
-def check_package_and_log_views(master: int, slave: int, output: bytearray, child: subprocess.Popen) -> None:
+def check_package_and_log_views(master: int, slave: int, output: bytearray, child: subprocess.Popen, cli, env) -> None:
     """Visit read-only package views and the log menu through the real Shell."""
     columns = 140
 
@@ -438,7 +456,8 @@ def check_package_and_log_views(master: int, slave: int, output: bytearray, chil
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 140, 0, 0))
     os.kill(child.pid, signal.SIGWINCH)
     wait_for_output_quiet(master, output, child, quiet_period=0.2)
-    step(b"\x1b[H\x1b[C\r", b"Installed packages", "Home navigation did not open Packages")
+    open_home_entry(master, output, child, cli, env, "Packages", "Management")
+    step(b"", b"Installed packages", "Home navigation did not open Packages")
     # Installed rows must return after leaving the full detail page, even
     # when a detail query targeted only the first package.
     if Path("/usr/bin/dpkg-query").is_file():
@@ -467,7 +486,8 @@ def check_package_and_log_views(master: int, slave: int, output: bytearray, chil
              "Package auxiliary view did not open", timeout=45.0)
         step(b"\x1b[18~", b"Installed packages", "Auxiliary view could not return to packages")
     step(b"\x1b", b"Explorer", "Packages did not return to Home")
-    step(b"\x1b[H" + b"\x1b[C" * 11 + b"\r", b"UX log", "Logs did not open")
+    open_home_entry(master, output, child, cli, env, "Logs", "Logs")
+    step(b"", b"UX log", "Logs did not open")
     step(b"f", b"Service scope", "Visible log filter shortcut did not open its form")
     step(b"\x1b", b"UX log", "Log filter cancellation did not restore its page")
     step(b"\x1b[21~", b"L Level", "Log More actions did not open")
@@ -535,7 +555,7 @@ def check_crash_screen(master: int, output: bytearray, child: subprocess.Popen, 
     # The existing final check leaves the power dialog open on Home.
     os.write(master, b"\x1b")
     wait_for_output_quiet(master, output, child, quiet_period=0.3)
-    frame = open_home_entry(master, output, child, cli, env, "Launcher")
+    frame = open_home_entry(master, output, child, cli, env, "Launcher", "Launcher")
     if not any("builtin.command-line" in item["id"] and item["actionable"]
                for item in frame["nodes"]):
         raise SystemExit(f"Launcher did not offer Command Line for the crash-page test: {frame}")
@@ -713,7 +733,7 @@ def check_animation_settings(master, output, child, cli, env):
         os.write(master, b"\r")
         expect_phases(expected)
 
-    os.write(master, b"\x1b[F\x1b[D\r")
+    open_home_entry(master, output, child, cli, env, "Settings", "Settings")
     wait_frame("Settings did not expose its animation controls", lambda frame: node(frame, speed) is not None)
     select_field(speed)
     os.write(master, b"\r")
@@ -781,7 +801,7 @@ def check_system_settings_environment(master, output, child, cli, env):
             read_available(master, output, 0.05)
         raise SystemExit(f"OS settings did not reach {page} with {markers}: {frame}\n" + output_diagnostic(output))
 
-    frame = open_home_entry(master, output, child, cli, env, "Settings")
+    frame = open_home_entry(master, output, child, cli, env, "Settings", "Settings")
     control_position(frame, "page/settings.operating-system")
     os.write(master, b"\x1b[19~")
     wait_page("Management", "Unavailable in this environment")
@@ -812,7 +832,7 @@ def check_editor_resize(master, slave, output, child, isolated, cli, env):
     path.write_text(original)
 
     offset = len(output)
-    os.write(master, b"\x1b[H\r")
+    open_home_entry(master, output, child, cli, env, "Explorer", "Explorer")
     if not wait_for_painted_text(master, output, "Quick access", child):
         raise SystemExit("Explorer did not open for the resize regression")
     if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
@@ -1121,7 +1141,7 @@ def main() -> int:
 
         # Exercise the companion CLI launched by the real Shell, not just a
         # standalone REPL. Rebuilding Shell alone can leave an older CLI beside it.
-        frame = open_home_entry(master, output, child, cli, env, "Launcher")
+        frame = open_home_entry(master, output, child, cli, env, "Launcher", "Launcher")
         if not any("builtin.command-line" in item["id"] and item["actionable"]
                    for item in frame["nodes"]):
             raise SystemExit(f"Launcher did not offer Command Line: {frame}")
@@ -1176,8 +1196,8 @@ def main() -> int:
             raise SystemExit("embedded CLI did not return to Launcher:\n" + output_diagnostic(output[launcher_offset:]))
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
             raise SystemExit("Launcher did not settle after CLI exit:\n" + output_diagnostic(output[launcher_offset:]))
-        check_management_menu(master, slave, output, child)
-        check_package_and_log_views(master, slave, output, child)
+        check_management_menu(master, slave, output, child, cli, env)
+        check_package_and_log_views(master, slave, output, child, cli, env)
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 140, 0, 0))
         os.kill(child.pid, signal.SIGWINCH)
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
@@ -1187,7 +1207,7 @@ def main() -> int:
         # Quotes, dollar signs and semicolons must stay part of the directory
         # name: this entry sets the child cwd rather than typing a cd command.
         explorer_offset = len(output)
-        os.write(master, b"\x1b[H\r")
+        open_home_entry(master, output, child, cli, env, "Explorer", "Explorer")
         if not wait_for_painted_text(master, output, "Quick access", child):
             raise SystemExit("Explorer did not open before terminal directory verification")
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
@@ -1244,7 +1264,7 @@ def main() -> int:
         # activating a Home entry from leftover report bytes.
         for report in (b"\x1b[<35;45;12M", b"\x1b[<35;90;22M"):
             explorer_offset = len(output)
-            os.write(master, b"\x1b[H\r")
+            open_home_entry(master, output, child, cli, env, "Explorer", "Explorer")
             if not wait_for_painted_text(master, output, "Quick access", child):
                 raise SystemExit("Explorer did not open before Escape/mouse regression")
             if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
@@ -1273,9 +1293,23 @@ def main() -> int:
 
         # Keyboard navigation still works immediately after discarded reports.
         status_offset = len(output)
+        frame = control_snapshot(master, output, child, cli, env)
+        last_entry = max(
+            (item for item in frame["nodes"] if item["id"].startswith("page/home.entry.")
+             and item["actionable"]),
+            key=lambda item: int(item["id"].rsplit(".", 1)[1]), default=None,
+        )
+        if frame["page"] != "Home" or last_entry is None or last_entry["name"] != "System Status":
+            raise SystemExit(f"Home End no longer targets System Status: {frame}")
         os.write(master, b"\x1b[F\r")
-        if not wait_for_output(master, output, b"Dashboard", child, 5.0, status_offset):
-            raise SystemExit("System Status navigation was lost after filtering")
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            frame = control_snapshot(master, output, child, cli, env)
+            if frame["page"] == "SystemStatus" and any("Dashboard" in line for line in frame["lines"]):
+                break
+            read_available(master, output, 0.05)
+        else:
+            raise SystemExit(f"System Status navigation was lost after filtering: {frame}\n" + output_diagnostic(output[status_offset:]))
         # Live metrics redraw continuously; allow the page entrance animation
         # to finish while draining output instead of requiring a quiet screen.
         deadline = time.monotonic() + 0.5
