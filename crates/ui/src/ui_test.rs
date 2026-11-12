@@ -144,7 +144,7 @@ impl UiTestGallery {
             ))
             .to_vec();
         let columns = Layout::horizontal([Constraint::Fill(1); 2])
-            .spacing(1)
+            .spacing(2)
             .split(body);
         let mut samples = Vec::new();
         for column in columns.iter() {
@@ -156,11 +156,17 @@ impl UiTestGallery {
                     .copied(),
             );
         }
-        let inner = |i: usize| samples[i].inner(ratatui::layout::Margin::new(1, 1));
+        let inner = |i: usize| inner_area(samples[i]);
         let controls = match self.page {
             0 => {
-                let column = Layout::horizontal([Constraint::Fill(1); 2]).split(inner(0))[0];
-                vec![Rect::new(column.x, column.y, column.width, 3), inner(1)]
+                let column = Layout::horizontal([Constraint::Fill(1); 2])
+                    .spacing(2)
+                    .split(inner(0))[0];
+                let input = inner(1);
+                vec![
+                    Rect::new(column.x, column.y, column.width, 1),
+                    Rect::new(input.x, input.y, input.width, input.height.min(3)),
+                ]
             }
             1 => (0..4).map(inner).collect(),
             2 => {
@@ -282,9 +288,9 @@ impl UiTestGallery {
                 button.handle_event(input, area)
             }
             (0, 1) => self.input.handle_event(input, area),
-            (1, 0) => self.list.handle_event(input, area),
+            (1, 0) => self.list.handle_event_borderless(input, area),
             (1, 1) => self.table.handle_event(input, area),
-            (1, 2) => self.tabs.handle_event(input, area),
+            (1, 2) => self.tabs.handle_event_borderless(input, area),
             (1, 3) => self.picker.handle_event(input, area),
             (2, 0) => self.rail.handle_event(input, area),
             (2, 1..=3) => {
@@ -295,7 +301,7 @@ impl UiTestGallery {
                 }
                 ComponentEvent::None
             }
-            (2, 4) => self.list.handle_event(input, area),
+            (2, 4) => self.list.handle_event_borderless(input, area),
             (4, 0) => self.dialog.handle_event(input, area),
             (4, 1) => self.menu.handle_event(input, area),
             (4, 2) => self.palette.handle_event(input, area),
@@ -370,8 +376,7 @@ impl UiTestGallery {
                 format!("{} F{}", i18n::tr!(PAGE_KEYS[i]), i + 1)
             };
             let mut button =
-                Button::new(format!("ui-test.page.{i}"), label).with_bracketed_label(false);
-            button.state.selected = i == self.page;
+                Button::new(format!("ui-test.page.{i}"), label).with_current(i == self.page);
             button.set_focused(i == self.focus);
             button.render_borderless_frame(frame, *rect, &theme);
         }
@@ -381,7 +386,9 @@ impl UiTestGallery {
     fn render_basic(&self, frame: &mut Frame<'_>, layout: &UiTestLayout, context: &RenderContext) {
         let theme = context.compatibility_theme();
         let area = caption(frame, layout.samples[0], "ui-test-buttons", context);
-        let columns = Layout::horizontal([Constraint::Fill(1); 2]).split(area);
+        let columns = Layout::horizontal([Constraint::Fill(1); 2])
+            .spacing(2)
+            .split(area);
         let states = [
             "ui-test-normal",
             "ui-test-focused",
@@ -393,9 +400,9 @@ impl UiTestGallery {
         for (i, key) in states.iter().enumerate() {
             let rect = Rect::new(
                 columns[i % 2].x,
-                area.y + (i / 2) as u16 * 3,
+                area.y + (i / 2) as u16 * 2,
                 columns[i % 2].width,
-                3,
+                1,
             )
             .intersection(area);
             let mut button = Button::new(
@@ -405,30 +412,39 @@ impl UiTestGallery {
                     format!("ui-test.state.{i}")
                 },
                 i18n::tr!(*key),
-            );
+            )
+            .with_current(i == 4);
             button.state = ComponentState {
                 focused: i == 1,
                 hovered: i == 2,
                 active: i == 3,
-                selected: i == 4,
+                selected: false,
                 disabled: i == 5,
             };
             if i == 0 {
                 button.set_focused(self.focus == 7);
-                button.render_frame(frame, rect, &theme);
+                button.render_borderless_frame(frame, rect, &theme);
             } else {
                 let mut specimen_theme = theme.clone();
                 specimen_theme.buttons = None;
-                button.render_frame(frame, rect, &specimen_theme);
+                button.render_borderless_frame(frame, rect, &specimen_theme);
             }
         }
-        let area = caption(frame, layout.samples[1], "ui-test-text-input", context);
+        for (column, (key, emphasis)) in columns.iter().zip([
+            ("ui-test-primary-action", ButtonEmphasis::Primary),
+            ("ui-test-danger-action", ButtonEmphasis::Danger),
+        ]) {
+            let row = Rect::new(column.x, area.y + 6, column.width, 1).intersection(area);
+            Button::new(key, i18n::tr!(key))
+                .with_emphasis(emphasis)
+                .render_borderless_frame(frame, row, &theme);
+        }
+        caption(frame, layout.samples[1], "ui-test-text-input", context);
         let mut input = self.input.clone();
         input.set_focused(self.focus == 8);
-        input.render_frame(frame, area, &theme);
+        input.render_frame(frame, layout.controls[1], &theme);
         let surface = Surface::new()
             .titled(i18n::tr!("ui-test-surface"))
-            .bordered(true)
             .raised(true);
         surface.render_frame(frame, layout.samples[2], context);
         frame.render_widget(
@@ -467,13 +483,13 @@ impl UiTestGallery {
         }
         let mut list = self.list.clone();
         list.set_focused(self.focus == 7);
-        list.render_frame(frame, layout.controls[0], &theme);
+        list.render_borderless_frame(frame, layout.controls[0], &theme);
         let mut table = self.table.clone();
         table.state.focused = self.focus == 8;
         table.render_frame(frame, layout.controls[1], context);
         let mut tabs = self.tabs.clone();
         tabs.set_focused(self.focus == 9);
-        tabs.render_frame(frame, layout.controls[2], &theme);
+        tabs.render_borderless_frame(frame, layout.controls[2], &theme);
         let mut picker = self.picker.clone();
         picker.state.focused = self.focus == 10;
         picker.render_frame(frame, layout.controls[3], context);
@@ -518,7 +534,7 @@ impl UiTestGallery {
         let (list_area, details) = SidebarWorkspaceLayout::panes(workspace.content, false);
         let mut list = self.list.clone();
         list.set_focused(self.focus == 11);
-        list.render_frame(frame, list_area, &context.compatibility_theme());
+        list.render_borderless_frame(frame, list_area, &context.compatibility_theme());
         EmptyState::new(labels[self.workspace_selected].clone())
             .detail(i18n::tr!("ui-test-safe"))
             .render_frame(frame, details, context);
@@ -641,11 +657,11 @@ fn sample_labels() -> Vec<String> {
 }
 
 fn inner_area(area: Rect) -> Rect {
-    area.inner(ratatui::layout::Margin::new(1, 1))
+    Surface::new().titled("").inner(area)
 }
 
 fn caption(frame: &mut Frame<'_>, area: Rect, key: &str, context: &RenderContext) -> Rect {
-    let surface = Surface::new().titled(i18n::tr!(key)).bordered(true);
+    let surface = Surface::new().titled(i18n::tr!(key));
     surface.render_frame(frame, area, context);
     surface.inner(area)
 }

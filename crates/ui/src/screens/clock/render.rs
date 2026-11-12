@@ -38,7 +38,7 @@ fn render_clock_face(
     let theme = &context.compatibility_theme();
     Surface::new()
         .titled(i18n::tr!("ui-clock-clock"))
-        .bordered(true)
+        .bordered(false)
         .render_frame(frame, layout.clock, context);
 
     if let Some(analog) = layout
@@ -87,7 +87,7 @@ fn render_clock_panel(
     let theme = &context.compatibility_theme();
     Surface::new()
         .titled(i18n::tr!("ui-clock-alarms-timers"))
-        .bordered(true)
+        .bordered(false)
         .render_frame(frame, layout.panel, context);
 
     super::layout::clock_action_bar(model).render(frame, layout.action_bar.area, context);

@@ -114,10 +114,10 @@ def main():
             print("PASS: external CLI completed first-use setup")
             home_names = {node["name"] for node in current["nodes"] if node["id"].startswith("page/home.entry.")}
             assert home_names
-            for width, height in [(140, 48), (108, 22), (107, 22), (108, 21), (108, 22), (140, 40)]:
+            for width, height in [(140, 48), (108, 20), (107, 20), (108, 19), (108, 20), (140, 40)]:
                 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
                 os.kill(child.pid, signal.SIGWINCH)
-                valid = width >= 108 and height >= 22
+                valid = width >= 108 and height >= 20
                 page = "Home" if valid else "terminal_size"
                 current = until(lambda current: current["width"] == width and current["height"] == height and current["page"] == page)
                 if valid:
@@ -125,9 +125,9 @@ def main():
                     text = "\n".join(current["lines"]).replace(" ", "")
                     assert all(name.replace(" ", "") in text for name in home_names)
                 else:
-                    assert "108x22" in "\n".join(current["lines"]).replace(" ", "")
+                    assert "108x20" in "\n".join(current["lines"]).replace(" ", "")
                     assert not any(node["actionable"] for node in current["nodes"])
-            print("PASS: Home fits at 108x22; undersized terminals show the shared minimum and recover")
+            print("PASS: Home fits at 108x20; undersized terminals show the shared minimum and recover")
             packages = node_by(current, lambda node: node["role"] == "button" and "Packages" in node["name"])
             click(packages["id"], double=True)
 
@@ -146,8 +146,10 @@ def main():
             os.write(master, b"\x1b[B\x1b[13;2u")
             current = until(lambda current: sum(row["selected"] for row in package_rows(current)) == 2)
             key("F1")
-            until(lambda current: "Shift+Enter" in "\n".join(current["lines"]))
+            current = until(lambda current: any(node["id"].endswith("notification.page-help.action.close") for node in current["nodes"]))
+            assert "Shift+Enter" in "\n".join(current["lines"])
             key("Escape")
+            until(lambda current: not any(node["id"].startswith("modal/") for node in current["nodes"]))
             key("Escape")
             current = until(lambda current: current["page"] == "Home")
             print("PASS: real Shift+click and Shift+Enter toggled package selection; F1 showed the controls")

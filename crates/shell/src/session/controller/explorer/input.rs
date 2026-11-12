@@ -430,6 +430,19 @@ impl ShellSession {
             return (target, ShellCommand::ClosePopup);
         }
 
+        if self.resolved_explorer_overlay().is_some()
+            && let ui::MouseEventKind::Scroll(direction) = mouse.kind
+        {
+            return (
+                target,
+                if matches!(direction, ScrollDirection::Up | ScrollDirection::Left) {
+                    ShellCommand::ExplorerOverlayPrevious
+                } else {
+                    ShellCommand::ExplorerOverlayNext
+                },
+            );
+        }
+
         if hit_target != Some(ShellComponent::Explorer) {
             if matches!(
                 mouse.kind,
@@ -457,6 +470,11 @@ impl ShellSession {
         match mouse.kind {
             ui::MouseEventKind::Moved => {
                 (target_route(hit_target), ShellCommand::Hover(hit_target))
+            }
+            ui::MouseEventKind::Down(PointerButton::Right)
+                if self.resolved_explorer_overlay().is_some() =>
+            {
+                (target, ShellCommand::CaptureOverlayInput)
             }
             ui::MouseEventKind::Down(PointerButton::Right) => {
                 self.last_click = None;

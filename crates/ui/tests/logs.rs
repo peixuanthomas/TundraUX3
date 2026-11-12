@@ -242,6 +242,16 @@ fn restricted_and_unsupported_sources_hide_rows_and_disable_actions() {
 #[test]
 fn explicit_pointer_scroll_does_not_snap_back_to_selection() {
     let mut model = model();
+    let template = model.events[0].clone();
+    model.events.extend(
+        (30..80)
+            .map(|index| {
+                let mut event = template.clone();
+                event.id = format!("event-{index}");
+                event
+            })
+            .collect::<Vec<_>>(),
+    );
     model.selected_event = 0;
     model.scroll_offset = 8;
     model.diagnostics.list_window_is_explicit = true;

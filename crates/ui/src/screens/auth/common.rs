@@ -167,8 +167,8 @@ pub(super) fn render_auth_screen(
     lines: Vec<Line<'static>>,
     context: &RenderContext,
 ) {
-    let surface = Surface::new().titled(title).bordered(true);
-    let inner = surface.inner(main);
+    let surface = Surface::new().titled(title).bordered(false);
+    let inner = auth_content_area(main);
     surface.render_frame(frame, main, &context);
     frame.render_widget(
         Paragraph::new(lines)
@@ -176,4 +176,13 @@ pub(super) fn render_auth_screen(
             .wrap(Wrap { trim: true }),
         inner,
     );
+}
+
+pub(super) fn auth_content_area(area: Rect) -> Rect {
+    Rect::new(
+        area.x,
+        area.y.saturating_add(u16::from(area.height > 0)),
+        area.width,
+        area.height.saturating_sub(1),
+    )
 }

@@ -128,21 +128,25 @@ fn short_home_cards_show_names_without_clipping_ascii_or_image_icons_after_resiz
         }
     }
 
-    for label in ["Explorer", "文件管理器"] {
+    for labels in [["Explorer", "Settings"], ["文件管理器", "设置"]] {
         let home = HomeViewModel::user(
             "User",
             "Now",
-            vec![ShellEntry::new(label, "DESCRIPTION").with_icon_key("explorer")],
+            ["explorer", "settings"]
+                .into_iter()
+                .zip(labels)
+                .map(|(key, label)| ShellEntry::new(label, "DESCRIPTION").with_icon_key(key))
+                .collect(),
         );
         for graphical in [false, true] {
             let images = ImageRenderer(std::cell::Cell::new(0));
-            let mut terminal = Terminal::new(TestBackend::new(108, 11)).unwrap();
-            for tile_height in [8, 6, 5, 4, 3, 2, 1, 7, 8] {
+            let mut terminal = Terminal::new(TestBackend::new(108, 9)).unwrap();
+            for tile_height in [6, 5, 4, 3, 2, 1, 5, 6] {
                 let height = tile_height + 3;
                 terminal.backend_mut().resize(108, height);
                 let main = Rect::new(0, 0, 108, height);
-                let tile = ui::home_layout(main, &home).items[0].area;
-                assert_eq!(tile.height, tile_height);
+                let layout = ui::home_layout(main, &home);
+                assert_eq!(layout.items.len(), home.entries().len());
                 let calls = images.0.get();
                 terminal
                     .draw(|frame| {
@@ -155,26 +159,40 @@ fn short_home_cards_show_names_without_clipping_ascii_or_image_icons_after_resiz
                         )
                     })
                     .unwrap();
-                let text = (tile.y..tile.bottom())
-                    .map(|y| buffer_row_text(&terminal, tile.x, y, tile.width))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                assert!(text.replace(' ', "").contains(label));
-                if tile_height < 7 {
-                    assert!(ui::home_entry_icon_area(tile).is_empty());
-                    assert_eq!(images.0.get(), calls);
-                    assert!(!text.contains("IMAGE"));
-                    assert!(!text.contains("DESCRIPTION"));
-                    let icon = home.home_icon_for_label("explorer").unwrap();
-                    assert!(!text.contains(icon.lines()[0].trim()));
+                let expected_calls = if graphical && tile_height >= 5 {
+                    calls + home.entries().len()
                 } else {
-                    assert_eq!(ui::home_entry_icon_area(tile).height, 4);
-                    if graphical {
-                        assert_eq!(images.0.get(), calls + 1);
-                        assert!(text.contains("IMAGE"));
+                    calls
+                };
+                assert_eq!(images.0.get(), expected_calls);
+                for item in &layout.items {
+                    let tile = item.area;
+                    let entry = &home.entries()[item.index];
+                    assert_eq!(tile.height, tile_height);
+                    let text = (tile.y..tile.bottom())
+                        .map(|y| buffer_row_text(&terminal, tile.x, y, tile.width))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    assert!(text.replace(' ', "").contains(&entry.label));
+                    let icon = home.home_icon_for_label(entry.icon_identity()).unwrap();
+                    if tile_height < 5 {
+                        assert!(ui::home_entry_icon_area(tile).is_empty());
+                        assert!(!text.contains("IMAGE"));
+                        assert!(!text.contains("DESCRIPTION"));
+                        let first_icon_line = icon
+                            .lines()
+                            .iter()
+                            .find(|line| !line.trim().is_empty())
+                            .unwrap();
+                        assert!(!text.contains(first_icon_line.trim()));
                     } else {
-                        for line in home.home_icon_for_label("explorer").unwrap().lines() {
-                            assert!(text.contains(line.trim()));
+                        assert_eq!(ui::home_entry_icon_area(tile).height, 4);
+                        if graphical {
+                            assert!(text.contains("IMAGE"));
+                        } else {
+                            for line in icon.lines() {
+                                assert!(text.contains(line.trim()));
+                            }
                         }
                     }
                 }
@@ -526,7 +544,7 @@ fn notification_layout_and_renderer_share_wrapped_message_and_stacked_action_rec
     assert_eq!(layout.message, Rect::new(12, 10, 62, 4));
     assert_eq!(layout.actions.len(), 2);
     assert_eq!(layout.actions[0].area, Rect::new(12, 15, 62, 2));
-    assert_eq!(layout.actions[1].area, Rect::new(22, 17, 42, 1));
+    assert_eq!(layout.actions[1].area, Rect::new(23, 17, 40, 1));
     let NotificationLayout::Dialog(scrolled) = notification_layout(Rect::new(0, 0, 64, 9), &model)
     else {
         panic!("long messages should scroll while their actions remain visible");
@@ -541,11 +559,29 @@ fn notification_layout_and_renderer_share_wrapped_message_and_stacked_action_rec
     );
 
     let mut terminal = Terminal::new(TestBackend::new(86, 28)).expect("test terminal");
+    let mut theme = TundraTheme::default_dark();
+    theme.buttons = Some(ui::components::ButtonFrame::new(None, None, &theme));
     terminal
-        .draw(|frame| {
-            render_notification_overlay(frame, area, &model, &TundraTheme::default_dark())
-        })
+        .draw(|frame| render_notification_overlay(frame, area, &model, &theme))
         .expect("render long notification");
+    let buttons = theme.buttons.as_ref().unwrap().regions();
+    for action in &layout.actions {
+        let label = &model.actions[action.index];
+        let text = action
+            .area
+            .positions()
+            .map(|point| terminal.backend().buffer()[point].symbol())
+            .collect::<String>()
+            .replace(' ', "");
+        assert_eq!(text, label.label);
+        let id = format!("notification.long.action.{}", label.id);
+        let button = buttons
+            .iter()
+            .find(|button| button.id.as_str() == id)
+            .unwrap();
+        assert_eq!(button.area, action.area);
+        assert!(!button.disabled);
+    }
     assert!(region_has_bg(
         &terminal,
         layout.actions[0].area,
@@ -600,7 +636,7 @@ fn login_renderer_masks_password_length() {
     assert!(output.contains("Password"));
     assert!(output.contains("*************"));
     assert!(!output.contains("StrongPass123"));
-    assert!(output.contains("[F2 Show]"));
+    assert!(output.contains("F2 Show"));
     assert!(!output.to_ascii_lowercase().contains("guest"));
     assert!(!output.contains("F3"));
     assert!(output.contains("Invalid username or password"));
@@ -614,7 +650,7 @@ fn login_renderer_masks_password_length() {
     assert!(visibility_area.right() <= main.right());
     assert_eq!(
         login_user_list_visible_rows(main),
-        usize::from(list_area.height.saturating_sub(2))
+        usize::from(ui::login_user_list_rows_area(main).height)
     );
     assert!(
         region_has_fg(
@@ -711,7 +747,7 @@ fn login_renderer_reveals_only_explicit_plaintext_and_focuses_visibility_control
     assert_eq!(model.visible_password(), Some(visible));
     assert!(model.password_is_visible());
     assert!(visible.chars().all(|character| output.contains(character)));
-    assert!(output.contains("[F2 Hide]"));
+    assert!(output.contains("F2 Hide"));
     assert!(!output.contains("***"));
     assert!(region_has_fg(
         &terminal,

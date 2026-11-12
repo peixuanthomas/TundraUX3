@@ -287,25 +287,23 @@ pub fn render_command_line_content_with_images(
     picker: Option<&EditorImagePicker>,
 ) {
     let theme = &context.compatibility_theme();
-    Surface::new()
-        .titled(
-            model
-                .title
-                .clone()
-                .unwrap_or_else(|| i18n::tr!("ui-command-line-command-line")),
-        )
-        .bordered(true)
-        .render_frame(frame, main, context);
+    Surface::new().render_frame(frame, main, context);
 
     let Some(terminal_area) = terminal_area else {
         images.clear();
-        render_size_blocker(frame, panel_inner_area(main), theme);
+        render_size_blocker(frame, main, theme);
         return;
     };
 
     let output_area = model.output_area(terminal_area);
     let content_area = command_line_content_area(output_area, model.terminal.as_ref());
-    let message = command_line_process_message(model, theme);
+    let message = command_line_process_message(model, theme).map(|(message, style)| {
+        let message = match &model.title {
+            Some(title) => format!("{title} · {message}"),
+            None => message,
+        };
+        (message, style)
+    });
     render_terminal_snapshot_cells(frame, content_area, model.terminal.as_ref(), theme);
     images.render(frame, content_area, model.terminal.as_ref(), picker);
     render_command_line_scrollbar(frame, output_area, model.terminal.as_ref(), context);
@@ -399,15 +397,6 @@ fn render_command_line_scrollbar(
         .scrollback_rows
         .saturating_sub(snapshot.scrollback_offset.min(snapshot.scrollback_rows));
     Scrollbar::new(content, viewport, offset).render_frame(frame, scrollbar.track, context);
-}
-
-fn panel_inner_area(area: Rect) -> Rect {
-    Rect::new(
-        area.x.saturating_add(1),
-        area.y.saturating_add(1),
-        area.width.saturating_sub(2),
-        area.height.saturating_sub(2),
-    )
 }
 
 pub(crate) fn render_terminal_snapshot(

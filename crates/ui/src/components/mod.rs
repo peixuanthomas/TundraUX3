@@ -7,6 +7,7 @@
 //! - Hit testing always receives the current render area, so resize handling stays external.
 
 mod big_text;
+mod busy_indicator;
 mod button;
 mod command_palette;
 mod command_status;
@@ -33,6 +34,7 @@ mod text_input;
 mod toast;
 mod update_activity;
 
+pub use busy_indicator::BusyIndicator;
 pub use button::{Button, ButtonEmphasis, ButtonFrame, ButtonRegion};
 pub use command_palette::{CommandPalette, CommandPaletteCommand};
 pub use command_status::CommandStatus;

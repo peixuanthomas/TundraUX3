@@ -91,25 +91,38 @@ fn aa_stop_and_confirmed_kill_reach_a_real_stubborn_pty_process() {
 }
 
 #[test]
-fn default_enter_approval_reaches_the_linux_authorization_adapter() {
-    let mut state = ShellSession::new_for_home_mode(
-        ShellLaunchConfig::default(),
-        (120, 40),
-        ShellHomeMode::User,
-    );
-    let (tx, _rx) = mpsc::channel();
-    let job = state
-        .begin_auto_admin("Enable fixture account".into(), true, tx)
-        .unwrap();
-    let authorization = AutoAdminAuthorization::new(job.clone());
-    assert!(matches!(
-        authorization.begin(),
-        Err(ServiceError::AuthorizationCancelled)
-    ));
-    state.apply_input(InputEvent::key(InputKey::Enter));
-    assert!(job.wait_for_approval().is_ok());
-    assert!(authorization.begin().is_ok());
-    assert!(!authorization.cancelled());
+fn linux_authorization_requires_explicit_approval_instead_of_default_enter() {
+    for approve in [false, true] {
+        let mut state = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+        let (tx, _rx) = mpsc::channel();
+        let job = state
+            .begin_auto_admin("Enable fixture account".into(), true, tx)
+            .unwrap();
+        let authorization = AutoAdminAuthorization::new(job.clone());
+        assert!(matches!(
+            authorization.begin(),
+            Err(ServiceError::AuthorizationCancelled)
+        ));
+        assert_eq!(job.phase(), WAITING);
+        assert!(!state.auto_admin_view().unwrap().approve_selected);
+        if approve {
+            state.apply_input(InputEvent::key(InputKey::Right));
+            assert!(state.auto_admin_view().unwrap().approve_selected);
+            assert!(matches!(
+                authorization.begin(),
+                Err(ServiceError::AuthorizationCancelled)
+            ));
+        }
+        state.apply_input(InputEvent::key(InputKey::Enter));
+        assert_eq!(job.wait_for_approval().is_ok(), approve);
+        assert_eq!(job.phase(), if approve { RUNNING } else { DENIED });
+        assert_eq!(authorization.begin().is_ok(), approve);
+        assert_eq!(authorization.cancelled(), !approve);
+    }
 }
 
 #[test]

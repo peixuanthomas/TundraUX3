@@ -23,7 +23,7 @@ TundraUX3 brings system tools, files, editors, and everyday utilities into one t
 
 ## Get started
 
-Use an interactive terminal of at least **108 columns × 22 rows**. Mouse and touch input require a terminal that forwards pointer events.
+Use an interactive terminal of at least **108 columns × 20 rows**. Mouse and touch input require a terminal that forwards pointer events.
 
 ### Run a Linux portable build
 
@@ -68,6 +68,8 @@ cargo run --locked -p cli --bin tundra-cli -- doctor
 Open supported system tasks directly from **Home**, or open the remaining applications from **Launcher**. Applications on Home are not repeated in Launcher. Common file actions and editor tools stay visible. Management pages offer an expert area with F3 that stays open when you select another item.
 
 Home cards show application names without letter shortcuts. Small terminals use names only so every entry fits on one page at the minimum size. Click a card, or select it with the arrow keys and press Enter/Space.
+
+The interface uses neutral dark surfaces, compact rows, and visible actions. One-row title and status bars leave 18 content rows at 108 × 20. Keyboard, mouse, and touch share short, interruptible transitions; enable reduced motion in Settings to show changes immediately.
 
 | Input | Action |
 | --- | --- |

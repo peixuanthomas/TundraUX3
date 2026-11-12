@@ -4,7 +4,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Bar, BarChart, BarGroup, Paragraph, Sparkline};
 
-use super::{ComponentState, EmptyState, ProgressGauge, Surface, tone_color};
+use super::{BusyIndicator, ComponentState, EmptyState, ProgressGauge, Surface, tone_color};
 use crate::{
     RenderContext, SystemStatusWidgetSize, SystemStatusWidgetState, SystemStatusWidgetViewModel,
 };
@@ -41,29 +41,31 @@ impl<'a> MetricCard<'a> {
             self.state,
             &["click", "drag"],
         );
-        let theme = &context.compatibility_theme();
-        let surface = Surface::new()
-            .titled(self.model.kind.label())
-            .bordered(true)
-            .raised(true);
-        let inner = if area.height < 3 {
-            Rect::new(area.x + 1, area.y + 1, area.width.saturating_sub(2), area.height.saturating_sub(1))
-        } else {
-            surface.inner(area)
-        };
-        let mut card_context = context.clone();
         // The state clock redraws once a second: a four-second cycle stays slow
         // without requesting continuous animation frames or dimming the data.
         let edit_highlight =
             self.editing && (context.motion.reduced_motion || context.motion.now.as_secs() % 4 < 2);
-        if self.state.focused || self.state.selected || edit_highlight {
-            card_context.theme.border = context.theme.accent;
-        }
-        surface.render_frame(frame, area, &card_context);
+        let surface = Surface::new()
+            .titled(self.model.kind.label())
+            .raised(self.state.selected || edit_highlight)
+            .focused(self.state.focused);
+        let inner = surface.inner(area);
+        surface.render_frame(frame, area, context);
+        let mut theme = context.compatibility_theme();
+        theme.background = if surface.raised {
+            context.theme.raised
+        } else {
+            context.theme.surface
+        };
+        let theme = &theme;
         match &self.model.state {
             SystemStatusWidgetState::Loading => {
-                EmptyState::new(i18n::tr!("ui-components-loading"))
-                    .render_frame(frame, inner, context);
+                EmptyState::new(format!(
+                    "{} {}",
+                    BusyIndicator::from_motion(context.motion).symbol(),
+                    i18n::tr!("ui-components-loading"),
+                ))
+                .render_frame(frame, inner, context);
                 return;
             }
             SystemStatusWidgetState::Unavailable { message } => {
@@ -148,7 +150,7 @@ impl<'a> MetricCard<'a> {
                 Style::default().fg(context.theme.warning),
             ));
         }
-        frame.render_widget(Paragraph::new(lines), text_area);
+        frame.render_widget(Paragraph::new(lines).style(theme.body_style()), text_area);
         if gauge_h > 0 {
             let value = self.model.progress_percent.unwrap_or_default().min(100);
             frame.render_widget(

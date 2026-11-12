@@ -2015,6 +2015,69 @@ fn system_status_users_share_admin_view_permissions() {
 }
 
 #[test]
+fn system_status_drag_uses_rendered_column_stride_at_the_gap_boundary() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::User);
+    state.enter_screen(ShellScreen::SystemStatus);
+    state.begin_system_status_dashboard_edit();
+    let draft = state
+        .pages
+        .system_status
+        .system_status_dashboard_draft
+        .as_mut()
+        .unwrap();
+    draft.widgets = vec![storage::SystemStatusWidgetKind::Cpu];
+    draft.wide.placements = vec![storage::WidgetPlacement {
+        kind: storage::SystemStatusWidgetKind::Cpu,
+        column: 0,
+        row: 0,
+        size: storage::SystemStatusWidgetSize::Small,
+    }];
+    let (_, layout) = state.system_status_layout().unwrap();
+    let kind = ui::SystemStatusWidgetKind::Cpu;
+    let card = layout
+        .widgets
+        .iter()
+        .find(|card| card.kind == kind)
+        .unwrap();
+    state.begin_system_status_widget_drag(
+        kind,
+        (card.area.x + layout.column_stride - 1, card.area.y + 1),
+    );
+    assert_eq!(
+        state
+            .pages
+            .system_status
+            .system_status_widget_drag
+            .as_ref()
+            .unwrap()
+            .grab_column,
+        0
+    );
+    state.update_system_status_widget_drag((
+        layout.canvas.x + layout.column_stride * 2 - 1,
+        layout.canvas.y + (ui::LOGICAL_ROW_HEIGHT + ui::LOGICAL_ROW_GAP) * 3 + 1,
+    ));
+    let draft = state
+        .pages
+        .system_status
+        .system_status_dashboard_draft
+        .as_ref()
+        .unwrap();
+    let placement = draft
+        .wide
+        .placements
+        .iter()
+        .find(|placement| placement.kind == storage::SystemStatusWidgetKind::Cpu)
+        .unwrap();
+    assert_eq!((placement.column, placement.row), (1, 3));
+}
+
+#[test]
 fn system_status_drag_changes_only_active_profile_and_clears_capture() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
@@ -3112,7 +3175,7 @@ fn exit_confirmation_keeps_login_as_the_content_screen() {
 }
 
 #[test]
-fn motion_progress_drives_page_and_overlay_hit_regions() {
+fn motion_keeps_page_and_overlay_hit_regions_fixed_and_immediately_available() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
         (120, 40),
@@ -3126,160 +3189,127 @@ fn motion_progress_drives_page_and_overlay_hit_regions() {
         active: progress < 1_000,
         next_redraw_in: Duration::from_millis(16),
     };
-
-    state.refresh_hit_map_with_motion(ui::MotionTransitions {
-        screen: Some(transition(ui::MotionTransitionKind::Page, 0)),
-        ..ui::MotionTransitions::default()
-    });
-    let shifted_top = state
-        .hit_map()
-        .regions()
-        .iter()
-        .find(|region| region.component == ShellComponent::TopBar)
-        .expect("shifted top bar");
-    assert_eq!(
-        shifted_top.area.y, 0,
-        "page motion must not move shell chrome"
-    );
-    let expected = ui::ShellFrameLayout::new(
-        Rect::new(0, 0, 120, 40),
+    let bounds = Rect::new(0, 0, 120, 40);
+    let settled = ui::ShellFrameLayout::new(
+        bounds,
         state.status_time_button_label().as_deref(),
-        &ui::RenderContext {
-            transitions: ui::MotionTransitions {
-                screen: Some(transition(ui::MotionTransitionKind::Page, 0)),
-                ..Default::default()
-            },
+        &ui::RenderContext::default(),
+    );
+    for progress in [0, 250, 499, 500, 1_000] {
+        state.refresh_hit_map_with_motion(ui::MotionTransitions {
+            screen: Some(transition(ui::MotionTransitionKind::Page, progress)),
             ..Default::default()
-        },
-    );
-    assert_eq!(state.shell_layout_for(expected.bounds), expected.shell);
-    let status = state
-        .hit_map()
-        .regions()
-        .iter()
-        .find(|region| region.component == ShellComponent::StatusBar)
-        .unwrap();
-    assert_eq!(status.area.y, 37);
-
+        });
+        let top = state
+            .hit_map()
+            .regions()
+            .iter()
+            .find(|region| region.component == ShellComponent::TopBar)
+            .unwrap();
+        assert_eq!(top.area, Rect::new(0, 0, 120, 1));
+        assert_eq!(state.shell_layout_for(bounds), settled.shell);
+        let status = state
+            .hit_map()
+            .regions()
+            .iter()
+            .find(|region| region.component == ShellComponent::StatusBar)
+            .unwrap();
+        assert_eq!(status.area.y, 39);
+    }
     state.apply_input(InputEvent::from_key_label("Esc"));
-    state.refresh_hit_map_with_motion(ui::MotionTransitions {
-        overlay: Some(transition(ui::MotionTransitionKind::Dialog, 0)),
-        ..ui::MotionTransitions::default()
-    });
-    assert!(
-        state
+    let mut dialog_area = None;
+    for progress in [0, 250, 499, 500, 1_000] {
+        state.refresh_hit_map_with_motion(ui::MotionTransitions {
+            overlay: Some(transition(ui::MotionTransitionKind::Dialog, progress)),
+            ..Default::default()
+        });
+        let current = state
             .hit_map()
             .regions()
             .iter()
-            .all(|region| region.component != ShellComponent::ExitDialog),
-        "a partially revealed dialog must not expose stale mouse targets"
-    );
-
-    state.refresh_hit_map_with_motion(ui::MotionTransitions {
-        overlay: Some(transition(ui::MotionTransitionKind::Dialog, 500)),
-        ..ui::MotionTransitions::default()
-    });
-    assert!(
-        state
-            .hit_map()
-            .regions()
-            .iter()
-            .any(|region| region.component == ShellComponent::ExitDialog)
-    );
+            .find(|region| region.component == ShellComponent::ExitDialog)
+            .expect("first-frame dialog hit area")
+            .area;
+        assert_eq!(*dialog_area.get_or_insert(current), current);
+        assert_eq!(state.focus_order(), vec![ShellComponent::ExitDialog]);
+        assert_eq!(
+            state
+                .route_input_at(
+                    InputEvent::mouse_down(PointerButton::Left, (0, 0)),
+                    Instant::now()
+                )
+                .command,
+            ShellCommand::CaptureOverlayInput
+        );
+    }
 }
 
 #[test]
-fn entering_overlays_gate_keyboard_focus_and_popup_activation_until_ready() {
-    let mut state = ShellSession::new_for_home_mode(
-        ShellLaunchConfig::default(),
-        (120, 40),
-        ShellHomeMode::User,
-    );
-    state.apply_input(InputEvent::from_key_label("Esc"));
-    assert_eq!(
-        state
-            .active_overlay_descriptor()
-            .map(|overlay| overlay.category),
-        Some(ShellOverlayCategory::ShellModal)
-    );
-    let transition = |progress| ui::MotionTransition {
-        kind: ui::MotionTransitionKind::Dialog,
+fn entering_overlays_accept_input_immediately_and_keep_modal_focus_isolated() {
+    let transition = |kind, progress| ui::MotionTransition {
+        kind,
         direction: ui::MotionDirection::Entering,
         progress,
         phase_progress: progress,
         active: progress < 1_000,
         next_redraw_in: Duration::from_millis(16),
     };
-    state.refresh_hit_map_with_motion(ui::MotionTransitions {
-        overlay: Some(transition(499)),
-        ..ui::MotionTransitions::default()
-    });
-    assert_ne!(state.focus_order(), vec![ShellComponent::ExitDialog]);
-    assert_eq!(
-        state.route_key_input(&KeyInput::from_label("Enter")).1,
-        ShellCommand::Noop
-    );
-    assert_ne!(
-        state.route_key_input(&KeyInput::from_label("Esc")).1,
-        ShellCommand::Noop
-    );
-
-    state.refresh_hit_map_with_motion(ui::MotionTransitions {
-        overlay: Some(transition(500)),
-        ..ui::MotionTransitions::default()
-    });
-    assert_eq!(state.focus_order(), vec![ShellComponent::ExitDialog]);
-    assert_ne!(
-        state.route_key_input(&KeyInput::from_label("Enter")).1,
-        ShellCommand::Noop
-    );
-
-    let mut state = ShellSession::new_for_home_mode(
-        ShellLaunchConfig::default(),
-        (120, 40),
-        ShellHomeMode::User,
-    );
-    state.pages.common.active_popup = Some(ShellPopup {
-        owner: Some(ShellComponent::Home),
-        anchor: (10, 10),
-    });
-    state.refresh_hit_map_with_motion(ui::MotionTransitions {
-        overlay: Some(ui::MotionTransition {
-            kind: ui::MotionTransitionKind::Popover,
-            ..transition(499)
-        }),
-        ..ui::MotionTransitions::default()
-    });
-    assert_ne!(state.focus_order(), vec![ShellComponent::ContextMenu]);
-    assert_eq!(
-        state.route_key_input(&KeyInput::from_label("Enter")).1,
-        ShellCommand::Noop
-    );
-    assert_eq!(
-        state
-            .route_input_at(
-                InputEvent::mouse_down(PointerButton::Left, (0, 0)),
-                Instant::now(),
+    for popup in [false, true] {
+        let mut state = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+        let (kind, owner) = if popup {
+            state.pages.common.active_popup = Some(ShellPopup {
+                owner: Some(ShellComponent::Home),
+                anchor: (10, 10),
+            });
+            (
+                ui::MotionTransitionKind::Popover,
+                ShellComponent::ContextMenu,
             )
-            .command,
-        ShellCommand::CaptureOverlayInput
-    );
-    state.refresh_hit_map_with_motion(ui::MotionTransitions {
-        overlay: Some(ui::MotionTransition {
-            kind: ui::MotionTransitionKind::Popover,
-            ..transition(500)
-        }),
-        ..ui::MotionTransitions::default()
-    });
-    assert_eq!(state.focus_order(), vec![ShellComponent::ContextMenu]);
-    assert_ne!(
-        state.route_key_input(&KeyInput::from_label("Enter")).1,
-        ShellCommand::Noop
-    );
+        } else {
+            state.apply_input(InputEvent::from_key_label("Esc"));
+            assert_eq!(
+                state.active_overlay_descriptor().unwrap().category,
+                ShellOverlayCategory::ShellModal
+            );
+            (ui::MotionTransitionKind::Dialog, ShellComponent::ExitDialog)
+        };
+        state.refresh_hit_map();
+        let activate = state.route_key_input(&KeyInput::from_label("Enter"));
+        assert_ne!(activate.1, ShellCommand::Noop);
+        for progress in [0, 250, 499, 500, 1_000] {
+            state.refresh_hit_map_with_motion(ui::MotionTransitions {
+                overlay: Some(transition(kind, progress)),
+                ..Default::default()
+            });
+            assert!(state.overlay_interaction_ready);
+            assert_eq!(state.focus_order(), vec![owner]);
+            assert_eq!(
+                state.route_key_input(&KeyInput::from_label("Enter")),
+                activate
+            );
+            assert_ne!(
+                state.route_key_input(&KeyInput::from_label("Esc")).1,
+                ShellCommand::Noop
+            );
+            assert_eq!(
+                state
+                    .route_input_at(
+                        InputEvent::mouse_down(PointerButton::Left, (0, 0)),
+                        Instant::now()
+                    )
+                    .command,
+                ShellCommand::CaptureOverlayInput
+            );
+        }
+    }
 }
 
 #[test]
-fn overlay_resolver_categories_share_readiness_input_focus_and_hit_regions() {
+fn overlay_resolver_categories_share_immediate_input_focus_and_hit_regions() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
         (120, 40),
@@ -3307,16 +3337,28 @@ fn overlay_resolver_categories_share_readiness_input_focus_and_hit_regions() {
     });
     assert_eq!(
         state.route_key_input(&KeyInput::from_label("Enter")).1,
-        ShellCommand::Noop
+        ShellCommand::ClockCreateFormInput(InputEvent::from_key_label("Enter"))
     );
     assert_eq!(
         state.route_key_input(&KeyInput::from_label("Esc")).1,
         ShellCommand::ClockCreateFormInput(InputEvent::from_key_label("Esc"))
     );
     assert!(
-        !state
+        state
             .focus_order()
             .contains(&ShellComponent::ClockCreateInput)
+    );
+
+    state.apply_input(InputEvent::key(InputKey::Char('1')));
+    assert_eq!(
+        state
+            .pages
+            .clock
+            .clock_create_state
+            .as_ref()
+            .unwrap()
+            .values[0],
+        1
     );
 
     let mut state = explorer_routing_test_state();
@@ -3360,8 +3402,8 @@ fn overlay_resolver_categories_share_readiness_input_focus_and_hit_regions() {
 }
 
 #[test]
-fn setup_clock_and_diagnostics_publish_exact_overlay_surfaces_while_gated() {
-    let gated = ui::MotionTransitions {
+fn setup_clock_and_diagnostics_keep_exact_overlay_surfaces_during_entry() {
+    let entering = ui::MotionTransitions {
         overlay: Some(ui::MotionTransition {
             kind: ui::MotionTransitionKind::Dialog,
             direction: ui::MotionDirection::Entering,
@@ -3385,7 +3427,7 @@ fn setup_clock_and_diagnostics_publish_exact_overlay_surfaces_while_gated() {
     state.set_navigation_path(vec![ShellScreen::FirstRunSetup]);
     state.pages.setup.setup_custom_color_target = Some(ui::SetupCustomColorTarget::Theme);
     let setup_area = ui::setup_custom_color_dialog_area(main);
-    for motion in [ui::MotionTransitions::default(), gated] {
+    for motion in [ui::MotionTransitions::default(), entering] {
         state.refresh_hit_map_with_motion(motion);
         assert_eq!(
             overlay_areas_for(&state, ShellComponent::SetupCustomColorDialog),
@@ -3414,15 +3456,28 @@ fn setup_clock_and_diagnostics_publish_exact_overlay_surfaces_while_gated() {
         state.route_key_input(&KeyInput::from_label("Tab")).1,
         ShellCommand::ClockCreateFormInput(InputEvent::from_key_label("Tab"))
     );
-    state.refresh_hit_map_with_motion(gated);
+    state.refresh_hit_map_with_motion(entering);
     assert_eq!(
         overlay_areas_for(&state, ShellComponent::ClockCreateDialog),
         vec![clock_layout.dialog]
     );
     assert!(
-        !state
+        state
             .focus_order()
             .contains(&ShellComponent::ClockCreateInput)
+    );
+
+    assert!(state.overlay_interaction_ready);
+    state.apply_input(InputEvent::key(InputKey::Char('1')));
+    assert_eq!(
+        state
+            .pages
+            .clock
+            .clock_create_state
+            .as_ref()
+            .unwrap()
+            .values[0],
+        1
     );
 
     state.pages.clock.clock_create_state = None;
@@ -3437,7 +3492,7 @@ fn setup_clock_and_diagnostics_publish_exact_overlay_surfaces_while_gated() {
         .repair_dialog
         .expect("repair dialog")
         .dialog;
-    for motion in [ui::MotionTransitions::default(), gated] {
+    for motion in [ui::MotionTransitions::default(), entering] {
         state.refresh_hit_map_with_motion(motion);
         assert_eq!(
             overlay_areas_for(&state, ShellComponent::DiagnosticsRepairDialog),
@@ -3453,7 +3508,7 @@ fn setup_clock_and_diagnostics_publish_exact_overlay_surfaces_while_gated() {
         .repair_dialog
         .expect("system-status repair dialog");
     let system_area = ui::diagnostics_repair_dialog_layout(main, &system_dialog).dialog;
-    for motion in [ui::MotionTransitions::default(), gated] {
+    for motion in [ui::MotionTransitions::default(), entering] {
         state.refresh_hit_map_with_motion(motion);
         assert_eq!(
             overlay_areas_for(&state, ShellComponent::DiagnosticsRepairDialog),
@@ -3644,12 +3699,8 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
 }
 
 #[test]
-fn newly_tracked_overlay_groups_share_keyboard_mouse_focus_and_readiness_gating() {
-    let mut launcher = ShellSession::new_for_home_mode(
-        ShellLaunchConfig::default(),
-        (120, 40),
-        ShellHomeMode::User,
-    );
+fn newly_tracked_overlay_groups_keep_keyboard_mouse_focus_ready_during_entry() {
+    let (mut launcher, platform, _guard) = explorer_terminal_test_fixture();
     launcher.set_navigation_path(vec![ShellScreen::Launcher]);
     launcher.pages.launcher.launcher_pending_confirmation =
         Some(LauncherPendingConfirmation::Launch {
@@ -3664,6 +3715,12 @@ fn newly_tracked_overlay_groups_share_keyboard_mouse_focus_and_readiness_gating(
         ShellHomeMode::User,
     );
     editor.set_navigation_path(vec![ShellScreen::Editor]);
+    editor.app.dispatch_at(
+        app::AppCommand::SetEditorState(Some(EditorState::untitled(
+            app::editor::DocumentKind::PlainText,
+        ))),
+        Instant::now(),
+    );
     editor.pages.editor.editor_open_menu = Some(ui::EditorMenu::File);
 
     let mut users = ShellSession::new_for_home_mode(
@@ -3698,6 +3755,9 @@ fn newly_tracked_overlay_groups_share_keyboard_mouse_focus_and_readiness_gating(
             ShellComponent::UserManagement,
         ),
     ] {
+        state.refresh_hit_map();
+        let activate = state.route_key_input(&KeyInput::from_label("Enter"));
+        assert_ne!(activate.1, ShellCommand::Noop);
         let entering = ui::MotionTransition {
             kind,
             direction: ui::MotionDirection::Entering,
@@ -3710,10 +3770,10 @@ fn newly_tracked_overlay_groups_share_keyboard_mouse_focus_and_readiness_gating(
             overlay: Some(entering),
             ..ui::MotionTransitions::default()
         });
-        assert!(!state.overlay_interaction_ready);
+        assert!(state.overlay_interaction_ready);
         assert_eq!(
-            state.route_key_input(&KeyInput::from_label("Enter")).1,
-            ShellCommand::Noop
+            state.route_key_input(&KeyInput::from_label("Enter")),
+            activate
         );
         assert_ne!(
             state.route_key_input(&KeyInput::from_label("Esc")).1,
@@ -3724,21 +3784,7 @@ fn newly_tracked_overlay_groups_share_keyboard_mouse_focus_and_readiness_gating(
             state.hit_map().regions().iter().any(|region| {
                 region.layer == ShellHitLayer::AppOverlay && region.component == owner
             });
-        if owner == ShellComponent::Editor {
-            assert!(!has_surface, "unrendered Editor menu has no layout surface");
-        } else {
-            assert!(has_surface, "missing overlay surface for {owner:?}");
-        }
-        assert_eq!(
-            state
-                .route_input_at(
-                    InputEvent::mouse_down(PointerButton::Left, (1, 1)),
-                    Instant::now(),
-                )
-                .command,
-            ShellCommand::CaptureOverlayInput
-        );
-
+        assert!(has_surface, "missing overlay surface for {owner:?}");
         state.refresh_hit_map_with_motion(ui::MotionTransitions {
             overlay: Some(ui::MotionTransition {
                 progress: 1_000,
@@ -3760,6 +3806,45 @@ fn newly_tracked_overlay_groups_share_keyboard_mouse_focus_and_readiness_gating(
             state.overlay_interaction_ready,
             "Reduced/inactive motion settles ready"
         );
+
+        state.refresh_hit_map_with_motion(ui::MotionTransitions {
+            overlay: Some(entering),
+            ..ui::MotionTransitions::default()
+        });
+        let launcher_before = state.pages.launcher.clone();
+        let editor_before = state.app.editor_state().cloned();
+        let users_before = state.pages.user_management.user_management_mode.clone();
+        let overlay_before = state.active_overlay_descriptor();
+        let calls_before = platform.calls();
+        let now = Instant::now();
+        state.apply_input_with_platform_at(
+            InputEvent::mouse_down(PointerButton::Left, (1, 1)),
+            &platform,
+            now,
+        );
+        state.apply_input_with_platform_at(
+            InputEvent::mouse_up(PointerButton::Left, (1, 1)),
+            &platform,
+            now + Duration::from_millis(20),
+        );
+        assert_eq!(state.pages.launcher, launcher_before);
+        assert_eq!(state.app.editor_state(), editor_before.as_ref());
+        match (
+            &state.pages.user_management.user_management_mode,
+            &users_before,
+        ) {
+            (UserManagementMode::EditInfo(form), UserManagementMode::EditInfo(before)) => {
+                assert_eq!(
+                    (&form.username, &form.display_name, form.focused_field),
+                    (&before.username, &before.display_name, before.focused_field)
+                );
+            }
+            (mode, before) => assert_eq!(mode, before),
+        }
+        assert_eq!(platform.calls(), calls_before);
+        if owner != ShellComponent::Editor {
+            assert_eq!(state.active_overlay_descriptor(), overlay_before);
+        }
     }
 }
 
@@ -4272,7 +4357,7 @@ fn settings_editor_identities_distinguish_variants_without_mutable_content() {
 }
 
 #[test]
-fn explorer_dialogs_share_central_keyboard_mouse_focus_and_hit_map_gating() {
+fn explorer_dialogs_accept_input_during_entry_and_keep_their_hit_maps_isolated() {
     let entering = ui::MotionTransition {
         kind: ui::MotionTransitionKind::Dialog,
         direction: ui::MotionDirection::Entering,
@@ -4287,7 +4372,8 @@ fn explorer_dialogs_share_central_keyboard_mouse_focus_and_hit_map_gating() {
         ExplorerInputMode::Rename,
         ExplorerInputMode::RestoreDestination,
     ] {
-        let mut state = explorer_routing_test_state();
+        let (mut state, platform, _guard) = explorer_terminal_test_fixture();
+        let covered = explorer_test_layout(&state).rows[0].area;
         state.pages.explorer.explorer_input_mode = mode;
         state.pages.common.active_popup = Some(ShellPopup {
             owner: Some(ShellComponent::Explorer),
@@ -4309,10 +4395,10 @@ fn explorer_dialogs_share_central_keyboard_mouse_focus_and_hit_map_gating() {
             overlay: Some(entering),
             ..ui::MotionTransitions::default()
         });
-        assert!(!state.overlay_interaction_ready);
+        assert!(state.overlay_interaction_ready);
         assert_eq!(
             state.route_key_input(&KeyInput::from_label("Enter")).1,
-            ShellCommand::Noop
+            ShellCommand::ExplorerEditInput(InputEvent::from_key_label("Enter"))
         );
         assert_ne!(
             state.route_key_input(&KeyInput::from_label("Esc")).1,
@@ -4329,15 +4415,29 @@ fn explorer_dialogs_share_central_keyboard_mouse_focus_and_hit_map_gating() {
                 .collect::<Vec<_>>(),
             vec![explorer_overlay_surface(&state)]
         );
-        assert_eq!(
-            state
-                .route_input_at(
-                    InputEvent::mouse_down(PointerButton::Left, (1, 1)),
-                    Instant::now(),
-                )
-                .command,
-            ShellCommand::CaptureOverlayInput
-        );
+        let explorer_before = state.app.explorer_state().cloned();
+        let overlay_before = state.active_overlay_descriptor();
+        let calls_before = platform.calls();
+        for point in [(1, 1), (covered.right() - 1, covered.y)] {
+            assert!(!rect_contains(explorer_overlay_surface(&state), point));
+            let now = Instant::now();
+            state.apply_input_with_platform_at(
+                InputEvent::mouse_down(PointerButton::Left, point),
+                &platform,
+                now,
+            );
+            state.apply_input_with_platform_at(
+                InputEvent::mouse_up(PointerButton::Left, point),
+                &platform,
+                now + Duration::from_millis(20),
+            );
+            assert_eq!(state.app.explorer_state(), explorer_before.as_ref());
+            assert_eq!(state.pages.explorer.explorer_input_mode, mode);
+            assert_eq!(state.active_overlay_descriptor(), overlay_before);
+            assert_eq!(platform.calls(), calls_before);
+        }
+        state.apply_input_with_platform(InputEvent::Paste("新名字".into()), &platform);
+        assert_eq!(state.pages.explorer.explorer_input, "新名字");
         state.refresh_hit_map_with_motion(ui::MotionTransitions {
             overlay: Some(ui::MotionTransition {
                 progress: 1_000,
@@ -4368,13 +4468,16 @@ fn explorer_dialogs_share_central_keyboard_mouse_focus_and_hit_map_gating() {
         app::AppCommand::SetExplorerState(Some(explorer)),
         Instant::now(),
     );
+    conflict.refresh_hit_map();
+    let activate = conflict.route_key_input(&KeyInput::from_label("Enter"));
+    assert_ne!(activate.1, ShellCommand::Noop);
     conflict.refresh_hit_map_with_motion(ui::MotionTransitions {
         overlay: Some(entering),
         ..ui::MotionTransitions::default()
     });
     assert_eq!(
-        conflict.route_key_input(&KeyInput::from_label("Enter")).1,
-        ShellCommand::Noop
+        conflict.route_key_input(&KeyInput::from_label("Enter")),
+        activate
     );
     assert_ne!(
         conflict.route_key_input(&KeyInput::from_label("Esc")).1,
@@ -4383,7 +4486,7 @@ fn explorer_dialogs_share_central_keyboard_mouse_focus_and_hit_map_gating() {
 }
 
 #[test]
-fn explorer_semantic_replacements_gate_input_while_active_popup_is_present() {
+fn explorer_semantic_replacements_route_input_immediately_to_the_active_popup() {
     let replacing = |kind| ui::MotionTransition {
         kind,
         direction: ui::MotionDirection::Replacing,
@@ -4397,7 +4500,8 @@ fn explorer_semantic_replacements_gate_input_while_active_popup_is_present() {
         ExplorerOverlayMode::Options,
         ExplorerOverlayMode::Properties,
     ] {
-        let mut state = explorer_routing_test_state();
+        let (mut state, platform, _guard) = explorer_terminal_test_fixture();
+        let covered = explorer_test_layout(&state).rows[0].area;
         state.pages.common.active_popup = Some(ShellPopup {
             owner: Some(ShellComponent::Explorer),
             anchor: (1, 1),
@@ -4438,10 +4542,7 @@ fn explorer_semantic_replacements_gate_input_while_active_popup_is_present() {
             overlay: Some(replacing(ui::MotionTransitionKind::Popover)),
             ..ui::MotionTransitions::default()
         });
-        assert_eq!(
-            state.route_key_input(&KeyInput::from_label("Enter")).1,
-            ShellCommand::Noop
-        );
+        assert_eq!(state.route_key_input(&KeyInput::from_label("Enter")), enter);
         assert_eq!(state.focus_order(), vec![ShellComponent::Explorer]);
         assert_eq!(
             state
@@ -4453,15 +4554,27 @@ fn explorer_semantic_replacements_gate_input_while_active_popup_is_present() {
                 .collect::<Vec<_>>(),
             vec![explorer_overlay_surface(&state)]
         );
-        assert_eq!(
-            state
-                .route_input_at(
-                    InputEvent::mouse_down(PointerButton::Left, (1, 1)),
-                    Instant::now(),
-                )
-                .command,
-            ShellCommand::CaptureOverlayInput
-        );
+        let explorer_before = state.app.explorer_state().cloned();
+        let overlay_before = state.active_overlay_descriptor();
+        let calls_before = platform.calls();
+        for point in [(1, 1), (covered.right() - 1, covered.y)] {
+            assert!(!rect_contains(explorer_overlay_surface(&state), point));
+            let now = Instant::now();
+            state.apply_input_with_platform_at(
+                InputEvent::mouse_down(PointerButton::Left, point),
+                &platform,
+                now,
+            );
+            state.apply_input_with_platform_at(
+                InputEvent::mouse_up(PointerButton::Left, point),
+                &platform,
+                now + Duration::from_millis(20),
+            );
+            assert_eq!(state.app.explorer_state(), explorer_before.as_ref());
+            assert_eq!(state.pages.explorer.explorer_overlay_mode, Some(mode));
+            assert_eq!(state.active_overlay_descriptor(), overlay_before);
+            assert_eq!(platform.calls(), calls_before);
+        }
     }
 
     for dialog in [
@@ -4516,10 +4629,7 @@ fn explorer_semantic_replacements_gate_input_while_active_popup_is_present() {
             overlay: Some(replacing(ui::MotionTransitionKind::Dialog)),
             ..ui::MotionTransitions::default()
         });
-        assert_eq!(
-            state.route_key_input(&KeyInput::from_label("Enter")).1,
-            ShellCommand::Noop
-        );
+        assert_eq!(state.route_key_input(&KeyInput::from_label("Enter")), enter);
         assert_ne!(
             state.route_key_input(&KeyInput::from_label("Esc")).1,
             ShellCommand::Noop
@@ -4552,6 +4662,59 @@ fn explorer_semantic_replacements_gate_input_while_active_popup_is_present() {
         generic.route_key_input(&KeyInput::from_label("Esc")).0,
         RoutedTarget::Popup(ShellComponent::ContextMenu)
     );
+}
+
+#[test]
+fn explorer_popover_wheel_and_right_click_keep_the_covered_list_unchanged() {
+    for mode in [
+        ExplorerOverlayMode::Sort { anchor: (3, 3) },
+        ExplorerOverlayMode::Options,
+        ExplorerOverlayMode::Properties,
+        ExplorerOverlayMode::ContextMenu { anchor: (3, 3) },
+    ] {
+        let (mut state, platform, _guard) = explorer_terminal_test_fixture();
+        let row = explorer_test_layout(&state).rows[0].area;
+        state.open_explorer_popup(mode, (3, 3));
+        state.refresh_hit_map_with_motion(ui::MotionTransitions {
+            overlay: Some(ui::MotionTransition {
+                kind: ui::MotionTransitionKind::Popover,
+                direction: ui::MotionDirection::Replacing,
+                progress: 0,
+                phase_progress: 0,
+                active: true,
+                next_redraw_in: Duration::from_millis(16),
+            }),
+            ..Default::default()
+        });
+        let before = state.app.explorer_state().cloned();
+        let overlay = state.active_overlay_descriptor();
+        let calls_before = platform.calls();
+        let surface = explorer_overlay_surface(&state);
+        for point in [
+            (row.right() - 1, row.y),
+            (
+                surface.x + surface.width / 2,
+                surface.y + surface.height / 2,
+            ),
+        ] {
+            for input in [
+                InputEvent::mouse_scroll(ScrollDirection::Down, point),
+                InputEvent::mouse_scroll(ScrollDirection::Up, point),
+                InputEvent::mouse_down(PointerButton::Right, point),
+                InputEvent::mouse_up(PointerButton::Right, point),
+            ] {
+                state.apply_input_with_platform(input, &platform);
+                assert_eq!(state.app.explorer_state(), before.as_ref());
+                assert_eq!(state.active_overlay_descriptor(), overlay);
+                assert_eq!(state.pages.explorer.explorer_overlay_mode, Some(mode));
+                assert_eq!(platform.calls(), calls_before);
+            }
+        }
+        assert_eq!(state.focus_order(), vec![ShellComponent::Explorer]);
+        state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+        assert!(state.resolved_explorer_overlay().is_none());
+        assert_eq!(state.app.explorer_state(), before.as_ref());
+    }
 }
 
 #[test]
@@ -5185,35 +5348,43 @@ fn compact_clock_keeps_visible_controls_and_keyboard_access() {
 
 #[test]
 fn focus_navigation_cycles_the_dynamic_home_order_in_both_directions() {
-    let mut state = ShellSession::new_for_home_mode(
-        ShellLaunchConfig::default(),
-        (120, 40),
-        ShellHomeMode::User,
-    );
-    state.set_navigation_path(vec![ShellScreen::Home]);
-    state.pages.common.focused_component = ShellComponent::Home;
-    state.refresh_hit_map();
+    for size in [(108, 20), (120, 40)] {
+        let mut state = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            size,
+            ShellHomeMode::User,
+        );
+        state.set_navigation_path(vec![ShellScreen::Home]);
+        state.pages.common.focused_component = ShellComponent::Home;
+        state.refresh_hit_map();
 
-    assert_eq!(
-        state.focus_order(),
-        vec![
+        let expected = [
             ShellComponent::Home,
+            ShellComponent::HomeEdit,
             ShellComponent::ClockButton,
             ShellComponent::HelpButton,
             ShellComponent::StatusBar,
             ShellComponent::TopBar,
-        ]
-    );
+        ];
+        assert_eq!(state.focus_order(), expected);
+        let main = state.frame_layout.unwrap().main;
+        let edit = ui::home_edit_area(main, &state.to_home_view_model()).unwrap();
+        assert!(!edit.is_empty());
+        assert!(
+            state.hit_map.regions().iter().any(|region| {
+                region.component == ShellComponent::HomeEdit && region.area == edit
+            })
+        );
 
-    state.move_focus(ui::FocusDirection::Previous);
-    assert_eq!(state.pages.common.focused_component, ShellComponent::TopBar);
-    state.move_focus(ui::FocusDirection::Next);
-    assert_eq!(state.pages.common.focused_component, ShellComponent::Home);
-    state.move_focus(ui::FocusDirection::Next);
-    assert_eq!(
-        state.pages.common.focused_component,
-        ShellComponent::ClockButton
-    );
+        for component in expected.into_iter().skip(1).chain([ShellComponent::Home]) {
+            state.move_focus(ui::FocusDirection::Next);
+            assert_eq!(state.pages.common.focused_component, component);
+        }
+        for component in expected.into_iter().rev() {
+            state.move_focus(ui::FocusDirection::Previous);
+            assert_eq!(state.pages.common.focused_component, component);
+        }
+    }
 }
 
 #[test]
@@ -7040,6 +7211,11 @@ fn launcher_confirmation_buttons_support_keyboard_and_mouse_cancellation() {
                 .unwrap()
                 .cancel;
             state.apply_input(InputEvent::mouse_down(
+                PointerButton::Left,
+                (cancel.x, cancel.y),
+            ));
+            assert!(state.pages.launcher.launcher_pending_confirmation.is_some());
+            state.apply_input(InputEvent::mouse_up(
                 PointerButton::Left,
                 (cancel.x, cancel.y),
             ));

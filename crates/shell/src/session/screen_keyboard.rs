@@ -19,7 +19,7 @@ pub(super) struct InputKeyboard {
     target: String,
     pub open: bool,
     pub visibility: u16,
-    motion: ui::PanelMotion,
+    pub(super) motion: ui::PanelMotion,
     pub modifiers: ScreenKeyboardModifiers,
     pub section: ui::ScreenKeyboardSection,
     pub physical: PhysicalKeyboard,
@@ -130,7 +130,8 @@ impl ShellSession {
     pub(super) fn input_keyboard_layout(&self) -> ScreenKeyboardLayout {
         let mut bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         if let ui::ShellLayout::Full { status, .. } = ui::compute_shell_layout(bounds) {
-            let slide = (3 * u32::from(self.input_keyboard_visibility())).div_ceil(1_000) as u16;
+            let slide = (u32::from(status.height) * u32::from(self.input_keyboard_visibility()))
+                .div_ceil(1_000) as u16;
             bounds.height = status.y + slide;
         }
         ui::screen_keyboard_input_layout_with_visibility(
@@ -180,6 +181,7 @@ impl ShellSession {
         &self,
         layout: ui::ShellFrameLayout,
     ) -> ui::ShellFrameLayout {
+        let layout = layout.with_keyboard_launcher(self.input_keyboard_owner().is_some());
         if matches!(self.input_keyboard_owner(), Some(KeyboardOwner::Page(..)))
             && self.input_keyboard_visibility() == 0
         {
@@ -216,12 +218,16 @@ impl ShellSession {
             return Some(button.area);
         }
         let bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let mut footer = bounds;
-        if let ui::ShellLayout::Full { status, .. } = ui::compute_shell_layout(bounds) {
-            let slide = (3 * u32::from(self.input_keyboard_visibility())).div_ceil(1_000) as u16;
-            footer.height = status.y + slide;
+        if self.input_keyboard_visibility() == 0 {
+            return ui::ShellFrameLayout::new(
+                bounds,
+                self.status_time_button_label().as_deref(),
+                &ui::RenderContext::default(),
+            )
+            .with_keyboard_launcher(true)
+            .keyboard_launcher;
         }
-        Some(ui::screen_keyboard_launcher_area(footer))
+        Some(ui::screen_keyboard_launcher_area(bounds))
     }
 
     pub(super) fn toggle_input_keyboard(&mut self) {

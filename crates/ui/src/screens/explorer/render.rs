@@ -21,6 +21,11 @@ pub fn render_explorer_content(
     model: &ExplorerViewModel,
     context: &crate::RenderContext,
 ) {
+    let mut content_context = context.clone();
+    if model.overlay.is_some() {
+        content_context.buttons = None;
+    }
+    let context = &content_context;
     let theme = &context.compatibility_theme();
     Surface::new()
         .titled(i18n::tr!(if model.save_picker.is_some() {
@@ -28,7 +33,7 @@ pub fn render_explorer_content(
         } else {
             "ui-explorer-explorer"
         }))
-        .bordered(true)
+        .bordered(false)
         .render_frame(frame, area, context);
 
     let layout = explorer_layout(area, model);
@@ -53,7 +58,7 @@ pub fn render_explorer_content(
         let focused = picker.focus == super::ExplorerSaveFocus::Filename;
         frame.render_widget(
             Paragraph::new(i18n::tr!("ui-explorer-save-filename")).style(if focused {
-                theme.title_style()
+                theme.title_style().fg(theme.accent_color)
             } else {
                 theme.body_style()
             }),
@@ -81,7 +86,7 @@ pub fn render_explorer_content(
                 button = button.with_emphasis(crate::components::ButtonEmphasis::Primary);
             }
             button.set_focused(picker.focus == focus);
-            button.render_frame(frame, area, theme);
+            button.render_borderless_frame(frame, area, theme);
         }
     }
 }
@@ -649,7 +654,7 @@ pub fn render_explorer_overlay(
                         frame,
                         control.area,
                         "explorer.options.close",
-                        format!("[Esc {}]", options.close_label),
+                        format!("Esc {}", options.close_label),
                         model.overlay_selection == options.options.len(),
                         control.enabled,
                         theme,
@@ -701,7 +706,7 @@ pub fn render_explorer_overlay(
                     if control.control == ExplorerOverlayControl::PropertiesPermissions {
                         i18n::tr!("permissions-edit")
                     } else {
-                        format!("[Esc {}]", properties.close_label)
+                        format!("Esc {}", properties.close_label)
                     },
                     (control.control == ExplorerOverlayControl::PropertiesPermissions
                         && model.overlay_selection == 0)

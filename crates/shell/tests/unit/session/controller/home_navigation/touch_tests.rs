@@ -107,10 +107,19 @@ fn core_home_tasks_are_visible_and_open_without_launcher_at_minimum_size() {
                 "{language}: {label}"
             );
             assert!(item.area.bottom() <= edit.y);
-            assert_eq!(
-                layout.entry_at((item.area.x, item.area.y)),
-                Some(item.index)
-            );
+            for point in [
+                (item.area.x, item.area.y),
+                (item.area.right() - 1, item.area.bottom() - 1),
+            ] {
+                assert_eq!(layout.entry_at(point), Some(item.index));
+                assert_eq!(state.home_entry_index_at(point), Some(item.index));
+            }
+            let region = state
+                .button_regions
+                .iter()
+                .find(|region| region.id.as_str() == format!("home.entry.{}", item.index))
+                .unwrap();
+            assert_eq!(region.area, item.area);
             if size == (ui::MIN_SHELL_TERMINAL_WIDTH, ui::MIN_SHELL_TERMINAL_HEIGHT) {
                 assert!(ui::home_entry_icon_area(item.area).is_empty());
             }
@@ -179,8 +188,7 @@ fn launcher_excludes_applications_already_available_on_home() {
 
 #[test]
 fn home_has_no_page_exit_button_and_reuses_its_space_for_cards() {
-    // Three card rows need 13 cells: three 3-cell cards and two 2-cell gaps.
-    // At this height they fit only after the old 2-cell Exit footer is removed.
+    // A fixed row count keeps the footer check independent of application availability.
     let mut state = state((72, 22));
     draw_buttons(&mut state);
     assert!(
@@ -270,10 +278,10 @@ fn home_letters_are_inactive_and_launcher_shortcuts_require_fresh_unmodified_key
 #[test]
 fn home_scrollbar_reaches_tail_without_opening_a_card() {
     for offset in [-1, 0, 1] {
-        let mut state = state((72, 16));
+        let mut state = state((50, 12));
         let main = main_area(&state);
         let layout = ui::home_layout(main, &state.to_home_view_model());
-        let track = layout.scrollbar.expect("narrow Home overflows");
+        let track = layout.scrollbar.expect("short fallback Home overflows");
         let grab = (track.x.saturating_add_signed(offset), track.y);
         let bottom = (track.x, track.bottom().saturating_add(10));
         for event in [
@@ -412,7 +420,7 @@ fn global_tasks_entry_toggles_tasks_and_restores_the_original_page() {
                 .unwrap()
                 .tasks_button
                 .expect("visible task entry");
-            let point = (area.x + 1, area.y + 1);
+            let point = (area.x + 1, area.y);
             state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
             state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
             assert_eq!(state.active_screen(), ShellScreen::Management);
@@ -446,7 +454,7 @@ fn global_tasks_entry_closes_tasks_opened_from_home() {
     state.apply_input(InputEvent::key(InputKey::Enter));
     assert_eq!(state.active_screen(), ShellScreen::Management);
     let area = state.frame_layout.unwrap().tasks_button.unwrap();
-    let point = (area.x + 1, area.y + 1);
+    let point = (area.x + 1, area.y);
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
     state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
     assert_eq!(state.active_page_id(), home);

@@ -388,7 +388,7 @@ fn old_config_without_language_or_timezone_loads_with_defaults() {
     assert_eq!(config.appearance.border_shape, BorderShape::Rounded);
     assert_eq!(
         config.appearance.border_color,
-        BorderColor::Rgb(0x29, 0x43, 0x4E)
+        BorderColor::Rgb(0x38, 0x38, 0x38)
     );
     assert_eq!(
         config.appearance.accent_color,

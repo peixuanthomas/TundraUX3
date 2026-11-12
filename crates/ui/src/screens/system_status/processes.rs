@@ -172,8 +172,8 @@ pub(super) fn render_processes(
         } else {
             context.theme.surface
         });
-        if selected {
-            style = style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+        if selected && context.compatibility_theme().keyboard_focus_visible() {
+            style = style.add_modifier(Modifier::UNDERLINED);
         }
         Row::new(
             fields
@@ -186,7 +186,7 @@ pub(super) fn render_processes(
     });
     frame.render_widget(
         Table::new(rows, super::layout::PROCESS_COLUMN_WIDTHS)
-            .column_spacing(1)
+            .column_spacing(2)
             .header(header),
         area,
     );
@@ -239,7 +239,11 @@ fn render_meter(
                 metric.map(|metric| &metric.state),
                 Some(SystemStatusWidgetState::Loading)
             ) {
-                i18n::tr!("ui-system-status-loading")
+                format!(
+                    "{} {}",
+                    crate::components::BusyIndicator::from_motion(context.motion).symbol(),
+                    i18n::tr!("ui-system-status-loading")
+                )
             } else {
                 i18n::tr!("ui-system-status-unavailable")
             }

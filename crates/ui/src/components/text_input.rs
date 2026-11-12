@@ -411,7 +411,10 @@ impl TextInput {
                     .as_ref()
                     .is_some_and(|range| range.contains(&text_index));
             let style = if is_cursor {
-                theme.title_style().add_modifier(Modifier::SLOW_BLINK)
+                theme
+                    .title_style()
+                    .fg(theme.accent_color)
+                    .add_modifier(Modifier::SLOW_BLINK)
             } else if selected {
                 selected_style
             } else {
@@ -443,7 +446,7 @@ impl TextInput {
         let text_style = if self.placeholder_is_visible() {
             theme.muted_style()
         } else if self.state.focused && !self.state.disabled {
-            theme.title_style()
+            theme.title_style().fg(theme.accent_color)
         } else {
             theme.body_style()
         }

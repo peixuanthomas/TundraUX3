@@ -36,14 +36,14 @@ fn native_vim_owns_the_canvas_including_mode_commands_and_messages() {
     };
     let area = Rect::new(2, 3, 40, 12);
     let canvas = ui::editor_vim_terminal_area(area);
-    assert_eq!(canvas, Rect::new(3, 5, 38, 9));
+    assert_eq!(canvas, Rect::new(2, 4, 40, 11));
     let mut snapshot = CommandLineTerminalSnapshot::blank(canvas.width, canvas.height);
     snapshot.cursor_style = CommandLineCursorStyle::SteadyBar;
     for (row, text) in [
         (0, "Vim buffer"),
-        (6, "-- INSERT --"),
-        (7, "E486: Pattern not found"),
-        (8, ":%s/old/new/g"),
+        (canvas.height - 3, "-- INSERT --"),
+        (canvas.height - 2, "E486: Pattern not found"),
+        (canvas.height - 1, ":%s/old/new/g"),
     ] {
         for (column, character) in text.chars().enumerate() {
             snapshot.set_cell(
@@ -53,10 +53,10 @@ fn native_vim_owns_the_canvas_including_mode_commands_and_messages() {
                     symbol: character.to_string(),
                     style: CommandLineCellStyle {
                         foreground: CommandLineColor::Indexed(3),
-                        italic: row == 8,
+                        italic: row == canvas.height - 1,
                         ..Default::default()
                     },
-                    cursor: row == 8 && column == 7,
+                    cursor: row == canvas.height - 1 && column == 7,
                     ..Default::default()
                 },
             );
@@ -110,7 +110,7 @@ fn native_vim_owns_the_canvas_including_mode_commands_and_messages() {
     ] {
         assert!(!text.contains(hidden), "{hidden}: {text}");
     }
-    let cell = &terminal.backend().buffer()[(canvas.x + 7, canvas.y + 8)];
+    let cell = &terminal.backend().buffer()[(canvas.x + 7, canvas.bottom() - 1)];
     assert!(cell.modifier.contains(Modifier::ITALIC));
     assert!(!cell.modifier.contains(Modifier::REVERSED));
     assert!(
@@ -120,7 +120,7 @@ fn native_vim_owns_the_canvas_including_mode_commands_and_messages() {
     );
     assert_eq!(
         terminal.get_cursor_position().unwrap(),
-        (canvas.x + 7, canvas.y + 8).into()
+        (canvas.x + 7, canvas.bottom() - 1).into()
     );
 }
 
@@ -350,9 +350,9 @@ fn minimum_editor_layout_keeps_plain_text_controls_canvas_and_status_available()
     let model = sample_model();
     let layout = editor_layout(Rect::new(0, 0, 50, 12), &model);
 
-    assert_eq!(layout.menu_bar, Rect::new(1, 1, 48, 1));
+    assert_eq!(layout.menu_bar, Rect::new(0, 0, 50, 1));
     assert!(!layout.toolbar.is_empty());
-    assert_eq!(layout.status_bar, Rect::new(1, 10, 48, 1));
+    assert_eq!(layout.status_bar, Rect::new(0, 11, 50, 1));
     assert!(layout.canvas.height >= 5);
     assert!(!layout.toolbar_overflow);
     assert_eq!(layout.toolbar_items.len(), 6);
@@ -367,7 +367,7 @@ fn shell_minimum_main_height_degrades_without_losing_the_editing_canvas() {
     assert!(!layout.canvas_framed);
     assert_eq!(layout.menu_bar.height, 1);
     assert_eq!(layout.toolbar.height, 0);
-    assert_eq!(layout.canvas.height, 2);
+    assert_eq!(layout.canvas.height, 4);
     assert_eq!(layout.status_bar.height, 1);
     assert!(layout.toolbar_items.is_empty());
     assert!(layout.modes.is_empty());
@@ -475,7 +475,7 @@ fn settings_button_opens_a_modal_acceleration_panel_with_clickable_controls() {
     assert!(output.contains("Horizontal maximum"));
     for width in [52, 64, 100] {
         let output = terminal_output(&render(&model, width, 24));
-        for hint in ["[On]", "[R Reset]", "[Ctrl+S Save]", "[Esc Cancel]"] {
+        for hint in ["[On]", "R Reset", "Ctrl+S Save", "Esc Cancel"] {
             assert!(output.contains(hint), "{hint} must fit at width {width}");
         }
     }
@@ -759,7 +759,7 @@ fn rich_scrollbars_reach_a_fixed_point_without_overlapping() {
     let vertical = layout.vertical_scrollbar.expect("vertical scrollbar");
     let horizontal = layout.horizontal_scrollbar.expect("horizontal scrollbar");
 
-    assert_eq!(layout.canvas.width, 49);
+    assert_eq!(layout.canvas.width, 51);
     assert_eq!(layout.canvas.height, 5);
     assert_eq!(vertical.track.height, layout.canvas.height);
     assert_eq!(horizontal.track.width, layout.canvas.width);
@@ -769,17 +769,15 @@ fn rich_scrollbars_reach_a_fixed_point_without_overlapping() {
 
 #[test]
 fn source_scrollbars_reach_a_fixed_point_without_overlapping() {
-    // Seven lines require a vertical bar. That column reduces an exactly
-    // fitting 47-cell line plus its caret cell to 46 cells, which then also
-    // requires a horizontal bar; the new bottom row must keep the vertical
-    // bar necessary.
-    let source = format!("{}\na\nb\nc\nd\ne\nf", "x".repeat(47));
+    // Seven lines add a vertical bar to the 49-cell source canvas.
+    // The 48-cell first line plus its caret then also needs a horizontal bar.
+    let source = format!("{}\na\nb\nc\nd\ne\nf", "x".repeat(48));
     let model = EditorViewModel::source("both.log", source);
     let layout = editor_layout(Rect::new(0, 0, 52, 10), &model);
     let vertical = layout.vertical_scrollbar.expect("vertical scrollbar");
     let horizontal = layout.horizontal_scrollbar.expect("horizontal scrollbar");
 
-    assert_eq!(layout.canvas.width, 46);
+    assert_eq!(layout.canvas.width, 48);
     assert_eq!(layout.canvas.height, 5);
     assert_eq!(vertical.track.height, layout.canvas.height);
     assert_eq!(horizontal.track.width, layout.canvas.width);
@@ -845,13 +843,13 @@ fn source_horizontal_layout_handles_unicode_and_tiny_areas() {
 
 #[test]
 fn end_caret_on_an_exactly_fitting_source_line_remains_visible() {
-    let mut model = EditorViewModel::source("exact.log", "x".repeat(47));
+    let mut model = EditorViewModel::source("exact.log", "x".repeat(49));
     model.horizontal_scroll = 1;
-    model.cursor = Some(EditorTextPosition::new(0, 47));
+    model.cursor = Some(EditorTextPosition::new(0, 49));
     let layout = editor_layout(Rect::new(0, 0, 52, 10), &model);
     let mut terminal = render(&model, 52, 10);
 
-    assert_eq!(model.horizontal_content_width, 48);
+    assert_eq!(model.horizontal_content_width, 50);
     assert!(layout.horizontal_scrollbar.is_some());
     assert_eq!(layout.horizontal_scroll, 1);
     assert_eq!(
@@ -982,13 +980,20 @@ fn wrapped_rich_lines_keep_exact_source_offsets() {
     let layout = editor_layout(Rect::new(0, 0, 22, 12), &model);
     let continuation = line_area(&layout, 1);
 
-    assert_eq!(layout.canvas.width, 20);
+    assert_eq!(layout.canvas.width, 22);
     assert_eq!(
         layout
             .hit_test_source(continuation.area.x, continuation.area.y)
             .expect("mapped continuation")
             .byte_offset,
-        20
+        22
+    );
+    assert_eq!(
+        layout
+            .hit_test_source(continuation.area.x + 1, continuation.area.y)
+            .expect("last source character")
+            .byte_offset,
+        source.len() - 1
     );
 }
 

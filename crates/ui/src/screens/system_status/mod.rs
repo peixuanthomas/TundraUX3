@@ -19,4 +19,6 @@ pub use model::{
     SystemStatusViewModel, SystemStatusWidgetKind, SystemStatusWidgetSize, SystemStatusWidgetState,
     SystemStatusWidgetViewModel, UserSystemStatusViewModel,
 };
-pub use render::{render_system_status_content, render_system_status_overlay};
+pub use render::{
+    render_system_status_content, render_system_status_overlay, system_status_busy_visible,
+};

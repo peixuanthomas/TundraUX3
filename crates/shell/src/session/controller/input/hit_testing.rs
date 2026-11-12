@@ -88,7 +88,7 @@ pub(in crate::session) fn build_shell_hit_map(
                 },
             });
         }
-        ui::ShellLayout::Full { top, main, status } => {
+        ui::ShellLayout::Full { top, main, .. } => {
             regions.push(ShellHitRegion {
                 component: ShellComponent::TopBar,
                 area: top,
@@ -307,11 +307,13 @@ pub(in crate::session) fn build_shell_hit_map(
                     }
                 }
             }
-            regions.push(ShellHitRegion {
-                component: ShellComponent::StatusBar,
-                area: status,
-                layer: ShellHitLayer::ShellChrome,
-            });
+            if let Some(area) = frame_layout.status_message {
+                regions.push(ShellHitRegion {
+                    component: ShellComponent::StatusBar,
+                    area,
+                    layer: ShellHitLayer::ShellChrome,
+                });
+            }
             if clock_button_active_for_screen(content_screen)
                 && let Some(button) = frame_layout.time_button
             {
@@ -651,13 +653,8 @@ pub(in crate::session) fn login_user_list_row_at(
     coordinates: CellPosition,
 ) -> Option<usize> {
     let main = setup_main_rect(terminal_size)?;
-    let rect = ui::login_user_list_area(main);
-    if rect.height <= 2 || !rect_contains(rect, coordinates) {
-        return None;
-    }
-
-    let row = coordinates.1.checked_sub(rect.y.saturating_add(1))? as usize;
-    (row < rect.height.saturating_sub(2) as usize).then_some(row)
+    let rect = ui::login_user_list_rows_area(main);
+    rect_contains(rect, coordinates).then(|| usize::from(coordinates.1 - rect.y))
 }
 
 pub(in crate::session) fn default_login_user_index(users: &[ShellLoginUser]) -> usize {

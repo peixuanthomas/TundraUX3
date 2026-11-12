@@ -3,7 +3,7 @@ use super::*;
 fn session() -> ShellSession {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
-        (80, 24),
+        (108, 20),
         ShellHomeMode::User,
     );
     while state.notification_dismiss_active_modal_without_response() {}
@@ -14,7 +14,11 @@ fn session() -> ShellSession {
 
 fn click_status(state: &mut ShellSession) {
     let area = state.frame_layout.unwrap().status_message.unwrap();
-    let point = (area.x + 1, area.y + 1);
+    let point = (area.x + 1, area.y);
+    assert_eq!(
+        state.hit_map().target_at(point),
+        Some(ShellComponent::StatusBar)
+    );
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
     assert!(
         !state.status_details_visible(),
@@ -110,7 +114,7 @@ fn status_click_cancels_after_drag_focus_loss_and_resize() {
     ] {
         let mut state = session();
         let area = state.frame_layout.unwrap().status_message.unwrap();
-        let point = (area.x + 1, area.y + 1);
+        let point = (area.x + 1, area.y);
         state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
         state.apply_input(cancellation);
         state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));

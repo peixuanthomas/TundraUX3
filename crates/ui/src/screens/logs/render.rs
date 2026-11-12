@@ -9,6 +9,17 @@ use ratatui::{
     widgets::{Clear, Paragraph, Wrap},
 };
 
+pub fn logs_busy_visible(main: Rect, model: &LogsViewModel) -> bool {
+    if !model.loading || model.more_selected.is_some() || model.filter_form.is_some() {
+        return false;
+    }
+    let layout = logs_layout(main, model);
+    !layout.filter_summary.is_empty()
+        || (unavailable_reason(model).is_none()
+            && model.events.is_empty()
+            && !layout.content.list_rows_area.is_empty())
+}
+
 pub(super) fn unavailable_reason(model: &LogsViewModel) -> Option<String> {
     if model.category == LogsCategory::Linux {
         if !model.linux_available && !model.selected_file {
@@ -136,7 +147,7 @@ pub fn logs_content_model(model: &LogsViewModel) -> DiagnosticsViewModel {
         .map(|r| {
             vec![
                 r.time_label.clone(),
-                r.level.clone(),
+                format!("{} {}", r.status.marker(), r.level),
                 r.module.clone(),
                 r.operation.clone(),
                 r.summary.clone(),
@@ -227,7 +238,11 @@ pub fn render_logs_content(
     logs_action_bar(model).render(frame, layout.action_bar.area, &background_context);
     frame.render_widget(
         Paragraph::new(if model.loading {
-            i18n::tr!("ui-logs-loading-logs")
+            format!(
+                "{} {}",
+                crate::components::BusyIndicator::from_motion(context.motion).symbol(),
+                i18n::tr!("ui-logs-loading-logs")
+            )
         } else {
             model.filter_summary.clone()
         })
@@ -265,7 +280,11 @@ pub fn render_logs_content(
             &title,
             Some((
                 if model.loading {
-                    i18n::tr!("ui-logs-loading-events")
+                    format!(
+                        "{} {}",
+                        crate::components::BusyIndicator::from_motion(context.motion).symbol(),
+                        i18n::tr!("ui-logs-loading-events")
+                    )
                 } else {
                     i18n::tr!("ui-logs-no-events-match-the-current-query")
                 },

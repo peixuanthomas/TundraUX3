@@ -39,7 +39,7 @@ fn pure_motion_schedule_covers_start_mid_end_interruption_reversal_and_idle() {
             && start.focus_transition
             && start.overlay_transition
     );
-    assert_eq!(start.next_redraw_in, Duration::from_nanos(33_333_334));
+    assert_eq!(start.next_redraw_in, ui::ANIMATION_FRAME_INTERVAL);
     let dialog_start = start.transitions.overlay.expect("dialog transition");
     assert_eq!(dialog_start.kind, MotionTransitionKind::Dialog);
     assert_eq!(dialog_start.direction, MotionDirection::Entering);
@@ -178,7 +178,7 @@ fn ranged_motion_is_continuous_and_overlay_exit_projection_is_endpoint_neutral()
             )
         };
         assert_eq!(context(0).page_area(area), area);
-        assert_eq!(context(90).page_area(area), Rect::new(0, 1, 80, 23));
+        assert_eq!(context(90).page_area(area), area);
         assert_eq!(context(500).page_area(area), area);
     }
 }
@@ -207,7 +207,7 @@ fn animation_speed_scales_transition_duration_and_effect_delta() {
     assert!(transition(220, 50).active);
     assert_eq!(
         MotionTimings::resolve(frame(0, 200), MotionTimings::PAGE),
-        Duration::from_millis(110)
+        Duration::from_millis(80)
     );
     assert_eq!(frame(0, 200).scaled_delta(), Duration::from_millis(32));
     assert_eq!(
@@ -217,7 +217,7 @@ fn animation_speed_scales_transition_duration_and_effect_delta() {
 }
 
 #[test]
-fn replacement_interaction_uses_lifecycle_phase_not_carried_visible_progress() {
+fn replacement_interaction_is_available_during_every_lifecycle_phase() {
     let frame = |millis| MotionFrame {
         now: Duration::from_millis(millis),
         delta: Duration::ZERO,
@@ -233,7 +233,7 @@ fn replacement_interaction_uses_lifecycle_phase_not_carried_visible_progress() {
         frame(10),
     );
     assert_eq!((start.progress, start.phase_progress), (800, 0));
-    assert!(!start.interaction_ready());
+    assert!(start.interaction_ready());
 
     let before = ui::MotionTransition {
         phase_progress: 499,
@@ -243,7 +243,7 @@ fn replacement_interaction_uses_lifecycle_phase_not_carried_visible_progress() {
         phase_progress: 500,
         ..start
     };
-    assert!(!before.interaction_ready());
+    assert!(before.interaction_ready());
     assert!(threshold.interaction_ready());
 
     let reduced = schedule_motion_range(
@@ -344,22 +344,40 @@ fn toast_resume_reverses_from_the_visible_progress_in_full_and_reduced_motion() 
 
 #[test]
 fn data_table_render_and_hit_rows_agree_with_or_without_title() {
-    for titled in [false, true] {
-        let area = Rect::new(0, 0, 14, 5);
-        let mut table = DataTable::new("table", ["Name"], [["First"], ["Second"]]);
-        if titled {
-            table = table.titled("Data");
+    for bordered in [false, true] {
+        for titled in [false, true] {
+            let area = Rect::new(0, 0, 14, 5);
+            let mut table =
+                DataTable::new("table", ["Name"], [["First"], ["Second"]]).bordered(bordered);
+            if titled {
+                table = table.titled("Data");
+            }
+            let mut buffer = Buffer::empty(area);
+            table.render(area, &mut buffer, &RenderContext::default());
+            let x = u16::from(bordered);
+            let first_y = u16::from(bordered || titled) + 1;
+            assert_eq!(buffer[(x, first_y)].symbol(), "F");
+            assert_eq!(
+                table.handle_event(
+                    InputEvent::mouse(MouseEvent::down(x, first_y + 1, MouseButton::Left)),
+                    area
+                ),
+                ComponentEvent::Selected("table".into(), 1)
+            );
+            if bordered {
+                assert_eq!(
+                    table.handle_event(
+                        InputEvent::mouse(MouseEvent::down(
+                            area.right() - 1,
+                            first_y,
+                            MouseButton::Left
+                        )),
+                        area
+                    ),
+                    ComponentEvent::None
+                );
+            }
         }
-        let mut buffer = Buffer::empty(area);
-        table.render(area, &mut buffer, &RenderContext::default());
-        assert_eq!(buffer[(1, 2)].symbol(), "F");
-        assert_eq!(
-            table.handle_event(
-                InputEvent::mouse(MouseEvent::down(1, 3, MouseButton::Left)),
-                area
-            ),
-            ComponentEvent::Selected("table".into(), 1)
-        );
     }
 }
 
@@ -403,15 +421,15 @@ fn data_table_padding_uses_terminal_cell_width_for_cjk_and_emoji() {
     let table = DataTable::new("table", ["甲", "B"], [["中", "🙂"]]);
     let mut buffer = Buffer::empty(area);
     table.render(area, &mut buffer, &RenderContext::default());
-    assert_eq!(buffer[(6, 2)].symbol(), "🙂");
+    assert_eq!(buffer[(7, 1)].symbol(), "🙂");
 }
 
 #[test]
 fn data_table_clips_and_pads_graphemes_with_explicit_and_fallback_widths() {
     for (width, widths, expected) in [
-        (12, None, "A中 e\u{301}🙂 end "),
-        (9, Some(vec![3, 4, 2]), "A中e\u{301}🙂zen"),
-        (8, Some(vec![0, 2]), "e\u{301} en    "),
+        (12, None, "A   e\u{301}   en  "),
+        (9, Some(vec![3, 4, 2]), "A  e\u{301}   en"),
+        (8, Some(vec![0, 2]), "  en    "),
         (1, None, " "),
     ] {
         let area = Rect::new(0, 0, width, 1);

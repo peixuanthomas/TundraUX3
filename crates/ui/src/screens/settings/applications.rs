@@ -39,7 +39,9 @@ impl SettingsApplicationsLayout {
             Constraint::Fill(1),
         ])
         .areas(area);
-        let inner = inset(list, 1, 1);
+        let inner = Surface::new()
+            .titled(i18n::tr!("ui-settings-application-list"))
+            .inner(list);
         let height = SidebarWorkspaceLayout::list_item_height(inner.height);
         let options = SettingsApplication::ALL
             .into_iter()
@@ -74,7 +76,6 @@ impl SettingsApplicationsLayout {
             && model.selected_field == SettingsField::ApplicationList;
         Surface::new()
             .titled(i18n::tr!("ui-settings-application-list"))
-            .bordered(true)
             .focused(focused)
             .render_frame(frame, self.list, context);
         for (application, area) in &self.options {

@@ -1,14 +1,13 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{HorizontalAlignment, Rect};
-use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Borders, Paragraph, Widget};
+use ratatui::widgets::{Paragraph, Widget};
 
 use crate::RenderContext;
 
 use super::{
-    ComponentEvent, ComponentId, ComponentState, InputEvent, Key, MouseButton, MouseKind,
-    contains_point,
+    ComponentEvent, ComponentId, ComponentState, InputEvent, Key, MouseButton, MouseKind, Surface,
+    contains_point, interactive_style,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,8 +39,7 @@ impl NavRailItem {
     }
 }
 
-/// Vertical navigation with a one-cell selection indicator instead of an
-/// accent-filled card.
+/// Compact navigation with persistent current-row fill and a separate focus marker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NavRail {
     pub id: ComponentId,
@@ -116,17 +114,18 @@ impl NavRail {
             self.title.as_deref().unwrap_or(""),
             area,
         );
-        let tokens = context.theme;
-        let mut block = Block::default()
-            .style(Style::default().fg(tokens.text).bg(tokens.surface))
-            .borders(Borders::RIGHT)
-            .border_style(Style::default().fg(tokens.border).bg(tokens.surface));
-        if let Some(title) = &self.title {
-            block = block.title(title.as_str());
-        }
-        let inner = block.inner(area);
-        block.render(area, buffer);
-        for (index, item) in self.items.iter().enumerate().take(inner.height as usize) {
+        let surface = self.surface();
+        let inner = surface.inner(area);
+        surface.render(area, buffer, context);
+        let theme = context.compatibility_theme();
+        let start = self.viewport_start(inner);
+        for (index, item) in self
+            .items
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(inner.height as usize)
+        {
             let selected = self.selected == Some(index);
             let mut state = self.state;
             state.selected = selected;
@@ -136,25 +135,16 @@ impl NavRail {
                 item.id.as_str(),
                 "tab",
                 &item.label,
-                Rect::new(inner.x, inner.y + index as u16, inner.width, 1),
+                Rect::new(inner.x, inner.y + (index - start) as u16, inner.width, 1),
                 state,
                 &["click"],
             );
-            let style = if item.disabled {
-                Style::default().fg(tokens.muted).bg(tokens.surface)
-            } else if selected {
-                Style::default()
-                    .fg(if self.state.focused {
-                        tokens.focus
-                    } else {
-                        tokens.accent_strong
-                    })
-                    .bg(tokens.surface)
-                    .add_modifier(Modifier::BOLD)
+            let style = interactive_style(state, &theme);
+            let marker = if state.focused && theme.keyboard_focus_visible() {
+                ">"
             } else {
-                Style::default().fg(tokens.text).bg(tokens.surface)
+                " "
             };
-            let marker = if selected { "▎" } else { " " };
             let icon = item.icon.as_deref().unwrap_or("");
             let text = if icon.is_empty() {
                 format!("{marker} {}", item.label)
@@ -167,7 +157,7 @@ impl NavRail {
                 .render(
                     Rect::new(
                         inner.x,
-                        inner.y.saturating_add(index as u16),
+                        inner.y.saturating_add((index - start) as u16),
                         inner.width,
                         1,
                     ),
@@ -185,13 +175,23 @@ impl NavRail {
     }
 
     fn index_at(&self, area: Rect, column: u16, row: u16) -> Option<usize> {
-        if !contains_point(area, column, row) {
+        let inner = self.surface().inner(area);
+        if !contains_point(inner, column, row) {
             return None;
         }
-        let title_offset = u16::from(self.title.is_some());
-        row.checked_sub(area.y.saturating_add(title_offset))
-            .map(usize::from)
+        row.checked_sub(inner.y)
+            .map(|offset| self.viewport_start(inner) + usize::from(offset))
             .filter(|index| *index < self.items.len())
+    }
+
+    fn surface(&self) -> Surface {
+        let mut surface = Surface::new();
+        surface.title = self.title.clone();
+        surface
+    }
+
+    fn viewport_start(&self, inner: Rect) -> usize {
+        super::List::automatic_viewport_start(self.selected.unwrap_or(0), usize::from(inner.height))
     }
 
     fn select_first(&mut self) -> ComponentEvent {

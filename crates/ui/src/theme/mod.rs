@@ -1,4 +1,4 @@
-//! Glacier Night visual tokens and the compatibility theme used by existing
+//! Neutral terminal visual tokens and the compatibility theme used by existing
 //! screens. New components consume [`ThemeTokens`]; the small `TundraTheme`
 //! facade keeps older view models source-compatible while they are migrated.
 
@@ -7,14 +7,13 @@ use std::time::Duration;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, BorderType};
 
-/// Animated frames target 30 FPS; input-driven redraws keep their own deadlines.
-pub const ANIMATION_FRAME_INTERVAL: Duration = Duration::from_nanos(33_333_334);
+/// Active UI transitions target 60 FPS; idle frames remain event-driven.
+pub const ANIMATION_FRAME_INTERVAL: Duration = Duration::from_nanos(16_666_667);
 
-/// Spacing for the selected Spring card composition. Small terminals retain
-/// compact geometry rather than spending their content area on decoration.
+/// Shared compact spacing for page compositions.
 pub struct SpringStyle;
 impl SpringStyle {
-    pub const CARD_GAP: u16 = 2;
+    pub const CARD_GAP: u16 = 1;
     pub const PAGE_INSET: u16 = 1;
 }
 
@@ -95,7 +94,7 @@ impl RenderCapabilities {
     }
 }
 
-/// Complete Glacier Night colour vocabulary.
+/// Complete terminal colour vocabulary.
 ///
 /// The names are semantic rather than widget-specific, allowing a screen to
 /// state intent without inventing another local palette.
@@ -130,30 +129,30 @@ impl ThemeTokens {
             .bg(background)
     }
 
-    /// The fixed Glacier Night base palette.
+    /// The neutral base palette. The established name remains source-compatible.
     pub const fn glacier_night() -> Self {
         Self {
             border_shape: BorderShape::Rounded,
-            canvas: Color::Rgb(0x07, 0x11, 0x16),
+            canvas: Color::Rgb(0x10, 0x10, 0x10),
             editor_canvas: Color::Black,
-            surface: Color::Rgb(0x0D, 0x1B, 0x22),
-            raised: Color::Rgb(0x13, 0x26, 0x2F),
-            border: Color::Rgb(0x29, 0x43, 0x4E),
-            text: Color::Rgb(0xE6, 0xF1, 0xF4),
-            muted: Color::Rgb(0x8E, 0xA7, 0xB0),
+            surface: Color::Rgb(0x18, 0x18, 0x18),
+            raised: Color::Rgb(0x24, 0x24, 0x24),
+            border: Color::Rgb(0x38, 0x38, 0x38),
+            text: Color::Rgb(0xE6, 0xE6, 0xE6),
+            muted: Color::Rgb(0x99, 0x99, 0x99),
             accent: Color::Rgb(0x63, 0xD3, 0xE5),
-            accent_soft: Color::Rgb(0x15, 0x3B, 0x46),
+            accent_soft: Color::Rgb(0x2F, 0x50, 0x56),
             accent_strong: Color::Rgb(0x76, 0xE1, 0xF1),
             focus: Color::Rgb(0xA4, 0xF1, 0xFA),
             success: Color::Rgb(0x79, 0xD6, 0x9B),
             warning: Color::Rgb(0xEB, 0xCB, 0x78),
             danger: Color::Rgb(0xF2, 0x7D, 0x89),
-            shadow: Color::Rgb(0x02, 0x06, 0x08),
+            shadow: Color::Rgb(0x08, 0x08, 0x08),
         }
     }
 
     /// Applies a user accent while deriving its dependent roles. The neutral
-    /// Glacier colours remain fixed, so a preference cannot turn ordinary
+    /// surface colours remain fixed, so a preference cannot turn ordinary
     /// cards into large accent-coloured fields.
     pub fn with_accent(mut self, accent: Color) -> Self {
         self.accent = accent;
@@ -253,9 +252,9 @@ pub struct MotionTimings;
 
 impl MotionTimings {
     pub const FOCUS: Duration = Duration::from_millis(120);
-    pub const POPOVER: Duration = Duration::from_millis(160);
+    pub const POPOVER: Duration = Duration::from_millis(120);
     pub const DIALOG: Duration = Duration::from_millis(180);
-    pub const PAGE: Duration = Duration::from_millis(220);
+    pub const PAGE: Duration = Duration::from_millis(160);
     pub const TOAST_ENTER: Duration = Duration::from_millis(200);
     pub const TOAST_EXIT: Duration = Duration::from_millis(150);
 
@@ -270,7 +269,7 @@ impl MotionTimings {
 
 /// A small transition tracker for hosts that request redraws. It reports an
 /// active transition only until its deadline; callers therefore schedule at
-/// most 30 FPS while active and do not keep an idle timer alive.
+/// most 60 FPS while active and do not keep an idle timer alive.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FrostMotion {
     started_at: Option<Duration>,
@@ -334,9 +333,7 @@ pub struct MotionTransition {
 
 impl MotionTransition {
     pub const fn interaction_ready(self) -> bool {
-        !self.active
-            || matches!(self.direction, MotionDirection::Exiting)
-            || self.phase_progress >= 500
+        true
     }
 }
 
@@ -531,7 +528,17 @@ impl FrostMotion {
     /// Returns whether the host should request another animation redraw. It
     /// becomes false immediately for Reduced Motion and after the end frame.
     pub fn requests_redraw(&self, frame: MotionFrame) -> bool {
-        !frame.reduced_motion && self.is_active(frame)
+        self.next_redraw_in(frame).is_some()
+    }
+
+    pub fn next_redraw_in(&self, frame: MotionFrame) -> Option<Duration> {
+        if frame.reduced_motion {
+            return None;
+        }
+        let remaining = self
+            .duration
+            .saturating_sub(frame.now.saturating_sub(self.started_at?));
+        (!remaining.is_zero()).then_some(remaining.min(ANIMATION_FRAME_INTERVAL))
     }
 
     pub fn progress(&self, frame: MotionFrame, entering: bool) -> u16 {
@@ -625,34 +632,9 @@ impl RenderContext {
         context
     }
 
-    /// Moves an entering page by one terminal row for the first half of its
-    /// transition. The shell uses this same projection for its hit map.
+    /// Light transitions preserve the same content and hit-test geometry.
     pub fn page_area(&self, area: ratatui::layout::Rect) -> ratatui::layout::Rect {
-        let entering_page = self.transitions.screen.is_some_and(|transition| {
-            transition.active
-                && !matches!(transition.direction, MotionDirection::Exiting)
-                && transition.phase_progress < 500
-        });
-        let exiting_overlay = self.transitions.overlay.is_some_and(|transition| {
-            transition.active
-                && matches!(transition.direction, MotionDirection::Exiting)
-                && matches!(
-                    transition.kind,
-                    MotionTransitionKind::Dialog | MotionTransitionKind::Popover
-                )
-                && (250..750).contains(&transition.phase_progress)
-        });
-        let shifted = entering_page || exiting_overlay;
-        if shifted && area.height > 0 {
-            ratatui::layout::Rect::new(
-                area.x,
-                area.y.saturating_add(1),
-                area.width,
-                area.height.saturating_sub(1),
-            )
-        } else {
-            area
-        }
+        area
     }
 
     pub fn overlay_interaction_ready(&self) -> bool {
@@ -859,7 +841,7 @@ impl TundraTheme {
         tokens.muted = self.muted;
         tokens.border = self.border_color;
         tokens.danger = self.error;
-        tokens
+        tokens.for_capability(self.color_capability)
     }
 
     pub const fn border_type(&self) -> BorderType {
@@ -895,7 +877,7 @@ impl TundraTheme {
     pub fn title_style(&self) -> Style {
         let tokens = self.tokens();
         Style::default()
-            .fg(tokens.accent)
+            .fg(tokens.text)
             .bg(tokens.canvas)
             .add_modifier(Modifier::BOLD)
     }
@@ -994,10 +976,10 @@ impl TundraTheme {
     }
 }
 
-/// Keep box-drawing glyphs at regular weight. Some terminal fonts render bold
-/// vertical borders with gaps between rows, which makes a solid border look dashed.
+/// Keep text focus modifiers off box-drawing glyphs so the configured border
+/// remains solid and does not gain an extra font underline.
 pub(crate) fn solid_border_style(style: Style) -> Style {
-    style.remove_modifier(Modifier::BOLD)
+    style.remove_modifier(Modifier::BOLD | Modifier::UNDERLINED)
 }
 
 impl Default for TundraTheme {

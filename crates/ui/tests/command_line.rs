@@ -3,6 +3,7 @@ mod composition;
 use composition as ui;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::layout::Rect;
 use ui::{
     CommandLineCell, CommandLineCellStyle, CommandLineColor, CommandLineProcessState,
     CommandLineTerminalSnapshot, CommandLineViewModel, HomeDisplayMode, NotificationTone,
@@ -35,9 +36,14 @@ fn chrome(size: (u16, u16)) -> ShellChromeViewModel {
     }
 }
 
+fn viewport(size: (u16, u16)) -> Rect {
+    ui::command_line_terminal_area(Rect::new(0, 0, size.0, size.1))
+        .expect("full child terminal viewport")
+}
+
 #[test]
 fn failed_external_terminal_keeps_output_and_uses_the_application_title() {
-    let mut terminal = CommandLineTerminalSnapshot::blank(106, 14);
+    let mut terminal = CommandLineTerminalSnapshot::blank(108, 18);
     terminal.set_cell(
         0,
         0,
@@ -49,20 +55,21 @@ fn failed_external_terminal_keeps_output_and_uses_the_application_title() {
     let mut model = CommandLineViewModel::new(terminal);
     model.title = Some("neovim".into());
     model.process_state = CommandLineProcessState::Exited { code: 17 };
-    let mut screen = Terminal::new(TestBackend::new(108, 22)).unwrap();
+    let mut screen = Terminal::new(TestBackend::new(108, 20)).unwrap();
     screen
         .draw(|frame| {
             render_command_line(
                 frame,
                 frame.area(),
-                &chrome((108, 22)),
+                &chrome((108, 20)),
                 &model,
                 &TundraTheme::default_dark(),
             )
         })
         .unwrap();
     let buffer = screen.backend().buffer();
-    assert_eq!(buffer[(1, 4)].symbol(), "R");
+    let area = viewport((108, 20));
+    assert_eq!(buffer[(area.x, area.y)].symbol(), "R");
     let text = buffer
         .content()
         .iter()
@@ -74,7 +81,7 @@ fn failed_external_terminal_keeps_output_and_uses_the_application_title() {
 
 #[test]
 fn command_line_renders_snapshot_inside_the_standard_shell_chrome() {
-    let mut terminal = CommandLineTerminalSnapshot::blank(106, 14);
+    let mut terminal = CommandLineTerminalSnapshot::blank(108, 18);
     terminal.set_cell(
         0,
         0,
@@ -97,14 +104,22 @@ fn command_line_renders_snapshot_inside_the_standard_shell_chrome() {
             ..CommandLineCell::default()
         },
     );
+    terminal.set_cell(
+        107,
+        17,
+        CommandLineCell {
+            symbol: "Z".into(),
+            ..Default::default()
+        },
+    );
     let model = CommandLineViewModel::new(terminal);
-    let mut screen = Terminal::new(TestBackend::new(108, 22)).unwrap();
+    let mut screen = Terminal::new(TestBackend::new(108, 20)).unwrap();
     screen
         .draw(|frame| {
             render_command_line(
                 frame,
                 frame.area(),
-                &chrome((108, 22)),
+                &chrome((108, 20)),
                 &model,
                 &TundraTheme::default_dark(),
             );
@@ -112,11 +127,18 @@ fn command_line_renders_snapshot_inside_the_standard_shell_chrome() {
         .unwrap();
     let buffer = screen.backend().buffer();
 
-    // 108x22 uses the normal 3-row top bar, then a bordered main panel.
-    assert_eq!(buffer.cell((1, 4)).unwrap().symbol(), "C");
-    assert_eq!(buffer.cell((3, 4)).unwrap().symbol(), "界");
+    let area = viewport((108, 20));
+    assert_eq!(buffer.cell((area.x, area.y)).unwrap().symbol(), "C");
+    assert_eq!(buffer.cell((area.x + 2, area.y)).unwrap().symbol(), "界");
     assert_eq!(
-        buffer.cell((1, 4)).unwrap().fg,
+        buffer
+            .cell((area.right() - 1, area.bottom() - 1))
+            .unwrap()
+            .symbol(),
+        "Z"
+    );
+    assert_eq!(
+        buffer.cell((area.x, area.y)).unwrap().fg,
         ratatui::style::Color::Rgb(12, 34, 56)
     );
     let output = buffer
@@ -126,14 +148,14 @@ fn command_line_renders_snapshot_inside_the_standard_shell_chrome() {
         .collect::<String>();
     assert!(output.contains("TundraUX 3"));
     assert!(output.contains("Command Line"));
-    assert!(output.contains("Status"));
+    assert!(output.contains("Ready"));
     assert!(output.contains("2026-07-27 10:15"));
 }
 
 #[test]
 fn command_line_preserves_unstyled_child_prompt_and_input() {
     let prompt = "AdminUser@/home/user/space and 中文 >> ";
-    let mut terminal = CommandLineTerminalSnapshot::blank(106, 14);
+    let mut terminal = CommandLineTerminalSnapshot::blank(108, 18);
     let mut column = 0;
     for symbol in prompt.chars() {
         terminal.set_cell(
@@ -164,19 +186,20 @@ fn command_line_preserves_unstyled_child_prompt_and_input() {
     );
     let model = CommandLineViewModel::new(terminal);
     let theme = TundraTheme::default_dark().with_accent_color(ratatui::style::Color::LightMagenta);
-    let mut screen = Terminal::new(TestBackend::new(108, 22)).unwrap();
+    let mut screen = Terminal::new(TestBackend::new(108, 20)).unwrap();
     screen
         .draw(|frame| {
-            render_command_line(frame, frame.area(), &chrome((108, 22)), &model, &theme);
+            render_command_line(frame, frame.area(), &chrome((108, 20)), &model, &theme);
         })
         .unwrap();
     let buffer = screen.backend().buffer();
-    let output_color = buffer.cell((1, 5)).unwrap().fg;
+    let area = viewport((108, 20));
+    let output_color = buffer.cell((area.x, area.y + 1)).unwrap().fg;
     assert_ne!(output_color, theme.accent_color);
 
     let mut prompt_column = 0;
     for symbol in prompt.trim_end().chars() {
-        let cell = buffer.cell((1 + prompt_column, 4)).unwrap();
+        let cell = buffer.cell((area.x + prompt_column, area.y)).unwrap();
         assert_eq!(cell.symbol(), symbol.to_string());
         assert_eq!(cell.fg, output_color);
         // Wide glyphs use the leading cell's style; their continuation cell
@@ -185,7 +208,7 @@ fn command_line_preserves_unstyled_child_prompt_and_input() {
             u16::try_from(ratatui::text::Line::from(symbol.to_string()).width()).unwrap();
     }
     assert_eq!(
-        buffer.cell((1 + column, 4)).unwrap().fg,
+        buffer.cell((area.x + column, area.y)).unwrap().fg,
         output_color,
         "typed command text must keep the child terminal style"
     );
@@ -193,7 +216,7 @@ fn command_line_preserves_unstyled_child_prompt_and_input() {
 
 #[test]
 fn command_line_force_wraps_a_snapshot_row_wider_than_the_viewport() {
-    let mut terminal = CommandLineTerminalSnapshot::blank(160, 14);
+    let mut terminal = CommandLineTerminalSnapshot::blank(160, 18);
     for column in 0..120 {
         terminal.set_cell(
             column,
@@ -213,14 +236,14 @@ fn command_line_force_wraps_a_snapshot_row_wider_than_the_viewport() {
         },
     );
     let model = CommandLineViewModel::new(terminal);
-    let mut screen = Terminal::new(TestBackend::new(108, 22)).unwrap();
+    let mut screen = Terminal::new(TestBackend::new(108, 20)).unwrap();
 
     screen
         .draw(|frame| {
             render_command_line(
                 frame,
                 frame.area(),
-                &chrome((108, 22)),
+                &chrome((108, 20)),
                 &model,
                 &TundraTheme::default_dark(),
             );
@@ -228,15 +251,18 @@ fn command_line_force_wraps_a_snapshot_row_wider_than_the_viewport() {
         .unwrap();
     let buffer = screen.backend().buffer();
 
-    assert!((1..107).all(|x| buffer.cell((x, 4)).unwrap().symbol() == "x"));
-    assert!((1..15).all(|x| buffer.cell((x, 5)).unwrap().symbol() == "x"));
-    assert_eq!(buffer.cell((1, 6)).unwrap().symbol(), "N");
+    let area = viewport((108, 20));
+    assert!(area.width < 120);
+    assert!((area.x..area.right()).all(|x| buffer.cell((x, area.y)).unwrap().symbol() == "x"));
+    assert!(
+        (0..120 - area.width)
+            .all(|x| buffer.cell((area.x + x, area.y + 1)).unwrap().symbol() == "x")
+    );
+    assert_eq!(buffer.cell((area.x, area.y + 2)).unwrap().symbol(), "N");
 }
 
 #[test]
 fn short_history_scrollbar_layout_matches_the_painted_thumb() {
-    use ratatui::layout::Rect;
-
     let main = Rect::new(0, 0, 10, 4);
     let terminal_area = Rect::new(1, 1, 8, 2);
     let context = ui::RenderContext::from_theme(
@@ -307,7 +333,7 @@ fn undersized_command_line_is_blocked() {
         .collect::<String>();
     assert!(output.contains("TundraUX 3"));
     assert!(output.contains("Command Line"));
-    assert!(output.contains("Status"));
+    assert!(output.contains("Ready"));
     assert!(output.contains("Resize to continue"));
 }
 
@@ -325,15 +351,15 @@ fn stopped_and_failed_cli_states_offer_restart_and_the_return_button() {
             "Unable to start CLI",
         ),
     ] {
-        let mut model = CommandLineViewModel::new(CommandLineTerminalSnapshot::blank(106, 14));
+        let mut model = CommandLineViewModel::new(CommandLineTerminalSnapshot::blank(108, 18));
         model.process_state = state;
-        let mut screen = Terminal::new(TestBackend::new(108, 22)).unwrap();
+        let mut screen = Terminal::new(TestBackend::new(108, 20)).unwrap();
         screen
             .draw(|frame| {
                 render_command_line(
                     frame,
                     frame.area(),
-                    &chrome((108, 22)),
+                    &chrome((108, 20)),
                     &model,
                     &TundraTheme::default_dark(),
                 );
@@ -350,7 +376,7 @@ fn stopped_and_failed_cli_states_offer_restart_and_the_return_button() {
         assert!(output.contains(expected));
         assert!(!output.contains("Esc Launcher"));
         assert!(!output.contains("Ctrl+Shift+X"));
-        assert!(output.contains("Status"));
+        assert!(output.contains("Ready"));
         assert!(output.contains("2026-07-27 10:15"));
     }
 }

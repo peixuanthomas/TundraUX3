@@ -127,14 +127,25 @@ impl ShellSession {
         if self.pages.launcher.launcher_run_settings.is_some() {
             return (target, ShellCommand::LauncherRunSettingsPointer(mouse));
         }
-        if matches!(
-            mouse.kind,
-            ui::MouseEventKind::Down(PointerButton::Left)
-                | ui::MouseEventKind::Drag(PointerButton::Left)
-                | ui::MouseEventKind::Up(PointerButton::Left)
-        ) && self
-            .launcher_content_layout()
-            .is_some_and(|layout| rect_contains(layout.search, coordinates))
+        let confirming = self.pages.launcher.launcher_pending_confirmation.is_some();
+        if confirming
+            && !matches!(
+                mouse.kind,
+                ui::MouseEventKind::Down(PointerButton::Left) | ui::MouseEventKind::Moved
+            )
+        {
+            return (target, ShellCommand::CaptureOverlayInput);
+        }
+        if !confirming
+            && matches!(
+                mouse.kind,
+                ui::MouseEventKind::Down(PointerButton::Left)
+                    | ui::MouseEventKind::Drag(PointerButton::Left)
+                    | ui::MouseEventKind::Up(PointerButton::Left)
+            )
+            && self
+                .launcher_content_layout()
+                .is_some_and(|layout| rect_contains(layout.search, coordinates))
         {
             return (
                 target,

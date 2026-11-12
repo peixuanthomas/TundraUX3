@@ -43,7 +43,8 @@ pub(crate) fn render_notification_overlay_context(
     frame.render_widget(Clear, layout.dialog);
     let border = match model.tone {
         NotificationTone::Info => context.theme.border,
-        NotificationTone::Success | NotificationTone::Warning => context.theme.accent,
+        NotificationTone::Success => context.theme.success,
+        NotificationTone::Warning => context.theme.warning,
         NotificationTone::Error | NotificationTone::Critical => context.theme.danger,
     };
     let dialog_context = RenderContext {
@@ -147,8 +148,12 @@ pub(crate) fn notification_tone_style(
 ) -> ratatui::style::Style {
     match tone {
         NotificationTone::Info => theme.body_style(),
-        NotificationTone::Success => theme.title_style(),
-        NotificationTone::Warning => theme.title_style(),
+        NotificationTone::Success => ratatui::style::Style::default().fg(
+            crate::components::tone_color(crate::components::ComponentTone::Success, theme),
+        ),
+        NotificationTone::Warning => ratatui::style::Style::default().fg(
+            crate::components::tone_color(crate::components::ComponentTone::Warning, theme),
+        ),
         NotificationTone::Error | NotificationTone::Critical => theme.error_style(),
     }
 }

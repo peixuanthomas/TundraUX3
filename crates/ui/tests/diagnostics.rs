@@ -17,6 +17,49 @@ use ui::{
 };
 
 #[test]
+fn ordinary_diagnostics_keep_status_text_and_content_without_panel_boxes() {
+    let mut model = health_model();
+    model.checks = [
+        DiagnosticsStatus::Pass,
+        DiagnosticsStatus::Warning,
+        DiagnosticsStatus::Fail,
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, status)| check(index, status))
+    .collect();
+    let main = Rect::new(0, 0, 120, 28);
+    let context = ui::RenderContext::default();
+    let mut terminal = Terminal::new(TestBackend::new(main.width, main.height)).unwrap();
+    terminal
+        .draw(|frame| ui::render_diagnostics_page_content(frame, main, &model, &context))
+        .unwrap();
+    let text = terminal_output(&terminal);
+    assert!(
+        !text
+            .chars()
+            .any(|character| "╭╮╰╯┌┐└┘│─".contains(character))
+    );
+    for status in [
+        DiagnosticsStatus::Pass,
+        DiagnosticsStatus::Warning,
+        DiagnosticsStatus::Fail,
+    ] {
+        assert!(text.contains(&format!("{} {}", status.marker(), status.label())));
+    }
+    let layout = diagnostics_layout(main, &model);
+    for row in &layout.rows {
+        assert_eq!(
+            diagnostics_hit_test(&layout, (row.area.x, row.area.y)),
+            Some(DiagnosticsHitTarget::Check(row.index))
+        );
+    }
+    model.scanning = true;
+    assert!(ui::diagnostics_busy_visible(main, &model));
+    assert!(!ui::diagnostics_busy_visible(Rect::default(), &model));
+}
+
+#[test]
 fn restart_required_toolbar_shows_the_actions_that_its_keys_execute() {
     let mut model = health_model();
     model.restart_required = true;
@@ -57,11 +100,54 @@ fn narrow_repair_dialog_keeps_all_action_keys_visible() {
             .map(|x| buffer[(x, area.y)].symbol())
             .collect::<String>()
     };
-    assert!(row_text(dialog.confirm).contains("[Y Repair]"));
-    assert!(row_text(dialog.restart).contains("[R Restart]"));
-    assert!(row_text(dialog.cancel).contains("[Esc Cancel]"));
+    assert!(row_text(dialog.confirm).contains("Y Repair"));
+    assert!(row_text(dialog.restart).contains("R Restart"));
+    assert!(row_text(dialog.cancel).contains("Esc Cancel"));
     assert!(dialog.confirm.right() <= dialog.restart.x);
     assert!(dialog.restart.right() <= dialog.cancel.x);
+}
+
+#[test]
+fn multiline_check_and_incident_fields_preserve_blank_lines_and_line_boundaries() {
+    for tab in [DiagnosticsTab::Health, DiagnosticsTab::Incidents] {
+        let mut model = health_model();
+        model.can_view_details = true;
+        model.tab = tab;
+        model.checks[0].detail = "FIRST_DETAIL\n\nLAST_DETAIL".into();
+        model.checks[0].remediation = "FIRST_REMEDIATION\n\nLAST_REMEDIATION".into();
+        let mut record = incident(false);
+        record.summary = "FIRST_SUMMARY\n\nLAST_SUMMARY".into();
+        record.detail = "FIRST_DETAIL\n\nLAST_DETAIL".into();
+        record.recovery = "FIRST_RECOVERY\n\nLAST_RECOVERY".into();
+        model.incidents = vec![record];
+        let main = full_main(140, 32);
+        let panel = diagnostics_layout(main, &model).detail_panel;
+        let body = ui::components::Surface::new().titled("").inner(panel);
+        let terminal = render(140, 32, &model);
+        let rows = (body.y..body.bottom())
+            .map(|y| {
+                (body.x..body.right())
+                    .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        let fields = if tab == DiagnosticsTab::Health {
+            vec!["DETAIL", "REMEDIATION"]
+        } else {
+            vec!["RECOVERY", "SUMMARY", "DETAIL"]
+        };
+        for field in fields {
+            let start = rows
+                .iter()
+                .position(|row| row.contains(&format!("FIRST_{field}")))
+                .unwrap();
+            assert_eq!(rows[start + 1].trim(), "", "{tab:?} {field}");
+            assert!(
+                rows[start + 2].contains(&format!("LAST_{field}")),
+                "{tab:?} {field}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -76,7 +162,7 @@ fn long_diagnostic_details_can_show_the_last_line_with_a_scrollbar() {
     let layout = diagnostics_layout(full_main(108, 25), &model);
     let (track, total, viewport) =
         ui::diagnostics_detail_scroll_metrics(layout.detail_panel, &model);
-    assert!(total > viewport);
+    assert!(total > 100);
     assert!(track.height > 0);
     model.detail_scroll = total.saturating_sub(viewport);
     let terminal = render(108, 25, &model);
@@ -97,9 +183,10 @@ fn minimum_full_layout_keeps_selected_health_check_visible_and_exposes_hit_targe
 
     assert!(layout.list_panel.width >= 28);
     assert!(layout.detail_panel.width > layout.list_panel.width);
-    assert_eq!(layout.visible_capacity, 7);
-    assert_eq!(layout.visible_start, 4);
-    assert_eq!(layout.rows.last().map(|row| row.index), Some(10));
+    assert!(layout.visible_capacity >= model.checks.len());
+    assert_eq!(layout.visible_start, 0);
+    assert_eq!(layout.rows.len(), model.checks.len());
+    let selected = layout.rows.iter().find(|row| row.index == 10).unwrap();
     let health_tab = layout
         .tabs
         .iter()
@@ -109,7 +196,6 @@ fn minimum_full_layout_keeps_selected_health_check_visible_and_exposes_hit_targe
         diagnostics_hit_test(&layout, (health_tab.area.x, health_tab.area.y)),
         Some(DiagnosticsHitTarget::Tab(DiagnosticsTab::Health))
     );
-    let selected = layout.rows.last().expect("selected row");
     assert_eq!(
         diagnostics_hit_test(&layout, (selected.area.x, selected.area.y)),
         Some(DiagnosticsHitTarget::Check(10))

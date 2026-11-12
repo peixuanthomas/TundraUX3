@@ -67,12 +67,8 @@ fn management_actions_stay_below_details_and_headers_do_not_overlap_rows() {
             assert!(rect.bottom() <= layout.list_rows.y);
         }
         assert_eq!(
-            layout.actions.last().unwrap().right(),
-            if layout.compact_actions {
-                layout.detail_actions_panel.right()
-            } else {
-                layout.detail_actions_panel.right() - 1
-            }
+            layout.actions.first().unwrap().right(),
+            layout.detail_actions_panel.right()
         );
     }
 }
@@ -96,9 +92,12 @@ fn long_and_wide_cells_stay_under_their_own_header() {
     .bordered(false);
     table.render(area, &mut buffer, &context);
     assert_eq!(buffer[(0, 1)].symbol(), "世");
-    assert_eq!(buffer[(2, 1)].symbol(), "界");
+    assert_eq!(buffer[(2, 1)].symbol(), " ");
+    assert_eq!(buffer[(3, 1)].symbol(), " ");
     assert_eq!(buffer[(4, 1)].symbol(), " ");
     assert_eq!(buffer[(5, 1)].symbol(), "l");
+    assert_eq!(buffer[(8, 1)].symbol(), " ");
+    assert_eq!(buffer[(9, 1)].symbol(), " ");
     assert_eq!(buffer[(10, 1)].symbol(), "2");
     assert_eq!(buffer[(11, 1)].symbol(), "0");
 }

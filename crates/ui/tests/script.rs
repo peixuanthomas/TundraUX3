@@ -19,7 +19,7 @@ fn model() -> ScriptViewModel {
 }
 
 #[test]
-fn detail_motion_draws_borders_then_restores_source_and_details() {
+fn detail_motion_draws_empty_surfaces_then_restores_source_and_details() {
     let mut model = model();
     model.detail = ScriptPane::Expression;
     model.state.expression_log.push("count = 42".into());
@@ -35,10 +35,6 @@ fn detail_motion_draws_borders_then_restores_source_and_details() {
             .unwrap();
         let buffer = terminal.backend().buffer();
         let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
-        assert_eq!(
-            buffer[(layout.editor_area.x, layout.editor_area.y)].symbol(),
-            "╭"
-        );
         if progress > 0 && progress < 1_000 {
             assert!(!text.contains("#!/usr/bin/env bash"));
             assert!(!text.contains("count = 42"));
@@ -484,4 +480,55 @@ fn rendering_preserves_source_and_expression_content_in_both_sizes() {
         assert!(output.contains("count = 42"));
         assert!(output.contains("#!/usr/bin/env bash"));
     }
+}
+
+#[test]
+fn output_terminal_fills_the_unframed_pane_and_reserves_only_a_live_scrollbar() {
+    let mut model = model();
+    let main = Rect::new(3, 2, 108, 18);
+    let initial = script_layout(main, &model);
+    let pane = initial.pane(ScriptPane::Output);
+    let output = initial.output_area;
+    assert_eq!(
+        (output.x, output.width, output.bottom()),
+        (pane.x, pane.width, pane.bottom())
+    );
+    assert_eq!(output.y, pane.y + 1);
+    let mut snapshot = ui::CommandLineTerminalSnapshot::blank(output.width, output.height);
+    snapshot.cells[0].symbol = "A".into();
+    let last = snapshot.cells.last_mut().unwrap();
+    last.symbol = "Z".into();
+    last.cursor = true;
+    model.output = Some(Arc::new(snapshot.clone()));
+    model.focus = ScriptPane::Output;
+    let mut terminal = Terminal::new(TestBackend::new(main.right(), main.bottom())).unwrap();
+    terminal
+        .draw(|frame| {
+            render_script_contextual(frame, main, &model, &RenderContext::default());
+        })
+        .unwrap();
+    assert_eq!(
+        terminal.backend().buffer()[(output.x, output.y)].symbol(),
+        "A"
+    );
+    assert_eq!(
+        terminal.backend().buffer()[(output.right() - 1, output.bottom() - 1)].symbol(),
+        "Z"
+    );
+    assert_eq!(
+        terminal.get_cursor_position().unwrap(),
+        (output.right() - 1, output.bottom() - 1).into()
+    );
+    snapshot.scrollback_rows = 30;
+    snapshot.scrollback_offset = 10;
+    model.output = Some(Arc::new(snapshot));
+    let scrolled = script_layout(main, &model);
+    assert_eq!(scrolled.output_area.width + 1, pane.width);
+    let (_, scrollbar) = scrolled
+        .scrollbars
+        .iter()
+        .find(|(pane, _)| *pane == ScriptPane::Output)
+        .unwrap();
+    assert_eq!(scrollbar.track.x, scrolled.output_area.right());
+    assert_eq!(scrollbar.track.bottom(), scrolled.output_area.bottom());
 }

@@ -27,7 +27,7 @@ fn undersized_runtime_keeps_the_page_draft_dialog_and_countdown() {
     state.clock_scheduler = Some(clock);
     let requirement = ShellTerminalSizeRequirement::from_assets(&state.ascii_assets);
 
-    for size in [(107, 22), (108, 21), (108, 20), (80, 24)] {
+    for size in [(107, 20), (108, 19), (80, 24)] {
         assert!(resize_runtime_session(&mut state, size, &platform));
         assert!(requirement.validate(state.terminal_size()).is_err());
         state.apply_input_with_platform(InputEvent::Tick, &platform);
@@ -47,7 +47,7 @@ fn undersized_runtime_keeps_the_page_draft_dialog_and_countdown() {
     assert_eq!(countdown.id, id);
     assert_eq!(countdown.display_time, "00:00:45");
 
-    assert!(resize_runtime_session(&mut state, (116, 41), &platform));
+    assert!(resize_runtime_session(&mut state, (108, 20), &platform));
     assert!(requirement.validate(state.terminal_size()).is_ok());
     assert_eq!(state.active_page_id(), page);
     assert_eq!(state.to_notification_view_model(), dialog);
@@ -91,7 +91,7 @@ fn runtime_size_notice_renders_in_english_and_chinese_at_small_sizes() {
             }
             text.push('\n');
         }
-        assert!(text.contains("108x22"));
+        assert!(text.contains("108x20"));
         assert!(text.contains(expected), "{language}: {text}");
         for size in [(1, 1), (0, 0)] {
             let mut terminal =
@@ -896,7 +896,7 @@ fn theme_reloader_switches_from_custom_admin_theme_to_managed_user_defaults() {
     assert_eq!(theme.border_shape, ui::BorderShape::Rounded);
     assert_eq!(
         theme.border_color,
-        ratatui::style::Color::Rgb(0x29, 0x43, 0x4E)
+        ratatui::style::Color::Rgb(0x38, 0x38, 0x38)
     );
     assert_eq!(
         theme.accent_color,

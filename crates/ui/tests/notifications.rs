@@ -93,6 +93,27 @@ fn long_chinese_repair_summary_scrolls_at_50_by_12_with_fixed_actions() {
 }
 
 #[test]
+fn notification_dialog_keeps_one_border_with_its_semantic_tone() {
+    let area = Rect::new(0, 0, 80, 24);
+    let theme = TundraTheme::default_dark();
+    for (tone, color) in [
+        (NotificationTone::Success, theme.tokens().success),
+        (NotificationTone::Warning, theme.tokens().warning),
+        (NotificationTone::Error, theme.tokens().danger),
+    ] {
+        let mut model = long_notification();
+        model.tone = tone;
+        let dialog = layout(area, &model).dialog;
+        let terminal = draw(area, &model, &theme);
+        assert_eq!(
+            terminal.backend().buffer()[(dialog.x, dialog.y)].symbol(),
+            "╭"
+        );
+        assert_eq!(terminal.backend().buffer()[(dialog.x, dialog.y)].fg, color);
+    }
+}
+
+#[test]
 fn notification_scroll_clamps_on_resize_and_when_the_message_becomes_short() {
     let mut model = long_notification();
     model.scroll_offset = usize::MAX;

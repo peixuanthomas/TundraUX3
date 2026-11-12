@@ -86,3 +86,27 @@ fn scrollable_sidebar_keeps_active_button_and_hit_regions_inside_short_viewports
         }
     }
 }
+
+#[test]
+fn short_navigation_without_an_active_index_keeps_all_entries_reachable() {
+    let labels = ["One", "Two", "Three", "Four", "Five", "Six"].map(str::to_owned);
+    let area = Rect::new(2, 1, 110, 2);
+    let layout = SidebarWorkspaceLayout::new(area, &labels);
+    assert!(!layout.vertical);
+    assert_eq!(layout.navigation.len(), labels.len());
+    for row in &layout.navigation {
+        assert!(!row.is_empty());
+        assert_eq!(row.intersection(area), *row);
+    }
+    let scrolled = SidebarWorkspaceLayout::scrollable(area, &labels, labels.len() - 1);
+    assert!(scrolled.vertical);
+    assert!(!scrolled.navigation.last().unwrap().is_empty());
+    assert_eq!(
+        scrolled
+            .navigation
+            .iter()
+            .filter(|row| !row.is_empty())
+            .count(),
+        usize::from(area.height)
+    );
+}

@@ -184,14 +184,9 @@ pub fn notification_layout(area: Rect, model: &NotificationViewModel) -> Notific
 }
 
 pub(crate) fn notification_action_text(action: &NotificationActionViewModel) -> String {
-    let label = match &action.shortcut {
+    match &action.shortcut {
         Some(shortcut) => format!("{shortcut}: {}", action.label),
         None => action.label.clone(),
-    };
-    if action.selected {
-        format!("[{label}]")
-    } else {
-        format!(" {label} ")
     }
 }
 

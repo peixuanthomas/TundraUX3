@@ -1139,17 +1139,10 @@ impl ShellSession {
         else {
             return;
         };
-        let column_step = (widget
-            .area
-            .width
-            .saturating_sub(widget.size.cols().saturating_sub(1))
-            / widget.size.cols().max(1))
-        .saturating_add(1)
-        .max(1);
         let grab_column = coordinates
             .0
             .saturating_sub(widget.area.x)
-            .checked_div(column_step)
+            .checked_div(layout.column_stride.max(1))
             .unwrap_or(0)
             .min(widget.size.cols().saturating_sub(1));
         let hidden_rows = layout
@@ -1188,17 +1181,10 @@ impl ShellSession {
         let Some((_, layout)) = self.system_status_layout() else {
             return;
         };
-        let grid_width = layout
-            .canvas
-            .width
-            .saturating_sub(if layout.scrollbar.is_some() { 2 } else { 0 });
-        let cell_width = grid_width.saturating_sub(layout.column_count.saturating_sub(1))
-            / layout.column_count.max(1);
-        let column_step = cell_width.saturating_add(1).max(1);
         let pointer_column = coordinates
             .0
             .saturating_sub(layout.canvas.x)
-            .checked_div(column_step)
+            .checked_div(layout.column_stride.max(1))
             .unwrap_or(0)
             .min(layout.column_count.saturating_sub(1));
         let pointer_row = layout.visible_row_start.saturating_add(

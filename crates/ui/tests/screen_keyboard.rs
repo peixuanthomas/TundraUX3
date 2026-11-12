@@ -21,11 +21,14 @@ fn view(text: &str) -> ScreenKeyboardViewModel<'_> {
 }
 
 #[test]
-fn moving_keyboard_draws_its_border_and_shows_keys_only_when_settled() {
+fn moving_keyboard_keeps_visible_keys_in_their_current_hit_regions() {
     let bounds = Rect::new(0, 0, 120, 48);
-    let context = RenderContext::default();
+    let theme = TundraTheme::default();
     let mut terminal = Terminal::new(TestBackend::new(bounds.width, bounds.height)).unwrap();
     for visibility in [500, 999, 1_000, 500, 0] {
+        let buttons = ButtonFrame::new(None, None, &theme);
+        let mut context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+        context.buttons = Some(buttons.clone());
         let layout =
             screen_keyboard_layout_with_visibility(bounds, false, visibility, Default::default());
         terminal
@@ -34,21 +37,19 @@ fn moving_keyboard_draws_its_border_and_shows_keys_only_when_settled() {
             })
             .unwrap();
         let buffer = terminal.backend().buffer();
-        if visibility > 0 && visibility < 1_000 {
-            assert_eq!(buffer[(layout.keyboard.x, layout.keyboard.y)].symbol(), "╭");
-            assert!(
-                layout
-                    .keyboard
-                    .inner(ratatui::layout::Margin::new(1, 1))
-                    .positions()
-                    .all(|position| buffer[position].symbol() == " ")
-            );
-        } else {
-            let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
-            assert!(text.contains("Esc"));
-            if visibility == 1_000 {
-                assert!(text.contains('q'));
+        assert!(layout.content_visible);
+        for key in &layout.buttons {
+            assert_eq!(key.area.intersection(layout.keyboard), key.area);
+            if !key.area.is_empty() {
+                assert!(buttons.regions().contains(&key.region()));
             }
+        }
+        let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+        if visibility == 1_000 {
+            assert!(text.contains('q'));
+        }
+        if visibility == 0 {
+            assert!(text.contains("Hide"));
         }
     }
 }
@@ -60,7 +61,7 @@ fn ordinary_key_legends_meet_contrast_without_losing_custom_colors_or_feedback()
         (
             TundraTheme::default_dark(),
             ui::RenderCapabilities::default(),
-            Color::Rgb(109, 127, 134),
+            Color::Rgb(125, 125, 125),
         ),
         (
             TundraTheme::default_dark().with_border_color(Color::Rgb(140, 160, 180)),

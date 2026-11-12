@@ -208,6 +208,11 @@ pub(in crate::session) struct ManagementState {
 }
 
 impl ManagementState {
+    pub(in crate::session) fn title(&self) -> String {
+        self.kind
+            .map_or_else(|| i18n::tr!("management-title"), management_title)
+    }
+
     fn can_show_details(&self) -> bool {
         !self.snapshot.rows.is_empty()
             || self.problem.is_some()
@@ -1817,7 +1822,7 @@ impl ShellSession {
             details_horizontal_scroll: s.details_horizontal_scroll,
             details_only: s.details_only,
             details_expansion: self.details_motion.as_ref()
-                .filter(|(page, _)| *page == self.active_page_id() && self.interaction.pointer_motion)
+                .filter(|(page, _)| *page == self.active_page_id())
                 .map(|(_, motion)| motion.value()),
             terminal: s.terminal_mode,
             terminal_snapshot: if s.terminal_mode {

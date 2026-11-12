@@ -12,6 +12,81 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Clear, Paragraph, Sparkline};
+use unicode_width::UnicodeWidthStr;
+
+pub fn system_status_busy_visible(main: Rect, model: &SystemStatusViewModel) -> bool {
+    let layout = system_status_layout(main, model);
+    if layout.canvas.is_empty() {
+        return false;
+    }
+    match model.route {
+        SystemStatusRoute::Dashboard => {
+            !layout.empty_canvas
+                && model.dashboard.dialog.is_none()
+                && model.dashboard.picker.is_none()
+                && model.dashboard.size_picker.is_none()
+                && layout.widgets.iter().any(|area| {
+                    !Surface::new().titled("").inner(area.area).is_empty()
+                        && model
+                            .dashboard
+                            .widgets(layout.profile)
+                            .iter()
+                            .any(|widget| {
+                                widget.kind == area.kind
+                                    && widget.state == SystemStatusWidgetState::Loading
+                            })
+                })
+        }
+        SystemStatusRoute::Detail(SystemStatusDetail::Overview) => {
+            super::overview::busy_visible(layout.canvas, &model.dashboard.overview_metrics)
+        }
+        SystemStatusRoute::Detail(SystemStatusDetail::Storage) => {
+            matches!(
+                &model.content,
+                SystemStatusContentViewModel::Admin(admin) if admin.storage_state == SystemStatusSectionState::Loading
+            ) && !layout.rows_area.is_empty()
+        }
+        SystemStatusRoute::Detail(SystemStatusDetail::Network) => {
+            matches!(
+                &model.content,
+                SystemStatusContentViewModel::Admin(admin) if admin.network_state == SystemStatusSectionState::Loading
+            ) && !layout.rows_area.is_empty()
+        }
+        SystemStatusRoute::Detail(detail) if detail.diagnostics_tab().is_some() => {
+            detail == SystemStatusDetail::Diagnostics
+                && model.diagnostics.repair_dialog.is_none()
+                && model.diagnostics.scanning
+                && model.diagnostics.checks.is_empty()
+                && layout
+                    .diagnostics_content
+                    .as_ref()
+                    .is_some_and(|content| !content.list_rows_area.is_empty())
+        }
+        SystemStatusRoute::Detail(detail) => model.detail_widget(detail).is_some_and(|widget| {
+            widget.state == SystemStatusWidgetState::Loading
+                || (detail == SystemStatusDetail::Processes
+                    && matches!(
+                        widget.state,
+                        SystemStatusWidgetState::Ready | SystemStatusWidgetState::Stale { .. }
+                    )
+                    && !widget.primary.is_empty()
+                    && [SystemStatusWidgetKind::Cpu, SystemStatusWidgetKind::Memory]
+                        .into_iter()
+                        .take(usize::from(layout.detail_summary_area.height))
+                        .any(|kind| {
+                            model
+                                .dashboard
+                                .overview_metrics
+                                .iter()
+                                .find(|metric| metric.kind == kind)
+                                .or_else(|| model.detail_widget(kind.detail()))
+                                .is_some_and(|metric| {
+                                    metric.state == SystemStatusWidgetState::Loading
+                                })
+                        }))
+        }),
+    }
+}
 
 pub fn render_system_status_content(
     frame: &mut Frame<'_>,
@@ -22,7 +97,7 @@ pub fn render_system_status_content(
     let l = system_status_layout(main, model);
     Surface::new()
         .titled(i18n::tr!("ui-system-status-system-status"))
-        .bordered(true)
+        .bordered(false)
         .render_frame(frame, l.panel, context);
     match model.route {
         SystemStatusRoute::Dashboard => render_dashboard(frame, &l, model, context),
@@ -50,7 +125,7 @@ fn render_dashboard(
     } else {
         i18n::tr!("ui-system-status-dashboard")
     };
-    let gap = width.saturating_sub(left.len() + updated.len());
+    let gap = width.saturating_sub(left.width() + updated.width());
     frame.render_widget(
         Paragraph::new(format!("{left}{}{updated}", " ".repeat(gap))).style(theme.title_style()),
         l.header,
@@ -182,12 +257,7 @@ fn render_detail(
         .style(theme.title_style()),
         l.header,
     );
-    let surface = if d == SystemStatusDetail::Processes && l.content_panel.height < 4 {
-        Surface::new()
-    } else {
-        Surface::new().titled(d.label()).bordered(true)
-    };
-    surface.render_frame(frame, l.content_panel, context);
+    Surface::new().render_frame(frame, l.content_panel, context);
     match d {
         SystemStatusDetail::Overview => super::overview::render_overview(frame, l, model, context),
         SystemStatusDetail::Storage => render_storage(frame, l, model, context),
@@ -228,11 +298,12 @@ fn render_formatted_detail(
 ) {
     match &vm.state {
         SystemStatusWidgetState::Loading => {
-            EmptyState::new(i18n::tr!("ui-system-status-loading")).render_frame(
-                frame,
-                layout.canvas,
-                context,
-            );
+            EmptyState::new(format!(
+                "{} {}",
+                crate::components::BusyIndicator::from_motion(context.motion).symbol(),
+                i18n::tr!("ui-system-status-loading")
+            ))
+            .render_frame(frame, layout.canvas, context);
             return;
         }
         SystemStatusWidgetState::Unavailable { message } => {
@@ -481,9 +552,11 @@ fn state_placeholder(
     context: &RenderContext,
 ) -> bool {
     let e = match state {
-        SystemStatusSectionState::Loading => {
-            Some(EmptyState::new(i18n::tr!("ui-system-status-loading")))
-        }
+        SystemStatusSectionState::Loading => Some(EmptyState::new(format!(
+            "{} {}",
+            crate::components::BusyIndicator::from_motion(context.motion).symbol(),
+            i18n::tr!("ui-system-status-loading")
+        ))),
         SystemStatusSectionState::Unavailable { message } => {
             Some(EmptyState::new(i18n::tr!("ui-system-status-unavailable")).detail(message))
         }

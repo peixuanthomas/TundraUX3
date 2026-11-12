@@ -471,6 +471,19 @@ pub fn screen_keyboard_input_layout_with_visibility(
             );
             layout.keyboard.y = layout.hint.y;
         }
+    } else if !layout
+        .buttons
+        .iter()
+        .any(|button| button.action == ScreenKeyboardAction::ToggleKeyboard)
+    {
+        let hide = screen_keyboard_launcher_area(bounds);
+        layout
+            .buttons
+            .retain(|button| button.area.intersection(hide).is_empty());
+        layout.buttons.push(ScreenKeyboardButtonLayout {
+            action: ScreenKeyboardAction::ToggleKeyboard,
+            area: hide,
+        });
     }
     layout
 }
@@ -558,7 +571,7 @@ fn keyboard_layout(
         bordered_buttons,
         usable,
         collapsed,
-        content_visible: visibility == 0 || visibility >= 1_000,
+        content_visible: true,
         compact: true,
         aa_dialog: Rect::default(),
     };
@@ -597,11 +610,7 @@ pub fn screen_keyboard_aa_layout(
     section: ScreenKeyboardSection,
 ) -> ScreenKeyboardLayout {
     let shell = crate::ShellFrameLayout::new(bounds, None, context);
-    let top = if shell.is_compact() {
-        bounds.height.min(1)
-    } else {
-        3
-    };
+    let top = shell.main.y.saturating_sub(bounds.y);
     let height = (bounds.height / 2).min(bounds.height.saturating_sub(top + 8));
     let usable = bounds.width >= 60 && height >= 7;
     let mut layout = keyboard_layout(

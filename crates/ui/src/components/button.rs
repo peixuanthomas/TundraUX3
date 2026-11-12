@@ -104,6 +104,8 @@ pub struct Button {
     pub pressed_fill: bool,
     pub emphasis: ButtonEmphasis,
     pub focus_fill: Option<ratatui::style::Color>,
+    pub surface_border: bool,
+    pub label_alignment: HorizontalAlignment,
     capture_role: &'static str,
     sensitive: bool,
     capture_selected: Option<bool>,
@@ -126,13 +128,15 @@ impl Button {
             id: id.into(),
             label: label.into(),
             state: ComponentState::default(),
-            bracketed_label: true,
+            bracketed_label: false,
             latched: false,
             current: false,
             centered_label: false,
             pressed_fill: false,
             emphasis: ButtonEmphasis::Normal,
             focus_fill: None,
+            surface_border: true,
+            label_alignment: HorizontalAlignment::Center,
             capture_role: "button",
             sensitive: false,
             capture_selected: None,
@@ -184,6 +188,17 @@ impl Button {
 
     pub fn with_focus_fill(mut self, fill: Option<ratatui::style::Color>) -> Self {
         self.focus_fill = fill;
+        self
+    }
+
+    /// Controls the frame around rich content; ordinary bordered rendering is unchanged.
+    pub fn with_surface_border(mut self, bordered: bool) -> Self {
+        self.surface_border = bordered;
+        self
+    }
+
+    pub fn with_label_alignment(mut self, alignment: HorizontalAlignment) -> Self {
+        self.label_alignment = alignment;
         self
     }
 
@@ -342,7 +357,7 @@ impl Button {
         let state = self.render_state(area, theme);
         let style = self.style_for_state(state, theme);
         Paragraph::new(self.label_text(area.height.saturating_sub(2)))
-            .alignment(HorizontalAlignment::Center)
+            .alignment(self.label_alignment)
             .style(style)
             .block(
                 theme
@@ -357,7 +372,7 @@ impl Button {
         let state = self.render_state(area, theme);
         let style = self.style_for_state(state, theme);
         Paragraph::new(self.label_text(area.height))
-            .alignment(HorizontalAlignment::Center)
+            .alignment(self.label_alignment)
             .style(style)
     }
 
@@ -407,22 +422,47 @@ impl Button {
 
     fn surface_widget(&self, area: Rect, theme: &TundraTheme) -> Paragraph<'static> {
         let state = self.render_state(area, theme);
-        let mut surface_state = state;
-        surface_state.selected = false;
-        let mut style = self.style_for_state(surface_state, theme);
-        if !self.pressed_fill || !state.active || state.disabled {
-            style = style.bg(theme.tokens().raised);
-        }
+        let style = self.surface_style_for_state(state, theme);
         Paragraph::new("")
             .alignment(HorizontalAlignment::Left)
             .style(style)
             .block(
                 theme
                     .block()
-                    .borders(Borders::ALL)
+                    .borders(if self.surface_border {
+                        Borders::ALL
+                    } else {
+                        Borders::NONE
+                    })
                     .style(style)
                     .border_style(self.border_style(state, theme)),
             )
+    }
+
+    /// Resolves rich-content colours without registering another pointer or capture region.
+    /// Use this style for content painted over [`Button::render_surface_frame`].
+    pub fn surface_style(&self, area: Rect, theme: &TundraTheme) -> Style {
+        self.surface_style_for_state(self.resolved_state(area, theme), theme)
+    }
+
+    fn surface_style_for_state(&self, state: ComponentState, theme: &TundraTheme) -> Style {
+        let style = self.style_for_state(state, theme);
+        if state.disabled
+            || self.emphasis == ButtonEmphasis::Primary
+            || (self.pressed_fill && state.active)
+        {
+            return style;
+        }
+        let tokens = theme.tokens();
+        style.bg(
+            if state.hovered || state.focused || (state.selected && !self.current) {
+                self.focus_fill.unwrap_or(tokens.accent_soft)
+            } else if self.current {
+                tokens.raised
+            } else {
+                tokens.surface
+            },
+        )
     }
 
     fn render_state(&self, area: Rect, theme: &TundraTheme) -> ComponentState {
@@ -447,6 +487,17 @@ impl Button {
             };
             crate::automation::record(node);
         }
+        if let Some(frame) = &theme.buttons {
+            frame.register_region(ButtonRegion {
+                id: self.id.clone(),
+                area,
+                disabled: self.state.disabled,
+            });
+        }
+        self.resolved_state(area, theme)
+    }
+
+    fn resolved_state(&self, area: Rect, theme: &TundraTheme) -> ComponentState {
         let mut state = self.state;
         if let Some(frame) = &theme.buttons {
             state.focused &= frame.keyboard_focus_visible;
@@ -456,11 +507,6 @@ impl Button {
                 area,
                 disabled: state.disabled,
             };
-            frame
-                .regions
-                .lock()
-                .expect("button frame registry")
-                .push(region.clone());
             state.hovered = frame.hovered.as_ref() == Some(&region);
             state.active = state.hovered && frame.pressed.as_ref() == Some(&region);
         }
@@ -474,6 +520,9 @@ impl Button {
             return theme.disabled_style();
         }
         if state.active {
+            if self.emphasis == ButtonEmphasis::Danger {
+                return theme.border_style().fg(theme.error);
+            }
             if self.pressed_fill {
                 return theme
                     .border_style()
@@ -482,7 +531,10 @@ impl Button {
             }
             return theme.border_style().fg(theme.button_pressed_color());
         }
-        if state.hovered || state.focused || state.selected {
+        if state.hovered || state.focused || (state.selected && !self.current) {
+            if self.emphasis == ButtonEmphasis::Danger {
+                return theme.border_style().fg(theme.error);
+            }
             return theme.border_style().fg(theme.button_accent_color());
         }
         match self.emphasis {
@@ -497,45 +549,49 @@ impl Button {
             return theme.disabled_style();
         }
 
-        let mut style = theme.body_style();
-        if (state.hovered || state.active || state.focused || state.selected)
-            && let Some(frame) = &theme.buttons
-        {
-            // Swatches and menu tabs may supply a local fill equal to the
-            // shared accent. Use the frame canvas so emphasized text stays visible.
-            style = style.bg(frame.background);
+        let tokens = theme.tokens();
+        let focused = state.focused || (state.selected && !self.current);
+        let mut style = theme.body_style().bg(theme
+            .buttons
+            .as_ref()
+            .map_or(theme.background, |frame| frame.background));
+        if self.current {
+            style = style.bg(tokens.raised).add_modifier(Modifier::BOLD);
         }
-        if (state.hovered || state.focused || state.selected)
+        if (state.hovered || focused)
             && !state.active
             && let Some(fill) = self.focus_fill
         {
             style = style.bg(fill);
         }
-        if state.active {
+        if self.emphasis == ButtonEmphasis::Primary {
+            style = tokens
+                .filled_style(if state.active || state.hovered {
+                    theme.button_pressed_color()
+                } else {
+                    theme.button_accent_color()
+                })
+                .add_modifier(Modifier::BOLD);
+        } else if self.emphasis == ButtonEmphasis::Danger {
+            style = if self.pressed_fill && state.active {
+                tokens.filled_style(theme.error)
+            } else {
+                style.fg(theme.error)
+            };
+        } else if state.active {
             style = if self.pressed_fill {
                 theme.tokens().filled_style(theme.button_pressed_color())
             } else {
                 style.fg(theme.button_pressed_color())
             };
-        } else if state.hovered || state.focused || state.selected {
-            style = style.fg(if self.emphasis == ButtonEmphasis::Danger {
-                theme.error
-            } else {
-                theme.button_accent_color()
-            });
-        } else {
-            match self.emphasis {
-                ButtonEmphasis::Primary => {
-                    style = style
-                        .fg(theme.button_accent_color())
-                        .add_modifier(Modifier::BOLD);
-                }
-                ButtonEmphasis::Danger => style = style.fg(theme.error),
-                ButtonEmphasis::Normal => {}
-            }
+        } else if state.hovered || focused {
+            style = style.fg(theme.button_accent_color());
         }
         if state.selected || state.focused || state.active {
             style = style.add_modifier(Modifier::BOLD);
+        }
+        if focused {
+            style = style.add_modifier(Modifier::UNDERLINED);
         }
         style
     }

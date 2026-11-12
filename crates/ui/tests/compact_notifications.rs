@@ -99,7 +99,7 @@ fn compact_chrome_shows_toasts_and_preserves_page_header_without_notifications()
             }),
             "{line}"
         );
-        assert!(line.contains("[◀ Esc]"));
+        assert!(line.contains("◀ Esc"));
         let content: String = (0..49)
             .map(|x| terminal.backend().buffer()[(x, 1)].symbol())
             .collect();
@@ -122,11 +122,38 @@ fn compact_notification_respects_empty_and_tiny_terminal_bounds() {
         if width > 0 && height > 0 {
             let line = first_line(&terminal, width);
             if width == 1 {
-                // A single cell can only show the opening button bracket.
-                assert_eq!(line, "[");
+                assert_eq!(line, "◀");
             } else {
                 assert!(line.contains('◀'), "{width}x{height}: {line}");
             }
         }
     }
+}
+
+#[test]
+fn minimum_full_chrome_keeps_alert_in_status_row_and_preserves_title_and_controls() {
+    let context = RenderContext::default();
+    let mut chrome = chrome();
+    chrome.terminal_size = (108, 20);
+    chrome.status.time_button_label = Some("09:30".into());
+    chrome.tasks_label = Some("Tasks".into());
+    let layout = ShellFrameLayout::new(Rect::new(0, 0, 108, 20), Some("09:30"), &context)
+        .with_help_button(true)
+        .with_tasks_button(chrome.tasks_label.as_deref());
+    let mut terminal = Terminal::new(TestBackend::new(108, 20)).unwrap();
+    terminal
+        .draw(|frame| render_shell_chrome(frame, &layout, &chrome, &context))
+        .unwrap();
+    let header = first_line(&terminal, 108);
+    for text in ["TundraUX 3", "Tasks", "F1 Help", "◀ Esc"] {
+        assert!(header.contains(text), "{header}");
+    }
+    assert!(!header.contains("Compact alert"));
+    let status: String = (0..108)
+        .map(|x| terminal.backend().buffer()[(x, 19)].symbol())
+        .collect();
+    assert!(status.starts_with("[ERROR] Compact alert"), "{status}");
+    assert!(status.contains("09:30"));
+    assert!(!status.contains("Compact toast"));
+    assert_eq!(layout.main, Rect::new(0, 1, 108, 18));
 }

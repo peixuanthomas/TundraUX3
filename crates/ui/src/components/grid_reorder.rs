@@ -79,7 +79,7 @@ pub(crate) fn grid_drop_target(
 pub(crate) fn render_grid_drop_indicator(frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
     for y in area.y..area.bottom() {
         frame.render_widget(
-            Paragraph::new("┃").style(theme.title_style()),
+            Paragraph::new("┃").style(theme.title_style().fg(theme.button_accent_color())),
             Rect::new(area.x, y, area.width, 1),
         );
     }

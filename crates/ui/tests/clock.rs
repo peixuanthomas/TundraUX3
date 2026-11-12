@@ -34,9 +34,9 @@ fn narrow_clock_create_shows_both_direct_shortcuts_and_cancel() {
         })
         .unwrap();
     let output = terminal_output(&terminal);
-    assert!(output.contains("[F3 Set alarm]"));
-    assert!(output.contains("[F4 Set timer]"));
-    assert!(output.contains("[Esc Cancel]"));
+    assert!(output.contains("F3 Set alarm"));
+    assert!(output.contains("F4 Set timer"));
+    assert!(output.contains("Esc Cancel"));
 }
 
 #[test]
@@ -84,11 +84,11 @@ fn entry_window_slices_alarms_then_countdowns_and_preserves_ids() {
         .map(|row| row.id)
         .collect::<Vec<_>>();
 
-    assert_eq!(layout.entry_capacity, 13);
-    assert_eq!(layout.entry_window_start, 7);
-    assert_eq!(ids, (8..=20).collect::<Vec<_>>());
+    assert_eq!(layout.entry_capacity, 14);
+    assert_eq!(layout.entry_window_start, 6);
+    assert_eq!(ids, (7..=20).collect::<Vec<_>>());
     assert_eq!(layout.entry_rows[0].kind, ClockEntryKind::Alarm);
-    assert_eq!(layout.entry_rows[3].kind, ClockEntryKind::Countdown);
+    assert_eq!(layout.entry_rows[4].kind, ClockEntryKind::Countdown);
     assert!(layout.alarms_heading.y < layout.countdowns_heading.y);
 }
 
@@ -116,9 +116,9 @@ fn create_dialog_renders_time_fields_error_and_both_focusable_actions() {
         assert!(region_text(&terminal, area).contains("00"));
     }
     assert!(output.contains("Use hh mm ss"));
-    assert!(output.contains("[F3 Set alarm]"));
-    assert!(output.contains("[F4 Set timer]"));
-    assert!(output.contains("[Esc Cancel]"));
+    assert!(output.contains("F3 Set alarm"));
+    assert!(output.contains("F4 Set timer"));
+    assert!(output.contains("Esc Cancel"));
     assert!(region_has_fg(
         &terminal,
         dialog.create_countdown,
@@ -138,12 +138,12 @@ fn narrow_layout_keeps_digital_time_and_operable_panel_without_panicking() {
     assert!(layout.digital.height > 0);
     assert!(layout.new_button.height > 0);
     assert!(output.contains("14:32:08"));
-    assert!(output.contains("[N New]"));
+    assert!(output.contains("N New"));
     assert!(output.contains("[A] 07:30:00 Daily"));
 }
 
 #[test]
-fn minimum_full_shell_keeps_an_operable_entry_and_compacts_dialog_controls() {
+fn small_fallback_keeps_entries_and_compacts_dialog_controls() {
     let mut model = clock_model();
     model.create_dialog = Some(ClockCreateDialogViewModel {
         interaction: Default::default(),
@@ -161,8 +161,15 @@ fn minimum_full_shell_keeps_an_operable_entry_and_compacts_dialog_controls() {
     assert_eq!(layout.mode, ClockPageMode::DigitalOnly);
     assert!(layout.new_button.width > 0);
     assert!(layout.new_button.height > 0);
-    assert_eq!(layout.entry_capacity, 1);
-    assert_eq!(layout.entry_rows.first().map(|row| row.id), Some(10));
+    assert_eq!(layout.entry_capacity, 6);
+    assert_eq!(
+        layout
+            .entry_rows
+            .iter()
+            .map(|row| row.id)
+            .collect::<Vec<_>>(),
+        [10, 20, 30]
+    );
     assert!(dialog.error.bottom() <= dialog.input.y);
     assert!(dialog.input.bottom() <= dialog.create_alarm.y);
     assert_eq!(dialog.create_alarm.y, dialog.create_countdown.y);
@@ -188,7 +195,7 @@ fn read_only_clock_hides_new_control_and_ignores_create_dialog_model() {
     assert_eq!(layout.new_button.width, 0);
     assert_eq!(layout.new_button.height, 0);
     assert!(layout.create_dialog.is_none());
-    assert!(!output.contains("[N New]"));
+    assert!(!output.contains("N New"));
     assert!(!output.contains("New Alarm or Countdown"));
     assert!(output.contains("ALARMS"));
     assert!(output.contains("COUNTDOWNS"));

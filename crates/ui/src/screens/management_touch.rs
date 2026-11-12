@@ -239,6 +239,25 @@ pub fn management_wrapped_lines(text: &str, width: u16) -> Vec<String> {
     }
     lines
 }
+fn management_clipped_line(text: &str, hidden: usize, width: u16) -> String {
+    let mut cells = 0;
+    let span = Span::raw(text);
+    let clipped = span
+        .styled_graphemes(Style::default())
+        .filter_map(|glyph| {
+            let start = cells;
+            cells += glyph.symbol.width();
+            if start >= hidden {
+                Some(glyph.symbol.to_string())
+            } else if cells > hidden {
+                Some(" ".repeat(cells - hidden))
+            } else {
+                None
+            }
+        })
+        .collect::<String>();
+    crate::components::truncate_to_terminal_width(&clipped, usize::from(width))
+}
 fn inner(area: Rect) -> Rect {
     Rect::new(
         area.x.saturating_add(1),
@@ -246,6 +265,9 @@ fn inner(area: Rect) -> Rect {
         area.width.saturating_sub(2),
         area.height.saturating_sub(2),
     )
+}
+fn pane_inner(area: Rect) -> Rect {
+    Surface::new().titled("").inner(area)
 }
 fn management_choice_is_menu(form: &ManagementForm) -> bool {
     matches!(form.identity.as_str(), "more-actions" | "config-menu")
@@ -462,11 +484,11 @@ fn form_action_sizes(form: &ManagementForm, width: u16) -> (u16, u16, u16, u16, 
     let submit_height = if submit == 0 {
         0
     } else {
-        management_wrapped_lines(&format!("[{}]", form_submit_text(form)), submit)
+        management_wrapped_lines(&form_submit_text(form), submit)
             .len()
             .min(usize::from(u16::MAX)) as u16
     };
-    let cancel_height = management_wrapped_lines(&format!("[{}]", form_cancel_text(form)), cancel)
+    let cancel_height = management_wrapped_lines(&form_cancel_text(form), cancel)
         .len()
         .min(usize::from(u16::MAX)) as u16;
     let rows = if submit > 0 && submit.saturating_add(1).saturating_add(cancel) > width {
@@ -600,9 +622,14 @@ pub struct ManagementLayout {
     pub column_widths: Vec<usize>,
     pub details: Rect,
     pub details_text: Rect,
+    /// Final content geometry; `details_text` is its visible intersection.
+    pub details_canvas: Rect,
     pub detail_actions_panel: Rect,
+    pub detail_actions_canvas: Rect,
     pub actions_panel: Rect,
     pub actions: Vec<Rect>,
+    /// Full rectangles indexed alongside `actions`, before viewport clipping.
+    pub action_canvases: Vec<Rect>,
     pub primary_action_bar: crate::components::PageActionBarLayout,
     pub action_start: usize,
     pub action_previous: Rect,
@@ -657,20 +684,30 @@ fn add_text_bar(
         bars.push(bar);
     }
 }
-fn management_action_rects(area: Rect, actions: &[(String, bool)], compact: bool) -> Vec<Rect> {
-    let widths = actions
+fn management_action_rects(area: Rect, actions: &[(String, bool)], _compact: bool) -> Vec<Rect> {
+    let actions = actions
         .iter()
-        .map(|(label, _)| {
-            (label.width().min(usize::from(u16::MAX)) as u16)
-                .saturating_add(2)
-                .min(if compact && area.width >= 32 {
-                    area.width.saturating_sub(1) / 2
-                } else {
-                    area.width
-                })
+        .enumerate()
+        .map(|(index, (label, enabled))| {
+            crate::components::PageAction::new(index.to_string(), label.clone())
+                .with_bracketed_label(false)
+                .disabled(!enabled)
         })
         .collect::<Vec<_>>();
-    crate::right_aligned_actions(area, &widths)
+    let bar = crate::components::PageActionBar::new("").with_actions(actions);
+    let mut rects = vec![Rect::default(); bar.actions.len()];
+    for action in bar
+        .layout(Rect::new(
+            area.x,
+            area.y,
+            area.width,
+            bar.height(area.width).min(area.height),
+        ))
+        .actions
+    {
+        rects[action.index] = action.area;
+    }
+    rects
 }
 fn management_search_button_label(model: &ManagementViewModel) -> String {
     if model.filtering {
@@ -684,6 +721,13 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
         return workspace::layout(main, model, workspace);
     }
     management_content_layout(main, model, main, 0)
+}
+pub fn management_busy_visible(main: Rect, model: &ManagementViewModel) -> bool {
+    model.loading
+        && model.rows.is_empty()
+        && !model.terminal
+        && model.form.is_none()
+        && !management_layout(main, model).list_rows.is_empty()
 }
 fn management_content_layout(
     main: Rect,
@@ -854,15 +898,10 @@ fn management_content_layout(
                 model,
                 &(0..model.actions.len()).collect::<Vec<_>>(),
             )
-            .height(width.saturating_sub(if compact_actions { 0 } else { 2 }));
+            .height(width);
         }
         detail_start.map_or(0, |start| {
-            let area = Rect::new(
-                0,
-                0,
-                width.saturating_sub(if compact_actions { 0 } else { 2 }),
-                u16::MAX,
-            );
+            let area = Rect::new(0, 0, width, u16::MAX);
             let rects = if model.workspace.is_some() && !compact_actions {
                 workspace::action_rects(area, &model.actions[start..])
             } else {
@@ -876,13 +915,14 @@ fn management_content_layout(
     } else if compact_actions {
         (Rect::default(), content)
     } else if main.width >= 90 {
-        let left = content.width * 58 / 100;
+        let available = content.width.saturating_sub(2);
+        let left = available * 58 / 100;
         (
             Rect::new(content.x, content.y, left, content.height),
             Rect::new(
-                content.x + left,
+                content.x + left + 2,
                 content.y,
-                content.width.saturating_sub(left),
+                available.saturating_sub(left),
                 content.height,
             ),
         )
@@ -892,17 +932,22 @@ fn management_content_layout(
         } else {
             2
         };
-        let list_height =
-            (content.height * 3 / 4).min(content.height.saturating_sub(minimum_details));
+        let available = content.height.saturating_sub(1);
+        let list_height = (available * 3 / 4).min(available.saturating_sub(minimum_details));
         (
             Rect::new(content.x, content.y, content.width, list_height),
             Rect::new(
                 content.x,
-                content.y + list_height,
+                content.y + list_height + 1,
                 content.width,
-                content.height.saturating_sub(list_height),
+                available.saturating_sub(list_height),
             ),
         )
+    };
+    let mut details_canvas = if compact_actions {
+        details
+    } else {
+        crate::expand_trailing_pane(list, details, if model.details_only { 1_000 } else { 0 }).1
     };
     if !compact_actions {
         (list, details) = crate::expand_trailing_pane(
@@ -915,28 +960,42 @@ fn management_content_layout(
     }
     list.height = list.height.saturating_sub(workspace_footer);
     let mut detail_actions_panel = Rect::default();
+    let mut detail_actions_canvas = Rect::default();
+    let mut action_canvases = actions.clone();
     if let Some(start) = detail_start.filter(|_| !model.terminal) {
-        let height = detail_button_rows(details.width)
-            .saturating_add(if compact_actions { 0 } else { 2 })
-            .min(details.height);
+        let canvas_height = detail_button_rows(details_canvas.width).min(details_canvas.height);
+        let height = canvas_height.min(details.height);
+        details_canvas.height = details_canvas.height.saturating_sub(canvas_height);
         detail_actions_panel = Rect::new(
             details.x,
             details.bottom().saturating_sub(height),
             details.width,
             height,
         );
+        detail_actions_canvas = Rect::new(
+            details.right().saturating_sub(details_canvas.width),
+            details.bottom().saturating_sub(canvas_height),
+            details_canvas.width,
+            canvas_height,
+        );
         details.height = details.height.saturating_sub(height);
         actions.resize(start, Rect::default());
-        let area = if compact_actions {
-            detail_actions_panel
+        action_canvases.resize(start, Rect::default());
+        let rects = if model.workspace.is_some() && !compact_actions {
+            workspace::action_rects(detail_actions_canvas, &model.actions[start..])
         } else {
-            inner(detail_actions_panel)
+            management_action_rects(
+                detail_actions_canvas,
+                &model.actions[start..],
+                compact_actions,
+            )
         };
-        actions.extend(if model.workspace.is_some() && !compact_actions {
-            workspace::action_rects(area, &model.actions[start..])
-        } else {
-            management_action_rects(area, &model.actions[start..], compact_actions)
-        });
+        actions.extend(
+            rects
+                .iter()
+                .map(|rect| rect.intersection(detail_actions_panel)),
+        );
+        action_canvases.extend(rects);
     }
     let mut column_widths = model
         .columns
@@ -965,7 +1024,7 @@ fn management_content_layout(
         column_widths.push(8);
     }
     let total_width = column_widths.iter().sum::<usize>();
-    let list_inner = inner(list);
+    let list_inner = pane_inner(list);
     let horizontal = total_width > usize::from(list_inner.width.saturating_sub(1));
     let list_rows = Rect::new(
         list_inner.x,
@@ -997,7 +1056,8 @@ fn management_content_layout(
         offset += width;
     }
     let list_capacity = usize::from(list_rows.height);
-    let mut details_text = text_area(inner(details));
+    details_canvas = text_area(pane_inner(details_canvas));
+    let mut details_text = text_area(pane_inner(details)).intersection(details_canvas);
     let output_text = text_area(content);
     let mut scrollbars = Vec::new();
     if let Some(bar) = management_scrollbar(
@@ -1035,10 +1095,14 @@ fn management_content_layout(
             bottom_track(details_text),
             width,
             usize::from(details_text.width),
-            usize::from(model.details_horizontal_scroll),
+            usize::from(model.details_horizontal_scroll)
+                .min(width.saturating_sub(usize::from(details_canvas.width))),
             true,
         ) {
             details_text.height = details_text.height.saturating_sub(1);
+            details_canvas.height = details_canvas
+                .height
+                .saturating_sub(u16::from(width > usize::from(details_canvas.width)));
             scrollbars.push(bar);
         }
         if let Some(bar) = management_scrollbar(
@@ -1046,24 +1110,38 @@ fn management_content_layout(
             Rect::new(
                 details_text.right(),
                 details_text.y,
-                u16::from(inner(details).width > 0),
+                u16::from(pane_inner(details).width > 0),
                 details_text.height,
             ),
             lines.len(),
             usize::from(details_text.height),
-            usize::from(model.details_scroll),
+            usize::from(model.details_scroll).min(
+                lines
+                    .len()
+                    .saturating_sub(usize::from(details_canvas.height)),
+            ),
             false,
         ) {
             scrollbars.push(bar);
         }
-    } else {
-        add_text_bar(
-            &mut scrollbars,
-            ManagementScrollTarget::Details,
-            inner(details),
-            &model.details,
-            usize::from(model.details_scroll),
-        );
+    } else if let Some(bar) = management_scrollbar(
+        ManagementScrollTarget::Details,
+        Rect::new(
+            details_text.right(),
+            details_text.y,
+            u16::from(!details_text.is_empty()),
+            details_text.height,
+        ),
+        management_wrapped_lines(&model.details, details_canvas.width).len(),
+        usize::from(details_text.height),
+        usize::from(model.details_scroll).min(
+            management_wrapped_lines(&model.details, details_canvas.width)
+                .len()
+                .saturating_sub(usize::from(details_canvas.height)),
+        ),
+        false,
+    ) {
+        scrollbars.push(bar);
     }
     if model.terminal {
         if let Some(snapshot) = &model.terminal_snapshot {
@@ -1361,9 +1439,12 @@ fn management_content_layout(
         column_widths,
         details,
         details_text,
+        details_canvas,
         detail_actions_panel,
+        detail_actions_canvas,
         actions_panel,
         actions,
+        action_canvases,
         action_start,
         action_previous,
         action_next,
@@ -1578,27 +1659,22 @@ pub fn render_management_content(
     let context = &content_context;
     let theme = context.compatibility_theme();
     let layout = management_layout(main, model);
-    if model
-        .details_expansion
-        .is_some_and(|amount| amount > 0 && amount < 1_000)
-    {
-        for area in [layout.list, layout.details, layout.detail_actions_panel] {
-            Surface::new()
-                .bordered(true)
-                .render_frame(frame, area, context);
-        }
-        return;
-    }
-    let selected = theme
-        .title_style()
-        .add_modifier(Modifier::BOLD | Modifier::REVERSED);
+    let selected = theme.body_style().bg(context.theme.accent_soft);
+    let list_focused = !model.filtering
+        && !model.actions_focused
+        && model.form.is_none()
+        && model
+            .workspace
+            .as_ref()
+            .is_none_or(|workspace| workspace.focus == crate::components::WorkspaceFocus::List);
     if !layout.compact_actions {
         let title_area = layout
             .workspace
             .as_ref()
             .map_or(main, |workspace| workspace.content);
         frame.render_widget(
-            Paragraph::new(model.title.clone()).style(theme.title_style()),
+            Paragraph::new(model.title.clone())
+                .style(theme.body_style().add_modifier(Modifier::BOLD)),
             Rect::new(
                 title_area.x,
                 title_area.y,
@@ -1675,25 +1751,17 @@ pub fn render_management_content(
             );
         }
     } else {
+        let details_focused =
+            model.workspace.as_ref().is_some_and(|workspace| {
+                workspace.focus == crate::components::WorkspaceFocus::Details
+            }) && model.form.is_none();
         Surface::new()
-            .bordered(true)
             .titled(i18n::tr!("management-touch-items"))
             .render_frame(frame, layout.list, context);
         Surface::new()
-            .bordered(true)
-            .focused(
-                model.workspace.as_ref().is_some_and(|workspace| {
-                    workspace.focus == crate::components::WorkspaceFocus::Details
-                }) && model.form.is_none(),
-            )
+            .focused(details_focused)
             .titled(i18n::tr!("management-touch-details"))
             .render_frame(frame, layout.details, context);
-        if !layout.detail_actions_panel.is_empty() && !layout.compact_actions {
-            Surface::new()
-                .bordered(true)
-                .titled(i18n::tr!("management-touch-actions"))
-                .render_frame(frame, layout.detail_actions_panel, context);
-        }
         let table_line = |cells: &[String]| {
             cells
                 .iter()
@@ -1754,9 +1822,7 @@ pub fn render_management_content(
                             .selected_rows
                             .as_ref()
                             .map_or(index == model.selected, |rows| rows.contains(&index)),
-                        focused: index == model.selected
-                            && !model.filtering
-                            && !model.actions_focused,
+                        focused: index == model.selected && list_focused,
                         ..Default::default()
                     },
                     &["click", "double_click"],
@@ -1791,12 +1857,7 @@ pub fn render_management_content(
             } else {
                 theme.body_style()
             };
-            if model.selected_rows.is_some()
-                && index == model.selected
-                && !model.actions_focused
-                && !model.filtering
-                && theme.keyboard_focus_visible()
-            {
+            if index == model.selected && list_focused && theme.keyboard_focus_visible() {
                 style = style.add_modifier(Modifier::UNDERLINED);
             }
             lines.push(Line::styled(table_line(row), style));
@@ -1813,7 +1874,11 @@ pub fn render_management_content(
         );
         if model.rows.is_empty() {
             let message = if model.loading {
-                i18n::tr!("management-loading")
+                format!(
+                    "{} {}",
+                    crate::components::BusyIndicator::from_motion(context.motion).symbol(),
+                    i18n::tr!("management-loading")
+                )
             } else if model.empty_message.is_empty() {
                 i18n::tr!("management-empty")
             } else {
@@ -1853,58 +1918,107 @@ pub fn render_management_content(
                     .find(|bar| bar.target == target)
                     .map_or(0, |bar| bar.offset.min(u16::MAX as usize) as u16)
             };
+            let rows = usize::from(offset(ManagementScrollTarget::Details))
+                + usize::from(
+                    layout
+                        .details_text
+                        .y
+                        .saturating_sub(layout.details_canvas.y),
+                );
+            let columns = usize::from(offset(ManagementScrollTarget::DetailsColumns))
+                + usize::from(
+                    layout
+                        .details_text
+                        .x
+                        .saturating_sub(layout.details_canvas.x),
+                );
             frame.render_widget(
                 Paragraph::new(
                     management_wrapped_lines(&model.details, u16::MAX)
                         .into_iter()
-                        .map(Line::from)
+                        .skip(rows)
+                        .take(usize::from(layout.details_text.height))
+                        .map(|line| {
+                            Line::from(management_clipped_line(
+                                &line,
+                                columns,
+                                layout.details_text.width,
+                            ))
+                        })
                         .collect::<Vec<_>>(),
                 )
-                .scroll((
-                    offset(ManagementScrollTarget::Details),
-                    offset(ManagementScrollTarget::DetailsColumns),
-                ))
                 .style(theme.body_style()),
                 layout.details_text,
             );
         } else {
-            render_text(
-                frame,
-                layout.details_text,
-                &model.details,
-                usize::from(model.details_scroll),
-                context,
+            let lines = management_wrapped_lines(&model.details, layout.details_canvas.width);
+            let offset = usize::from(model.details_scroll).min(
+                lines
+                    .len()
+                    .saturating_sub(usize::from(layout.details_canvas.height)),
             );
-        }
-        if let Some(workspace) = &model.workspace {
-            workspace::primary_action_bar(model, &workspace.primary_actions).render(
-                frame,
-                layout.primary_action_bar.area,
-                context,
+            let rows = offset
+                + usize::from(
+                    layout
+                        .details_text
+                        .y
+                        .saturating_sub(layout.details_canvas.y),
+                );
+            let columns = usize::from(
+                layout
+                    .details_text
+                    .x
+                    .saturating_sub(layout.details_canvas.x),
+            );
+            frame.render_widget(
+                Paragraph::new(
+                    lines
+                        .into_iter()
+                        .skip(rows)
+                        .take(usize::from(layout.details_text.height))
+                        .map(|line| {
+                            Line::from(management_clipped_line(
+                                &line,
+                                columns,
+                                layout.details_text.width,
+                            ))
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .style(theme.body_style()),
+                layout.details_text,
             );
         }
         for (offset, area) in layout.actions.iter().enumerate() {
             let index = layout.action_start + offset;
-            if model.workspace.as_ref().is_some_and(|workspace| {
-                workspace.navigation_actions.contains(&index)
-                    || workspace.primary_actions.contains(&index)
-            }) && layout.workspace.is_some()
+            if model
+                .workspace
+                .as_ref()
+                .is_some_and(|workspace| workspace.navigation_actions.contains(&index))
+                && layout.workspace.is_some()
             {
                 continue;
             }
             if let Some((label, enabled)) = model.actions.get(index) {
-                let mut button = if model.workspace.is_some() {
-                    Button::new(
-                        management_action_id(model, index),
-                        management_wrapped_lines(label, area.width).join("\n"),
-                    )
-                    .with_bracketed_label(false)
-                } else {
-                    Button::new(management_action_id(model, index), label.clone())
-                };
+                let canvas = layout.action_canvases.get(offset).copied().unwrap_or(*area);
+                let hidden = usize::from(area.x.saturating_sub(canvas.x));
+                let label = management_wrapped_lines(label, canvas.width)
+                    .into_iter()
+                    .skip(usize::from(area.y.saturating_sub(canvas.y)))
+                    .map(|line| management_clipped_line(&line, hidden, area.width))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let mut button = Button::new(management_action_id(model, index), label)
+                    .with_bracketed_label(false);
                 if model.action_tones.get(index) == Some(&crate::components::ComponentTone::Danger)
                 {
                     button = button.with_emphasis(crate::components::ButtonEmphasis::Danger);
+                } else if model
+                    .workspace
+                    .as_ref()
+                    .is_some_and(|workspace| workspace.primary_actions.first() == Some(&index))
+                {
+                    button = button.with_emphasis(crate::components::ButtonEmphasis::Primary);
                 }
                 button.set_disabled(!enabled);
                 button.state.selected =
@@ -2070,7 +2184,7 @@ pub fn render_management_overlay(
                         .collect::<Vec<_>>(),
                 )
                 .style(if form.selected == *index {
-                    theme.title_style()
+                    theme.title_style().fg(theme.accent_color)
                 } else {
                     theme.body_style()
                 }),
@@ -2178,7 +2292,7 @@ pub fn render_management_overlay(
         let action = &actions[*index];
         let mut button = Button::new(
             management_form_control_id(form, &action.id),
-            management_wrapped_lines(&format!("[{}]", action.label()), area.width).join("\n"),
+            management_wrapped_lines(&action.label(), area.width).join("\n"),
         )
         .with_bracketed_label(false);
         button.set_disabled(action.disabled);

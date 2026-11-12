@@ -8,8 +8,7 @@ impl ShellSession {
             .unwrap_or_default()
     }
 
-    pub(super) fn interaction_motion_frame(&self, mut frame: ui::MotionFrame) -> ui::MotionFrame {
-        frame.reduced_motion |= !self.interaction.pointer_motion;
+    pub(super) fn interaction_motion_frame(&self, frame: ui::MotionFrame) -> ui::MotionFrame {
         frame
     }
 
@@ -33,11 +32,24 @@ impl ShellSession {
         }
         let frame = self.interaction_motion_frame(frame);
         let phases = ui::MotionPhases::from_millis(self.animation_timings().dialog);
+        let drag_area = self.management_pointer_drag_area();
         let motion = &mut self.details_motion.as_mut().unwrap().1;
         let previous = motion.value();
         let running = motion.update_with_phases(target, frame, phases);
         if motion.value() != previous {
-            self.cancel_pointer_gestures_for_modal();
+            let moved_button = self
+                .interaction
+                .button_capture
+                .as_ref()
+                .is_some_and(|capture| {
+                    self.button_at(capture.input.coordinates()).as_ref() != Some(&capture.region)
+                });
+            if moved_button {
+                self.interaction.button_capture = None;
+            }
+            if drag_area != self.management_pointer_drag_area() {
+                self.cancel_management_pointer_gesture();
+            }
         }
         running
     }

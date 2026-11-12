@@ -145,16 +145,15 @@ pub(crate) fn interactive_style(state: ComponentState, theme: &TundraTheme) -> S
     let mut style = Style::default().fg(tokens.text).bg(tokens.surface);
 
     if state.selected {
-        style = style
-            .fg(tokens.accent)
-            .bg(tokens.accent_soft)
-            .add_modifier(Modifier::BOLD);
+        style = style.bg(tokens.raised).add_modifier(Modifier::BOLD);
     } else if state.hovered {
         style = style.fg(tokens.accent_strong);
     }
 
-    if state.focused && !state.selected {
-        style = style.fg(tokens.focus).add_modifier(Modifier::BOLD);
+    if state.focused && theme.keyboard_focus_visible() {
+        style = style
+            .fg(tokens.accent)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
     }
 
     if state.active {

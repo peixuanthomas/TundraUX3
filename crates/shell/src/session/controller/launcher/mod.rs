@@ -741,7 +741,7 @@ impl ShellSession {
         }
     }
 
-    fn launcher_content_layout(&self) -> Option<ui::LauncherLayout> {
+    pub(in crate::session) fn launcher_content_layout(&self) -> Option<ui::LauncherLayout> {
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
             return None;

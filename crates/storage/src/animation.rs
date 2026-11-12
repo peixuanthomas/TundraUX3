@@ -14,18 +14,18 @@ pub struct AnimationTimingsConfig {
 
 impl AnimationTimingsConfig {
     pub const DEFAULT: Self = Self {
-        page: [55, 110, 55],
+        page: [40, 80, 40],
         dialog: [45, 90, 45],
-        menu: [40, 80, 40],
+        menu: [30, 60, 30],
     };
 
     pub const fn is_default(&self) -> bool {
         matches!(
             self,
             Self {
-                page: [55, 110, 55],
+                page: [40, 80, 40],
                 dialog: [45, 90, 45],
-                menu: [40, 80, 40]
+                menu: [30, 60, 30]
             }
         )
     }

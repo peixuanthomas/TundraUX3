@@ -231,3 +231,74 @@ fn defaults_action_stays_visible_below_scrolling_setup_at_minimum_size() {
         assert!(button.bottom() <= area.bottom());
     }
 }
+
+#[test]
+fn minimum_setup_keeps_admin_submit_and_default_completion_visible_together() {
+    let mut model = sample_model(SetupStep::Admin, None);
+    model.defaults_available = true;
+    let main = Rect::new(0, 1, 108, 18);
+    let viewport = ui::setup_viewport(main, &model);
+    for field in [
+        SetupField::AdminPassword,
+        SetupField::AdminPasswordConfirm,
+        SetupField::Submit,
+    ] {
+        assert!(
+            viewport
+                .project(ui::setup_admin_field_area(viewport.content, field))
+                .is_some(),
+            "{field:?}"
+        );
+    }
+    let theme = TundraTheme::default_dark();
+    let mut context = ui::RenderContext::from_theme(&theme, Default::default(), Default::default());
+    let buttons = ui::components::ButtonFrame::new(None, None, &theme);
+    context.buttons = Some(buttons.clone());
+    let mut terminal = Terminal::new(TestBackend::new(108, 20)).unwrap();
+    terminal
+        .draw(|frame| ui::render_setup_content(frame, main, &model, &context))
+        .unwrap();
+    for id in ["setup.admin.submit", "setup.defaults"] {
+        let region = buttons
+            .regions()
+            .into_iter()
+            .find(|region| region.id.as_str() == id)
+            .unwrap();
+        assert_eq!(region.area.intersection(main), region.area);
+        assert!(!region.disabled);
+    }
+    assert_eq!(ui::setup_defaults_area(main).y, viewport.area.bottom());
+}
+
+#[test]
+fn appearance_values_remain_current_while_only_the_active_field_has_keyboard_focus() {
+    let mut model = sample_model(SetupStep::Appearance, None);
+    model.focused_field = SetupField::AppearanceThemeColor;
+    let main = Rect::new(0, 1, 108, 18);
+    let capture = ui::automation::FrameCapture::begin(Rect::new(0, 0, 108, 20), "setup");
+    let mut terminal = Terminal::new(TestBackend::new(108, 20)).unwrap();
+    terminal
+        .draw(|frame| ui::render_setup_content(frame, main, &model, &ui::RenderContext::default()))
+        .unwrap();
+    let snapshot = capture.finish(terminal.backend().buffer());
+    let shape = snapshot
+        .nodes
+        .iter()
+        .find(|node| node.id.ends_with("/setup.appearance.shape.rounded"))
+        .unwrap();
+    assert!(shape.selected && !shape.focused);
+    let selected_color = snapshot
+        .nodes
+        .iter()
+        .find(|node| node.id.ends_with("/setup.appearance.theme.white"))
+        .unwrap();
+    assert!(selected_color.selected && selected_color.focused);
+    assert_eq!(
+        snapshot
+            .nodes
+            .iter()
+            .filter(|node| node.role == "button" && node.focused)
+            .count(),
+        1
+    );
+}

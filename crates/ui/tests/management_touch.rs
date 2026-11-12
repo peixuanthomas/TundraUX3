@@ -2,39 +2,94 @@ use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use ui::*;
 
 #[test]
-fn detail_motion_draws_borders_then_restores_complete_text() {
+fn detail_motion_keeps_stable_readable_text_and_current_hit_regions() {
     let mut model = ManagementViewModel {
         columns: vec!["Name".into()],
         rows: vec![vec!["list content".into()]],
-        details: "details content 中文".into(),
+        details: (0..80)
+            .map(|index| {
+                format!("detail-{index:02} 中文内容 readable detail text keeps its final wrapping")
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        details_scroll: 7,
+        detail_action_start: Some(0),
+        actions: vec![("Apply 中文 changes to the selected record".into(), true)],
         ..Default::default()
     };
-    let context = RenderContext::default();
+    let theme = TundraTheme::default_dark();
     for (width, height) in [(120, 40), (60, 24)] {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        for progress in [500, 999, 1_000, 500, 0] {
-            model.details_expansion = Some(progress);
-            let bounds = Rect::new(0, 0, width, height);
-            let layout = management_layout(bounds, &model);
+        let bounds = Rect::new(0, 0, width, height);
+        for expanded in [true, false] {
+            model.details_only = expanded;
+            model.details_expansion = None;
+            let settled = management_layout(bounds, &model);
+            let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
             terminal
                 .draw(|frame| render_management_content(frame, bounds, &model, &context))
                 .unwrap();
-            let buffer = terminal.backend().buffer();
-            let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
-            assert_eq!(buffer[(layout.details.x, layout.details.y)].symbol(), "╭");
-            if progress > 0 && progress < 1_000 {
+            let reference = terminal.backend().buffer().clone();
+            for progress in [250, 500, 750] {
+                model.details_expansion = Some(progress);
+                let layout = management_layout(bounds, &model);
+                assert_eq!(layout.details_canvas.width, settled.details_canvas.width);
+                assert_eq!(
+                    (
+                        layout.action_canvases[0].width,
+                        layout.action_canvases[0].height
+                    ),
+                    (
+                        settled.action_canvases[0].width,
+                        settled.action_canvases[0].height
+                    )
+                );
+                let mut context =
+                    RenderContext::from_theme(&theme, Default::default(), Default::default());
+                context.buttons = Some(ui::components::ButtonFrame::new(None, None, &theme));
+                terminal
+                    .draw(|frame| render_management_content(frame, bounds, &model, &context))
+                    .unwrap();
+                let buffer = terminal.backend().buffer();
+                for y in 0..layout
+                    .details_text
+                    .height
+                    .min(settled.details_text.height)
+                    .min(3)
+                {
+                    for x in 0..layout.details_text.width.min(settled.details_text.width) {
+                        assert_eq!(
+                            buffer[(layout.details_text.x + x, layout.details_text.y + y)].symbol(),
+                            reference[(layout.details_text.x + x, layout.details_text.y + y)]
+                                .symbol(),
+                            "{width}x{height} expanded={expanded} progress={progress} at ({x}, {y})"
+                        );
+                    }
+                }
                 assert!(
                     layout
-                        .details
-                        .inner(ratatui::layout::Margin::new(1, 1))
+                        .list_rows
                         .positions()
-                        .all(|position| buffer[position].symbol() == " ")
+                        .any(|point| buffer[point].symbol() != " ")
                 );
-                assert!(!text.contains("list content"));
-            } else {
-                assert!(text.contains("details content"));
-                if progress == 0 {
-                    assert!(text.contains("list content"));
+                let bar = layout
+                    .scrollbars
+                    .iter()
+                    .find(|bar| bar.target == ManagementScrollTarget::Details)
+                    .unwrap();
+                assert_eq!(bar.offset, 7);
+                assert!(bar.track.intersection(layout.details_text).is_empty());
+                assert_eq!(bar.viewport_len, usize::from(layout.details_text.height));
+                let painted = context.buttons.as_ref().unwrap().regions();
+                assert!(
+                    painted
+                        .iter()
+                        .all(|region| bounds.intersection(region.area) == region.area)
+                );
+                for region in management_button_regions(bounds, &model) {
+                    if region.area != layout.filter {
+                        assert!(painted.contains(&region), "{region:?}");
+                    }
                 }
             }
         }
@@ -203,7 +258,7 @@ fn multiple_selected_rows_and_the_current_keyboard_row_are_distinct() {
             let cell =
                 &terminal.backend().buffer()[(layout.list_rows.x, layout.list_rows.y + index)];
             assert_eq!(
-                cell.modifier.contains(Modifier::REVERSED),
+                cell.bg == context.theme.accent_soft,
                 selected.contains(&(index as usize))
             );
             assert_eq!(cell.modifier.contains(Modifier::UNDERLINED), index == 1);
@@ -214,7 +269,6 @@ fn multiple_selected_rows_and_the_current_keyboard_row_are_distinct() {
 #[test]
 fn package_actions_remain_visible_in_real_shell_content_areas() {
     let theme = TundraTheme::default_dark();
-    let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
     for labels in [
         [
             "Refresh repositories",
@@ -254,12 +308,21 @@ fn package_actions_remain_visible_in_real_shell_content_areas() {
                 .collect(),
             ..Default::default()
         };
-        for (width, height) in [(50, 12), (108, 20), (140, 40)] {
+        for (width, height, compact) in [
+            (50, 10, true),
+            (50, 11, false),
+            (50, 12, false),
+            (108, 20, false),
+            (140, 40, false),
+        ] {
+            let mut context =
+                RenderContext::from_theme(&theme, Default::default(), Default::default());
+            context.buttons = Some(ui::components::ButtonFrame::new(None, None, &theme));
             let bounds = Rect::new(0, 0, width, height);
             let main = ShellFrameLayout::new(bounds, None, &context).main;
             let layout = management_layout(main, &model);
             assert_eq!(layout.actions.len(), 8);
-            assert_eq!(layout.compact_actions, width == 50);
+            assert_eq!(layout.compact_actions, compact);
             if width != 50 {
                 assert!(!layout.details_text.is_empty() && !layout.list_rows.is_empty());
             }
@@ -276,13 +339,26 @@ fn package_actions_remain_visible_in_real_shell_content_areas() {
                         .iter()
                         .any(|region| region.area == *area && region.disabled == (index == 5))
                 );
-                let painted = (area.x..area.right())
-                    .map(|x| terminal.backend().buffer()[(x, area.y)].symbol())
+                let painted = area
+                    .positions()
+                    .map(|point| terminal.backend().buffer()[point].symbol())
                     .collect::<String>();
-                assert!(
-                    painted.contains(shortcuts[index]),
-                    "{width}x{height} action {index}: {painted}"
+                assert_eq!(
+                    painted.split_whitespace().collect::<String>(),
+                    model.actions[index]
+                        .0
+                        .split_whitespace()
+                        .collect::<String>(),
+                    "{width}x{height} action {index}"
                 );
+                let buttons = context.buttons.as_ref().unwrap().regions();
+                let id = management_action_id(&model, index);
+                let button = buttons
+                    .iter()
+                    .find(|button| button.id.as_str() == id)
+                    .unwrap();
+                assert_eq!(button.area, *area);
+                assert_eq!(button.disabled, index == 5);
                 for other in layout.actions.iter().skip(index + 1) {
                     assert!(area.intersection(*other).is_empty());
                 }
@@ -503,6 +579,42 @@ fn management_action_labels_fit_touch_regions_in_small_windows() {
             .collect::<String>();
         assert!(painted.contains("Close"));
         model.form = None;
+    }
+}
+
+#[test]
+fn paged_action_labels_use_their_visible_canvas_without_a_second_index_offset() {
+    let model = ManagementViewModel {
+        actions: (0..20)
+            .map(|index| {
+                (
+                    if index % 2 == 0 {
+                        format!("A{index}")
+                    } else {
+                        format!("Action {index} with a longer visible label")
+                    },
+                    true,
+                )
+            })
+            .collect(),
+        action_scroll: Some(1),
+        selected_action: 1,
+        ..Default::default()
+    };
+    let area = Rect::new(0, 0, 120, 24);
+    let layout = management_layout(area, &model);
+    assert_eq!(layout.action_start, 1);
+    let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+    terminal
+        .draw(|frame| render_management_content(frame, area, &model, &RenderContext::default()))
+        .unwrap();
+    for (offset, rect) in layout.actions.iter().enumerate() {
+        let label = &model.actions[layout.action_start + offset].0;
+        let text = rect
+            .positions()
+            .map(|point| terminal.backend().buffer()[point].symbol())
+            .collect::<String>();
+        assert!(text.contains(label), "missing {label:?}: {text:?}");
     }
 }
 

@@ -903,5 +903,233 @@ fn organize_pointer_and_keyboard_reorder_builtin_icons_and_reopen() {
     }
 }
 
+#[test]
+fn confirmation_entry_keeps_covered_search_unfocused_and_cancel_ready() {
+    let mut fixture = Fixture::new();
+    let covered = fixture.draw().search;
+    fixture.state.pages.launcher.launcher_pending_confirmation =
+        Some(LauncherPendingConfirmation::Launch {
+            id: "tui".into(),
+            path: fixture.root.join("program.exe"),
+            kind: LauncherExecutableKind::NativeBinary,
+        });
+    fixture
+        .state
+        .refresh_hit_map_with_motion(ui::MotionTransitions {
+            overlay: Some(ui::MotionTransition {
+                kind: ui::MotionTransitionKind::Dialog,
+                direction: ui::MotionDirection::Entering,
+                progress: 0,
+                phase_progress: 0,
+                active: true,
+                next_redraw_in: Duration::from_millis(16),
+            }),
+            ..Default::default()
+        });
+    fixture.input(InputEvent::from_key_label("Right"));
+    assert!(!fixture.state.pages.launcher.launcher_confirm_selected);
+    fixture.input(InputEvent::from_key_label("Left"));
+    assert!(fixture.state.pages.launcher.launcher_confirm_selected);
+    let before = fixture.state.pages.launcher.clone();
+    let calls_before = fixture.platform.calls();
+    let confirmation =
+        ui::launcher_layout(fixture.main_area(), &fixture.state.to_launcher_view_model())
+            .confirmation
+            .unwrap();
+    assert!(!rect_contains(confirmation.area, (covered.x, covered.y)));
+    fixture.click(covered, false);
+    fixture.input(InputEvent::Paste("covered input".into()));
+    assert_eq!(fixture.state.pages.launcher, before);
+    assert_eq!(fixture.platform.calls(), calls_before);
+
+    let cancel = confirmation.cancel;
+    for drag_out in [false, true] {
+        fixture.input(InputEvent::mouse_down(
+            PointerButton::Left,
+            (cancel.x, cancel.y),
+        ));
+        assert!(
+            fixture
+                .state
+                .pages
+                .launcher
+                .launcher_pending_confirmation
+                .is_some()
+        );
+        if drag_out {
+            fixture.input(InputEvent::mouse_drag(
+                PointerButton::Left,
+                (covered.x, covered.y),
+            ));
+        }
+        fixture.input(InputEvent::mouse_up(
+            PointerButton::Left,
+            if drag_out {
+                (cancel.x, cancel.y)
+            } else {
+                (covered.x, covered.y)
+            },
+        ));
+        assert_eq!(fixture.state.pages.launcher, before);
+        assert_eq!(fixture.platform.calls(), calls_before);
+    }
+    fixture.input(InputEvent::mouse_down(
+        PointerButton::Left,
+        (cancel.x, cancel.y),
+    ));
+    assert!(
+        fixture
+            .state
+            .pages
+            .launcher
+            .launcher_pending_confirmation
+            .is_some()
+    );
+    fixture.input(InputEvent::mouse_up(
+        PointerButton::Left,
+        (cancel.x, cancel.y),
+    ));
+    assert!(
+        fixture
+            .state
+            .pages
+            .launcher
+            .launcher_pending_confirmation
+            .is_none()
+    );
+    assert_eq!(
+        fixture.state.pages.common.focused_component,
+        ShellComponent::Launcher
+    );
+    assert_eq!(fixture.platform.calls(), calls_before);
+    fixture.input(InputEvent::key_with_modifiers(
+        InputKey::Char('f'),
+        InputModifiers::CTRL,
+    ));
+    assert!(fixture.state.pages.launcher.search.state.focused);
+    fixture.input(InputEvent::Paste("program.exe".into()));
+    assert_eq!(fixture.state.pages.launcher.search.value(), "program.exe");
+}
+
+#[test]
+fn confirmation_entry_does_not_scroll_or_open_covered_launcher_items() {
+    let mut fixture = Fixture::new();
+    let covered = fixture.draw().items[0].area;
+    fixture.state.pages.launcher.launcher_pending_confirmation =
+        Some(LauncherPendingConfirmation::Remove {
+            ids: vec!["tui".into()],
+            label: "program.exe".into(),
+        });
+    fixture
+        .state
+        .refresh_hit_map_with_motion(ui::MotionTransitions {
+            overlay: Some(ui::MotionTransition {
+                kind: ui::MotionTransitionKind::Dialog,
+                direction: ui::MotionDirection::Entering,
+                progress: 0,
+                phase_progress: 0,
+                active: true,
+                next_redraw_in: Duration::from_millis(16),
+            }),
+            ..Default::default()
+        });
+    let before = fixture.state.pages.launcher.clone();
+    let data_before = fixture.state.app.launcher_state().cloned();
+    let calls_before = fixture.platform.calls();
+    let point = (covered.x, covered.y);
+    assert!(!rect_contains(
+        ui::launcher_layout(fixture.main_area(), &fixture.state.to_launcher_view_model())
+            .confirmation
+            .unwrap()
+            .area,
+        point,
+    ));
+    for input in [
+        InputEvent::mouse_scroll(ScrollDirection::Down, point),
+        InputEvent::mouse_scroll(ScrollDirection::Up, point),
+        InputEvent::mouse_down(PointerButton::Right, point),
+        InputEvent::mouse_up(PointerButton::Right, point),
+        InputEvent::mouse_down(PointerButton::Left, point),
+        InputEvent::mouse_up(PointerButton::Left, point),
+    ] {
+        fixture.input(input);
+        assert_eq!(fixture.state.pages.launcher, before);
+        assert_eq!(fixture.state.app.launcher_state(), data_before.as_ref());
+        assert_eq!(fixture.platform.calls(), calls_before);
+    }
+    fixture.input(InputEvent::from_key_label("Esc"));
+    assert!(
+        fixture
+            .state
+            .pages
+            .launcher
+            .launcher_pending_confirmation
+            .is_none()
+    );
+    assert_eq!(fixture.state.app.launcher_state(), data_before.as_ref());
+    assert_eq!(
+        fixture.state.pages.common.focused_component,
+        ShellComponent::Launcher
+    );
+}
+
+#[test]
+fn confirmation_press_waits_for_release_and_launches_once() {
+    let mut fixture = Fixture::new();
+    let path = fixture.root.join("program.exe");
+    std::fs::write(&path, "mock launcher target").unwrap();
+    fixture.draw();
+    fixture.state.pages.launcher.launcher_pending_confirmation =
+        Some(LauncherPendingConfirmation::Launch {
+            id: "tui".into(),
+            path: path.clone(),
+            kind: LauncherExecutableKind::NativeBinary,
+        });
+    fixture
+        .state
+        .refresh_hit_map_with_motion(ui::MotionTransitions {
+            overlay: Some(ui::MotionTransition {
+                kind: ui::MotionTransitionKind::Dialog,
+                direction: ui::MotionDirection::Entering,
+                progress: 0,
+                phase_progress: 0,
+                active: true,
+                next_redraw_in: Duration::from_millis(16),
+            }),
+            ..Default::default()
+        });
+    let confirm = ui::launcher_layout(fixture.main_area(), &fixture.state.to_launcher_view_model())
+        .confirmation
+        .unwrap()
+        .confirm;
+    let point = (confirm.x, confirm.y);
+    let data_before = fixture.state.app.launcher_state().cloned();
+    let mut expected_calls = fixture.platform.calls();
+    fixture.input(InputEvent::mouse_down(PointerButton::Left, point));
+    assert!(
+        fixture
+            .state
+            .pages
+            .launcher
+            .launcher_pending_confirmation
+            .is_some()
+    );
+    assert_eq!(fixture.state.app.launcher_state(), data_before.as_ref());
+    assert_eq!(fixture.platform.calls(), expected_calls);
+    fixture.input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert!(
+        fixture
+            .state
+            .pages
+            .launcher
+            .launcher_pending_confirmation
+            .is_none()
+    );
+    expected_calls.push(platform::mock::MockCall::OpenPath(path));
+    assert_eq!(fixture.platform.calls(), expected_calls);
+    fixture.input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert_eq!(fixture.platform.calls(), expected_calls);
+}
+
 #[path = "search_context.rs"]
 mod search_context;

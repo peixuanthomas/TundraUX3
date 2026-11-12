@@ -272,7 +272,7 @@ impl Tabs {
             Line::styled(
                 tab.label.as_str(),
                 item_style(
-                    self.state.focused,
+                    self.state.focused && self.selected == Some(index),
                     self.hovered == Some(index),
                     self.selected == Some(index),
                     tab.disabled,

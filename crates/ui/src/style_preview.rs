@@ -10,7 +10,9 @@ use ratatui::{
 
 use crate::{
     RenderContext,
-    components::{Button, Dialog, List, ProgressGauge, Surface, TextInput},
+    components::{
+        BusyIndicator, Button, ButtonEmphasis, Dialog, List, ProgressGauge, Surface, TextInput,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,11 +91,12 @@ pub struct PreviewLayout {
 }
 
 pub fn preview_layout(area: Rect, version: UiStyleVersion) -> PreviewLayout {
-    if area.width < 60 || area.height < 24 {
+    let tea = version == UiStyleVersion::Tea;
+    if area.width < 60 || area.height < if tea { 20 } else { 24 } {
         return PreviewLayout::default();
     }
     let width = match version {
-        UiStyleVersion::Tea => 78,
+        UiStyleVersion::Tea => 100,
         _ => 112,
     };
     let [body] = Layout::horizontal([Constraint::Max(width)])
@@ -101,14 +104,15 @@ pub fn preview_layout(area: Rect, version: UiStyleVersion) -> PreviewLayout {
         .margin(1)
         .areas(area);
     let [header, content, footer] = Layout::vertical([
-        Constraint::Length(4),
-        Constraint::Min(15),
+        Constraint::Length(if tea { 3 } else { 4 }),
+        Constraint::Min(if tea { 12 } else { 15 }),
         Constraint::Length(3),
     ])
     .areas(body);
     let (mut list, detail) = if version == UiStyleVersion::Tea && area.height >= 30 {
-        let [list, detail] =
-            Layout::vertical([Constraint::Length(5), Constraint::Min(10)]).areas(content);
+        let [list, detail] = Layout::vertical([Constraint::Length(4), Constraint::Min(12)])
+            .spacing(1)
+            .areas(content);
         (list, detail)
     } else {
         let [list, detail] =
@@ -124,8 +128,8 @@ pub fn preview_layout(area: Rect, version: UiStyleVersion) -> PreviewLayout {
             Constraint::Min(3)
         },
         Constraint::Length(3),
-        Constraint::Length(3),
-        Constraint::Length(3),
+        Constraint::Length(if tea { 2 } else { 3 }),
+        Constraint::Length(if tea { 1 } else { 3 }),
     ])
     .spacing(1)
     .flex(Flex::Start)
@@ -208,7 +212,7 @@ pub fn render_preview(frame: &mut Frame<'_>, view: &PreviewView<'_>, context: &R
         ))
         .style(
             Style::default()
-                .fg(tokens.accent)
+                .fg(tokens.text)
                 .add_modifier(Modifier::BOLD),
         ),
         title,
@@ -223,11 +227,15 @@ pub fn render_preview(frame: &mut Frame<'_>, view: &PreviewView<'_>, context: &R
     if view.version == UiStyleVersion::Tea {
         view.list
             .render_borderless_frame(frame, layout.list, &theme);
-        view.input
-            .render_borderless_frame(frame, layout.input, &theme);
+        view.input.render_frame(frame, layout.input, &theme);
         view.replay
+            .clone()
+            .with_bracketed_label(false)
+            .with_emphasis(ButtonEmphasis::Primary)
             .render_borderless_frame(frame, layout.replay, &theme);
         view.inspect
+            .clone()
+            .with_bracketed_label(false)
             .render_borderless_frame(frame, layout.inspect, &theme);
     } else {
         view.list.render_frame(frame, layout.list, &theme);
@@ -242,7 +250,7 @@ pub fn render_preview(frame: &mut Frame<'_>, view: &PreviewView<'_>, context: &R
         .map(|item| item.label.clone())
         .unwrap_or_else(|| i18n::tr!("ui-style-preview-preview"));
     let surface = Surface::new()
-        .titled(format!(" {selected} "))
+        .titled(selected)
         .bordered(view.version != UiStyleVersion::Tea)
         .raised(view.version == UiStyleVersion::Spring);
     surface.render_frame(frame, layout.details, context);
@@ -259,17 +267,15 @@ pub fn render_preview(frame: &mut Frame<'_>, view: &PreviewView<'_>, context: &R
         .raised(view.version == UiStyleVersion::Spring);
     meter.render_frame(frame, layout.progress, context);
     let status = if view.running {
-        i18n::tr!("ui-style-preview-running")
+        format!(
+            "{} {}",
+            BusyIndicator::from_motion(context.motion).symbol(),
+            i18n::tr!("ui-style-preview-running")
+        )
     } else {
         i18n::tr!("ui-style-preview-settled")
     };
-    let progress_area = if view.version == UiStyleVersion::Tea {
-        Layout::vertical([Constraint::Length(1)])
-            .flex(Flex::Center)
-            .areas::<1>(layout.progress)[0]
-    } else {
-        meter.inner(layout.progress)
-    };
+    let progress_area = meter.inner(layout.progress);
     frame.render_widget(
         ProgressGauge::new(
             i18n::tr!(
@@ -279,7 +285,11 @@ pub fn render_preview(frame: &mut Frame<'_>, view: &PreviewView<'_>, context: &R
                 target = format!("{:.0}", view.target * 100.0)
             ),
             view.displayed,
-            tokens.accent,
+            if view.running {
+                tokens.accent
+            } else {
+                tokens.success
+            },
             tokens.raised,
             &tokens,
         ),

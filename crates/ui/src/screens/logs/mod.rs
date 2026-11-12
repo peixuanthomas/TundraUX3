@@ -4,8 +4,8 @@ mod render;
 pub use layout::*;
 pub use model::*;
 pub use render::{
-    logs_control_enabled, logs_control_id, logs_detail_text, render_logs_content,
-    render_logs_overlay,
+    logs_busy_visible, logs_control_enabled, logs_control_id, logs_detail_text,
+    render_logs_content, render_logs_overlay,
 };
 
 pub use render::logs_content_model;

@@ -37,10 +37,13 @@ pub fn login_viewport(main: Rect, model: &LoginViewModel) -> super::AuthViewport
 
 pub fn login_list_scrollbar(main: Rect, model: &LoginViewModel) -> Option<Rect> {
     let list = login_layout(main).user_list;
-    (model.users.len() > usize::from(list.height.saturating_sub(2))
-        && list.width > 2
-        && list.height > 2)
-        .then(|| Rect::new(list.right() - 2, list.y + 1, 1, list.height - 2))
+    (model.users.len() > usize::from(login_user_list_rows_area(main).height)
+        && list.width > 1
+        && list.height > 1)
+        .then(|| {
+            let rows = login_user_list_rows_area(main);
+            Rect::new(rows.right() - 1, rows.y, 1, rows.height)
+        })
 }
 
 pub fn render_login_content(
@@ -70,7 +73,7 @@ fn render_login_unscrolled(
         } else {
             i18n::tr!("ui-auth-login")
         })
-        .bordered(true)
+        .bordered(false)
         .render_frame(frame, main, context);
 
     let layout = login_layout(main);
@@ -130,7 +133,11 @@ fn render_login_user_list(
         return;
     }
 
-    let visible_rows = area.height.saturating_sub(2) as usize;
+    let mut rows = super::common::auth_content_area(area);
+    Surface::new()
+        .titled(i18n::tr!("ui-auth-users"))
+        .render_frame(frame, area, context);
+    let visible_rows = usize::from(rows.height);
     let (start, _) = login_user_window_bounds(model, visible_rows);
     let items: Vec<ListItem> = if model.users.is_empty() {
         vec![ListItem::new(
@@ -160,22 +167,16 @@ fn render_login_user_list(
             .collect()
     };
 
-    let mut list = List::new("login.users", items)
-        .titled(i18n::tr!("ui-auth-users"))
-        .with_viewport_start(start);
+    let mut list = List::new("login.users", items).with_viewport_start(start);
     list.set_focused(model.focused_field == LoginField::UserList);
     list.set_selected((!model.users.is_empty()).then_some(model.selected_index));
-    let mut list_theme = context.compatibility_theme();
-    if model.focused_field == LoginField::UserList {
-        list_theme.border_color = context.theme.focus;
-    }
-    list.render_frame(frame, area, &list_theme);
-    if model.users.len() > visible_rows && area.width > 2 && area.height > 2 {
-        Scrollbar::new(model.users.len(), visible_rows, start).render_frame(
-            frame,
-            Rect::new(area.right() - 2, area.y + 1, 1, area.height - 2),
-            context,
-        );
+    let scrollbar = (model.users.len() > visible_rows && rows.width > 1 && rows.height > 0)
+        .then(|| Rect::new(rows.right() - 1, rows.y, 1, rows.height));
+    rows.width = rows.width.saturating_sub(u16::from(scrollbar.is_some()));
+    list.render_borderless_frame(frame, rows, &context.compatibility_theme());
+    if let Some(scrollbar) = scrollbar {
+        Scrollbar::new(model.users.len(), visible_rows, start)
+            .render_frame(frame, scrollbar, context);
     }
 }
 
@@ -208,7 +209,7 @@ fn render_login_username_field(
     ];
     let surface = Surface::new()
         .titled(i18n::tr!("ui-auth-selected-user"))
-        .bordered(true);
+        .bordered(false);
     let inner = surface.inner(area);
     surface.render_frame(frame, area, context);
     frame.render_widget(
@@ -394,8 +395,12 @@ pub fn login_password_visibility_area(main: Rect) -> Rect {
     login_layout(main).password_visibility
 }
 
+pub fn login_user_list_rows_area(main: Rect) -> Rect {
+    super::common::auth_content_area(login_user_list_area(main))
+}
+
 pub fn login_user_list_visible_rows(main: Rect) -> usize {
-    login_user_list_area(main).height.saturating_sub(2) as usize
+    usize::from(login_user_list_rows_area(main).height)
 }
 
 fn login_columns(main: Rect) -> (Rect, Rect) {
@@ -415,7 +420,7 @@ fn login_columns(main: Rect) -> (Rect, Rect) {
 }
 
 fn login_inner_area(main: Rect) -> Rect {
-    Surface::new().bordered(true).inner(main)
+    super::common::auth_content_area(main)
 }
 
 fn login_user_window_bounds(model: &LoginViewModel, visible_rows: usize) -> (usize, usize) {

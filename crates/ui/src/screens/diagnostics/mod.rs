@@ -15,8 +15,8 @@ pub use model::{
     DiagnosticsStatus, DiagnosticsTab, DiagnosticsViewModel,
 };
 pub use render::{
-    diagnostics_detail_scroll_metrics, diagnostics_toolbar_buttons, diagnostics_toolbar_height,
-    render_diagnostics_overlay, render_diagnostics_page_content,
+    diagnostics_busy_visible, diagnostics_detail_scroll_metrics, diagnostics_toolbar_buttons,
+    diagnostics_toolbar_height, render_diagnostics_overlay, render_diagnostics_page_content,
 };
 pub(crate) use render::{
     render_diagnostics_content, render_diagnostics_content_titled, render_diagnostics_footer,

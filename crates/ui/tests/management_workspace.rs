@@ -41,6 +41,31 @@ fn model(advanced_open: bool) -> ManagementViewModel {
 }
 
 #[test]
+fn borderless_details_use_the_shared_keyboard_focus_style() {
+    let mut model = model(false);
+    model.workspace.as_mut().unwrap().focus = WorkspaceFocus::Details;
+    let main = Rect::new(0, 0, 120, 30);
+    let layout = management_layout(main, &model);
+    let theme = TundraTheme::default_dark();
+    let mut terminal = Terminal::new(TestBackend::new(main.width, main.height)).unwrap();
+    for keyboard in [true, false] {
+        let mut context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+        let mut buttons = ButtonFrame::new(None, None, &theme);
+        buttons.keyboard_focus_visible = keyboard;
+        context.buttons = Some(buttons);
+        terminal
+            .draw(|frame| render_management_content(frame, main, &model, &context))
+            .unwrap();
+        assert_eq!(
+            terminal.backend().buffer()[(layout.details.x, layout.details.y)]
+                .modifier
+                .contains(ratatui::style::Modifier::UNDERLINED),
+            keyboard
+        );
+    }
+}
+
+#[test]
 fn workspace_actions_stay_separate_from_search_list_and_details() {
     for open in [false, true] {
         let model = model(open);
@@ -172,7 +197,7 @@ fn workspace_wraps_long_action_labels_without_losing_their_shortcuts() {
 
 #[test]
 fn expanded_details_scroll_to_clipped_text_without_covering_it_with_scrollbars() {
-    for (width, height) in [(108, 20), (160, 40)] {
+    for (width, height) in [(108, 20), (109, 20), (160, 40)] {
         let mut model = model(false);
         model.details_only = true;
         model.details = (0..80)
@@ -203,6 +228,14 @@ fn expanded_details_scroll_to_clipped_text_without_covering_it_with_scrollbars()
             .draw(|frame| render_management_content(frame, main, &model, &context))
             .unwrap();
         let area = layout.details_text;
+        let columns = layout
+            .scrollbars
+            .iter()
+            .find(|bar| bar.target == ManagementScrollTarget::DetailsColumns)
+            .unwrap();
+        if columns.offset % 2 == 1 {
+            assert_eq!(terminal.backend().buffer()[(area.x, area.y)].symbol(), " ");
+        }
         let last_line = (area.x..area.right())
             .map(|x| terminal.backend().buffer()[(x, area.bottom() - 1)].symbol())
             .collect::<String>();

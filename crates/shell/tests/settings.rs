@@ -1507,8 +1507,22 @@ fn animation_form_cancels_drafts_and_validates_all_fields_before_saving() {
         .unwrap()
         .animation_editor
         .unwrap();
-    assert_eq!(draft.fields[0].value, "55");
-    assert_eq!(draft.fields[1].value, "110");
+    let defaults = storage::AnimationTimingsConfig::default();
+    let expected = defaults
+        .page
+        .into_iter()
+        .chain(defaults.dialog)
+        .chain(defaults.menu)
+        .map(|phase| phase.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        draft
+            .fields
+            .iter()
+            .map(|field| field.value.clone())
+            .collect::<Vec<_>>(),
+        expected
+    );
     assert_eq!(manager.load_users().unwrap(), original);
     press(&mut state, &platform, "Esc");
     assert_eq!(

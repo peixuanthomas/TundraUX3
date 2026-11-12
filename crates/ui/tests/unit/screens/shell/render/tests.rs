@@ -65,15 +65,7 @@ fn status_message_uses_shared_hover_pressed_and_keyboard_colors() {
             })
             .unwrap();
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(message.x + 1, message.y + 1)].fg, expected);
-        assert_eq!(
-            buffer[(message.x, message.y + 1)].fg,
-            if expected == theme.foreground {
-                theme.border_color
-            } else {
-                expected
-            }
-        );
+        assert_eq!(buffer[(message.x, message.y)].fg, expected);
         assert!(buttons.regions().contains(&region));
         assert_ne!(layout.time_button.unwrap(), message);
     }
@@ -85,15 +77,9 @@ fn status_message_uses_shared_hover_pressed_and_keyboard_colors() {
         terminal
             .draw(|frame| super::render_shell_chrome(frame, &layout, &chrome, &context))
             .unwrap();
-        for (area, expected) in [
-            (layout.status_message.unwrap(), "Ready"),
-            (layout.time_button.unwrap(), "12:00"),
-        ] {
-            let row = (area.x..area.right())
-                .map(|x| terminal.backend().buffer()[(x, area.y)].symbol())
-                .collect::<String>();
-            assert_eq!(row.trim(), expected);
-        }
+        assert!(layout.status_message.is_none());
+        assert!(layout.time_button.is_none());
+        assert_eq!(layout.main.bottom(), 24);
     }
 }
 

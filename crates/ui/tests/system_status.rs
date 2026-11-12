@@ -6,6 +6,31 @@ use ui::components::ComponentTone;
 use ui::*;
 
 #[test]
+fn busy_state_tracks_visible_routes_and_dashboard_cards() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut model = model();
+    let mut cpu = widget(
+        SystemStatusWidgetKind::Cpu,
+        SystemStatusWidgetSize::Small,
+        0,
+        0,
+    );
+    cpu.state = SystemStatusWidgetState::Loading;
+    model.dashboard.wide_widgets = vec![cpu.clone()];
+    model.dashboard.narrow_widgets = vec![cpu];
+    assert!(ScreenContent::SystemStatus(&model).busy_visible(area));
+    assert!(!ScreenContent::SystemStatus(&model).busy_visible(Rect::default()));
+    model.dashboard.wide_widgets[0].row = 500;
+    model.dashboard.narrow_widgets[0].row = 500;
+    assert!(!ScreenContent::SystemStatus(&model).busy_visible(area));
+    model.route = SystemStatusRoute::Detail(SystemStatusDetail::Thermal);
+    assert!(!ScreenContent::SystemStatus(&model).busy_visible(area));
+    model.route = SystemStatusRoute::Detail(SystemStatusDetail::Overview);
+    model.dashboard.overview_metrics.clear();
+    assert!(ScreenContent::SystemStatus(&model).busy_visible(area));
+}
+
+#[test]
 fn process_headers_show_sort_direction_and_all_headers_are_clickable() {
     let mut m = model();
     m.route = SystemStatusRoute::Detail(SystemStatusDetail::Processes);
@@ -192,23 +217,39 @@ fn dashboard_partial_scroll_clips_cards_without_overlap() {
 #[test]
 fn too_short_uses_empty_state_but_keeps_footer() {
     let m = model();
-    let l = system_status_layout(Rect::new(0, 0, 80, 8), &m);
-    assert!(l.empty_canvas);
-    assert!(l.refresh_button.width > 0);
+    for (height, empty) in [(7, true), (8, false)] {
+        let l = system_status_layout(Rect::new(0, 0, 80, height), &m);
+        assert_eq!(l.empty_canvas, empty);
+        assert_eq!(l.canvas.height, height - 3);
+        assert!(!l.refresh_button.is_empty());
+    }
 }
 
 #[test]
 fn clipped_metric_card_keeps_its_name_and_value_visible() {
-    for kind in [SystemStatusWidgetKind::Storage, SystemStatusWidgetKind::Network] {
+    for kind in [
+        SystemStatusWidgetKind::Storage,
+        SystemStatusWidgetKind::Network,
+    ] {
         let model = widget(kind, SystemStatusWidgetSize::Small, 0, 0);
         let mut terminal = Terminal::new(TestBackend::new(24, 2)).unwrap();
         let context = RenderContext::from_theme(
-            &TundraTheme::default_dark(), Default::default(), Default::default(),
+            &TundraTheme::default_dark(),
+            Default::default(),
+            Default::default(),
         );
-        terminal.draw(|frame| {
-            ui::components::MetricCard::new(&model).render_frame(frame, frame.area(), &context);
-        }).unwrap();
-        let output: String = terminal.backend().buffer().content().iter().map(|cell| cell.symbol()).collect();
+        terminal
+            .draw(|frame| {
+                ui::components::MetricCard::new(&model).render_frame(frame, frame.area(), &context);
+            })
+            .unwrap();
+        let output: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
         assert!(output.contains(&kind.label()), "{output}");
         assert!(output.contains(&model.primary), "{output}");
     }
@@ -258,7 +299,7 @@ fn add_picker_viewport_hit_rows_match_absolute_rendered_items() {
                 enabled: true,
             })
             .collect(),
-        selected: 5,
+        selected: 9,
     });
     let main = full_main(100, 12);
     let l = system_status_layout(main, &m);
@@ -268,13 +309,13 @@ fn add_picker_viewport_hit_rows_match_absolute_rendered_items() {
             .iter()
             .map(|row| row.index)
             .collect::<Vec<_>>(),
-        vec![2, 3, 4, 5]
+        vec![2, 3, 4, 5, 6, 7, 8, 9]
     );
     assert!(!l.picker_items.iter().any(|row| row.index < 2));
-    let temperature = l.picker_items.iter().find(|row| row.index == 5).unwrap();
+    let selected = l.picker_items.iter().find(|row| row.index == 9).unwrap();
     assert_eq!(
-        system_status_hit_test(&l, (temperature.area.x, temperature.area.y)),
-        Some(SystemStatusHitTarget::PickerItem(5))
+        system_status_hit_test(&l, (selected.area.x, selected.area.y)),
+        Some(SystemStatusHitTarget::PickerItem(9))
     );
     assert!(render(100, 12, &m).contains("Temperature"));
 }

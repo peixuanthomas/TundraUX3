@@ -112,12 +112,16 @@ fn details_fold_the_list_into_the_shared_edge_on_wide_and_narrow_pages() {
         let mid = ui::management_layout(area, &model);
         if width >= 90 {
             assert!(start.list.width > mid.list.width && mid.list.width > end.list.width);
-            assert_eq!(mid.list.right(), mid.details.x);
+            let gap = start.details.x - start.list.right();
+            assert_eq!(gap, 2);
+            assert_eq!(mid.list.right() + gap, mid.details.x);
             assert!(start.details.x > mid.details.x && mid.details.x > end.details.x);
             assert_eq!(start.details.right(), mid.details.right());
         } else {
             assert!(start.list.height > mid.list.height && mid.list.height > end.list.height);
-            assert_eq!(mid.list.bottom(), mid.details.y);
+            let gap = start.details.y - start.list.bottom();
+            assert_eq!(gap, 1);
+            assert_eq!(mid.list.bottom() + gap, mid.details.y);
             assert!(start.details.y > mid.details.y && mid.details.y > end.details.y);
         }
         model.details_expansion = Some(1_000);
@@ -191,4 +195,75 @@ fn moving_surface_keeps_only_its_border_until_the_transition_finishes() {
         );
     }
     assert_eq!(source[(1, 2)].symbol(), "中");
+}
+
+#[test]
+fn light_surface_keeps_complete_text_and_fades_into_live_underlay() {
+    use ratatui::{buffer::Buffer, style::Color};
+    let area = Rect::new(2, 3, 8, 1);
+    let mut source = Buffer::empty(area);
+    source.set_string(
+        2,
+        3,
+        "正文text",
+        ratatui::style::Style::default()
+            .fg(Color::Rgb(230, 230, 230))
+            .bg(Color::Rgb(30, 30, 30)),
+    );
+    let underlay = Buffer::filled(
+        area,
+        ratatui::buffer::Cell::new(" ")
+            .set_bg(Color::Rgb(10, 10, 10))
+            .clone(),
+    );
+    for amount in [0, 250, 500, 750, 1_000] {
+        let entering = ui::light_surface(&source, amount);
+        let exiting = ui::fade_surface(&source, &underlay, amount);
+        for position in area.positions() {
+            assert_eq!(entering[position].symbol(), source[position].symbol());
+            assert_eq!(exiting[position].symbol(), source[position].symbol());
+            assert_eq!(entering[position].fg, source[position].fg);
+        }
+    }
+    assert_ne!(ui::light_surface(&source, 0), source);
+    assert_eq!(ui::light_surface(&source, 1_000), source);
+    assert_eq!(
+        ui::fade_surface(&source, &underlay, 500)[(2, 3)].fg,
+        Color::Rgb(120, 120, 120)
+    );
+}
+
+#[test]
+fn expanding_details_absorbs_workspace_gaps_at_the_endpoint() {
+    for (list, details) in [
+        (Rect::new(0, 0, 30, 20), Rect::new(32, 0, 40, 20)),
+        (Rect::new(0, 0, 40, 10), Rect::new(0, 11, 40, 12)),
+    ] {
+        assert_eq!(ui::expand_trailing_pane(list, details, 0), (list, details));
+        let (hidden, full) = ui::expand_trailing_pane(list, details, 1_000);
+        assert!(hidden.is_empty());
+        assert_eq!(full, list.union(details));
+        let (mid_list, mid_details) = ui::expand_trailing_pane(list, details, 500);
+        assert!(!mid_list.is_empty());
+        assert_eq!(mid_list.union(mid_details), full);
+    }
+}
+
+#[test]
+fn panel_requests_exact_end_deadline_and_reduced_motion_never_schedules() {
+    let frame = |now| MotionFrame {
+        now: Duration::from_millis(now),
+        ..Default::default()
+    };
+    let mut panel = PanelMotion::default();
+    panel.update(1_000, frame(0), MotionTimings::DIALOG);
+    assert_eq!(
+        panel.next_redraw_in(frame(179)),
+        Some(Duration::from_millis(1))
+    );
+    assert_eq!(panel.next_redraw_in(frame(180)), None);
+    assert_eq!(
+        panel.next_redraw_in(MotionFrame::reduced(Duration::from_millis(100))),
+        None
+    );
 }

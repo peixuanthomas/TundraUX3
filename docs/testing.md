@@ -58,6 +58,14 @@ python3 scripts/tests/shell-control.py target/debug/tundra-shell
 
 These scripts use isolated XDG directories and real PTYs to check initial setup, file workflows, mouse and keyboard input, Command Line, external UI control, crash reports, and terminal restoration. `TUNDRA_PTY_MOUSE_EVENT_COUNT` adjusts the number of events in the mouse-event flood test.
 
+Readiness and global-button targeting use automation snapshots and control IDs. Page assertions use business content and painted screens, so changes to decorative frames or bar coordinates do not change the workflow contract. Shell and its companion CLI must come from the same build.
+
+Home application entries and the OS settings entry use current controls and page identity. The unsupported-systemd check verifies the actual PID 1 process and D-Bus requirement through F4, rejects authorization as a remedy, and returns through Settings to Home. Status details must open on release and close back onto the same page.
+
+Network and Packages open the shared Management page; Logs opens its own page. More actions uses the current control rectangle and actual menu state for press, drag-out, and release checks. The malformed-input regression still uses physical End and Enter after checking that the last Home entry is System Status.
+
+The resize workflow first checks the imported document in Vim's native viewport, its Insert indicator, Esc, undo, and return to the standard editor without saving. Permission drafts check Space toggling, Enter advancing to the next field, and cancellation without applying filesystem changes.
+
 The native Trash round-trip test creates only temporary items:
 
 ```sh
@@ -79,6 +87,29 @@ sudo python3 scripts/linux-shell-smoke.py target/debug/tundra-shell
 
 Package queries use fixed fixtures and read-only smoke tests. Do not run destructive installation, removal, or system-upgrade tests on the development host; verify real writes in an isolated environment.
 
+## Compact UI and motion acceptance
+
+Run the semantic matrix after building Shell and CLI:
+
+```sh
+python3 scripts/tests/ui-refresh-smoke.py target/debug/tundra-shell
+```
+
+The script checks 108 × 20, 120 × 36, and 180 × 50 in English and Chinese, with truecolor and ANSI terminal capabilities, and full and reduced motion. It checks one-row global controls, the keyboard entry before the clock, tap activation without hover, modal interception, resize during a dialog, wide and combining characters, and return navigation using current control rectangles. For a focused run, select `--language en-US --color truecolor --motion full`.
+
+Also complete the keyboard-only, mouse-only, and touchscreen workflows in [UI requirements](UI-requirements.md), including rapid page changes, reversal, continuous resize, details and keyboard expansion, sorting, multi-selection, and expert areas. Ordinary pages and groups use whitespace instead of full frames. At 108 × 20, the title and status rows leave 18 content rows. Check that text remains readable on the first transition frame and that Vim/child-terminal sizing and pointer targets follow the same geometry.
+
+For performance measurements, use a Release build at 120 × 36:
+
+```sh
+cargo build --release --locked -p shell -p cli
+python3 scripts/tests/ui-refresh-smoke.py target/release/tundra-shell --samples 50 --output /tmp/tundra-ui-timings.json
+```
+
+The report includes the executable path, size and modification time, platform, Python version, sample count, and P95/max timing for a raw PTY search keystroke to its matching UTF-8 output. Snapshot verification happens after timing. The acceptance budgets at 120 × 36 are input-to-output P95 ≤ 50ms and draw P95 ≤ 16.7ms. The PTY echo series includes host and terminal scheduling; it does not isolate application input-to-render time or internal draw duration, and the JSON leaves draw P95 unset. Certify the draw budget only with actual draw instrumentation, recording the method and build. Report the observed echo metric under its own name and state any unmeasured budgets.
+
+Scheduler unit tests cover completed transitions, reduced motion, idle deadlines, and skipped frames after slow output. PTY silence alone does not prove that the runtime has no idle animation timer. Weather/rainbow retain 30 FPS; active UI transitions use 60 FPS, and one-character busy indicators advance every 80ms.
+
 ## Real Vim regression tests
 
 Ordinary workspace tests skip ignored cases that require a complete Vim. After building the engine, run them explicitly:
@@ -90,7 +121,7 @@ TUNDRA_TEST_VIM="$PWD/target/debug/vim/vim" cargo test --locked -p vim-runtime -
 python3 scripts/tests/editor-vim-smoke.py target/debug/tundra-shell target/debug/vim/vim
 ```
 
-Runtime tests check buffer synchronization, undo, encoding, save failures, `:wq`, forced discard, and read-only protection. Shell smoke tests check the native display, Visual mode, registers, macros, multiple buffers, resizing, F8 synchronization, and terminal restoration.
+Runtime tests check buffer synchronization, undo, encoding, save failures, `:wq`, forced discard, and read-only protection. Shell smoke tests check the native display, Visual mode, registers, macros, multiple buffers, F8 synchronization, and terminal restoration. They compare Vim's dimensions with its terminal control at 108 × 20 and 140 × 45, including the bottom command row and SGR mouse rows and columns.
 
 On Windows, use `python scripts/build-vim.py --output target/debug/vim` and set the following in PowerShell:
 

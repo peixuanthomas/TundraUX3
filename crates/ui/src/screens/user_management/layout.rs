@@ -72,7 +72,7 @@ pub struct UserManagementLayout {
 
 impl UserManagementLayout {
     pub fn row_index_at(&self, x: u16, y: u16) -> Option<usize> {
-        if self.more_menu.is_some() {
+        if self.more_menu.is_some() || self.form.is_some() {
             return None;
         }
         self.rows
@@ -81,6 +81,9 @@ impl UserManagementLayout {
     }
 
     pub fn action_at(&self, x: u16, y: u16) -> Option<UserManagementAction> {
+        if self.form.is_some() {
+            return None;
+        }
         self.actions
             .iter()
             .find_map(|action| rect_contains(action.area, x, y).then_some(action.action))
@@ -119,10 +122,10 @@ pub fn user_management_layout(main: Rect, model: &UserManagementViewModel) -> Us
             &table_model,
         );
         layout.panel = main;
-        layout.summary.width = main.width.saturating_sub(2);
-        layout.help.width = main.width.saturating_sub(2);
+        layout.summary.width = main.width;
+        layout.help.width = main.width;
         layout.feedback.width = if layout.feedback.height > 0 {
-            main.width.saturating_sub(2)
+            main.width
         } else {
             0
         };
@@ -132,16 +135,13 @@ pub fn user_management_layout(main: Rect, model: &UserManagementViewModel) -> Us
             layout.help.y
         };
         let right = Rect::new(
-            main.x + left_width,
+            main.x + left_width + 2,
             layout.header.y,
-            main.width.saturating_sub(left_width + 1),
+            main.width.saturating_sub(left_width + 2),
             bottom.saturating_sub(layout.header.y),
         );
         let bar = user_management_action_bar(model);
-        let action_height = bar
-            .height(right.width.saturating_sub(2))
-            .saturating_add(2)
-            .min(right.height);
+        let action_height = bar.height(right.width).saturating_add(1).min(right.height);
         layout.details = Rect::new(
             right.x,
             right.y,
@@ -150,7 +150,9 @@ pub fn user_management_layout(main: Rect, model: &UserManagementViewModel) -> Us
         );
         layout.actions_panel =
             Rect::new(right.x, layout.details.bottom(), right.width, action_height);
-        layout.actions_area = inset_rect(layout.actions_panel, 1);
+        layout.actions_area = crate::components::Surface::new()
+            .titled("")
+            .inner(layout.actions_panel);
         layout.action_bar = bar.layout(layout.actions_area);
         layout.actions = user_management_page_action_layouts(model, &layout.action_bar);
         apply_more_menu(&mut layout, main, model);
@@ -168,7 +170,7 @@ fn user_management_compact_layout(
     model: &UserManagementViewModel,
 ) -> UserManagementLayout {
     let panel = main;
-    let inner = inset_rect(panel, 1);
+    let inner = crate::components::Surface::new().titled("").inner(panel);
     let summary = line_in_rect(inner, inner.y);
     let header = line_in_rect(inner, inner.y.saturating_add(1));
     let inner_bottom = inner.y.saturating_add(inner.height);
@@ -326,10 +328,7 @@ pub(super) fn user_management_action_bar(
 }
 
 pub(super) fn user_management_action_label(action: &UserManagementActionViewModel) -> String {
-    action.shortcut.map_or_else(
-        || action.label.clone(),
-        |key| format!("{} {}", key.to_ascii_uppercase(), action.label),
-    )
+    action.button_label()
 }
 
 fn user_management_page_action_layouts(

@@ -50,9 +50,11 @@ When closing a page with running work, users can continue in the background, can
 
 Logged-in non-guest users can open Tasks from the global title bar and see running or awaiting-approval status. Pressing Tasks again closes the current task page and restores its originating page without creating another instance. Background queries do not count as running operations. First-time setup can finish with the default appearance using F9 after required account validation; appearance remains editable later.
 
+The title and status bars each occupy one row, preserving 18 content rows at the 108 × 20 minimum. The status row holds the keyboard entry before the clock. Shared layouts provide painting, focus, hit testing, and automation coordinates; opening the keyboard keeps the title row and hides the status row.
+
 ## Interface hosting
 
-- **Home:** The minimum terminal size is 108×22, shared by startup, runtime resizing, the lockscreen, and Command Line. At that size all Home entries fit on one page as names only; smaller terminals show an error. F2 or the Edit icons button enters edit mode. Pointer drops and Shift+Left/Right save icon order in each user’s `home.order.<user_id>` state entry. Esc cancels a drag first, then finishes editing; focus loss, resizing, overlays, and navigation cancel pending drops.
+- **Home:** The minimum terminal size is 108×20, shared by startup, runtime resizing, the lockscreen, and Command Line. At that size all Home entries fit on one page as names only; smaller terminals show an error. F2 or the Edit icons button enters edit mode. Pointer drops and Shift+Left/Right save icon order in each user’s `home.order.<user_id>` state entry. Esc cancels a drag first, then finishes editing; focus loss, resizing, overlays, and navigation cancel pending drops.
 - **Home and Launcher:** show supported system tasks directly on Home and exclude those entries from Launcher. Home uses plain names; open entries by clicking or selecting with arrows and pressing Enter/Space, without letter shortcuts. Search Launcher by name, path/command, or type, and organize its remaining built-in applications, custom commands, and external programs. Built-in and blank-area context menus expose page actions without permitting edits or deletion of built-in entries.
 - **Files:** share copied/cut files across Explorer pages and undo safe moves or renames through the shared application service. First save and Save As keep directory browsing, filename, Save, and Cancel together.
 - **Editor and scripts:** keep common editing tools visible, preserve the text selection when opening the standard editor's context menu, manage multi-document pages and Vim, and host script execution and debugging. macOS text editing follows Command and Option conventions.
@@ -61,6 +63,10 @@ Logged-in non-guest users can open Tasks from the global title bar and see runni
 - **Updates:** Linux defaults to Release, showing release notes and download progress. Beta additionally shows compilation progress and live output; Windows source updates retain those build details.
 - **Child terminals:** each page has an independent PTY, continues reading output while covered, and cleans up its process tree when closed.
 
+Keyboard, mouse, and touch use the same interruptible transitions. Page, dialog, and menu bodies remain readable at fixed final coordinates from the first frame; details and the keyboard use clipped expansion. The event loop prioritizes immediate input, schedules active UI motion at 60 FPS, retains the separate 30 FPS weather/rainbow policy and 80ms busy cadence, and stops animation deadlines at rest. Slow terminal writes advance from elapsed time without replaying missed frames. Reduced motion renders the final state directly.
+
+Launcher confirmations use the current shared layout to capture button presses and releases before a redraw. Their search field and list remain covered. Explorer popup wheels move the popup selection, and right clicks retain the active popup without changing the covered file list.
+
 See [UI requirements](../../docs/UI-requirements.md) for shared buttons, forms, animations, and layouts. See [Editor and script workspace](../../docs/source-editor.md) for editor operations and [List selection](../../docs/list-selection.md) for page multi-selection.
 
 ## External CLI control
@@ -68,6 +74,8 @@ See [UI requirements](../../docs/UI-requirements.md) for shared buttons, forms, 
 After external CLI control is enabled in Settings → System, the same operating-system user can use `tundra-cli ui` to read controls and screen content, or send clicks, drags, scrolling, keys, and text.
 
 `session/automation.rs` sends requests through the normal input flow, and the compositor captures snapshots from actual rendered frames. Real user actions invalidate old snapshots, requiring another `snapshot` or `wait`. Passwords remain masked in exported content. See [CLI control](../cli/docs/ui-control.md) for the protocol and examples.
+
+Already-due wheel steps from one external scroll request share a frame without dropping steps or advancing future events. Clicks and drags retain separate press and release frames.
 
 ## Build and validation
 

@@ -23,6 +23,16 @@ pub enum ScreenContent<'a> {
 }
 
 impl ScreenContent<'_> {
+    pub fn busy_visible(self, main: ratatui::layout::Rect) -> bool {
+        match self {
+            Self::Management(model) => management_busy_visible(main, model),
+            Self::Diagnostics(model) => diagnostics_busy_visible(main, model),
+            Self::Logs(model) => logs_busy_visible(main, model),
+            Self::SystemStatus(model) => system_status_busy_visible(main, model),
+            _ => false,
+        }
+    }
+
     pub fn renders_in_compact(self) -> bool {
         matches!(
             self,

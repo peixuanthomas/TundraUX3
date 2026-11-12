@@ -1310,14 +1310,16 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     app::update::mark_update_ready_from_env().map_err(io::Error::other)?;
                     update_ready_marked = true;
                 }
-                redraw.did_draw(frame_now);
+                let draw_completed_at = Instant::now();
+                redraw.did_draw_finished(frame_now, draw_completed_at);
                 if prepared
                     .as_ref()
                     .is_some_and(|frame| frame.rainbow_running())
                 {
-                    redraw.request_continuous_frame(frame_now);
-                } else if animation_running {
-                    redraw.request_animation_frame(frame_now);
+                    redraw.request_continuous_frame(draw_completed_at);
+                }
+                if animation_running && let Some(interval) = compositor.next_redraw_in() {
+                    redraw.request_animation_frame_in(draw_completed_at, interval);
                 }
             }
 
@@ -1403,11 +1405,12 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             for event in &terminal_events {
                 user_operated |= control.observe_user_input(event);
             }
-            if !user_operated && let Some(event) = control.poll(Instant::now()) {
-                terminal_events.push(event);
+            if !user_operated {
+                terminal_events.extend(control.poll_batch(Instant::now()));
             }
             let terminal_event_received = !terminal_events.is_empty();
             if terminal_event_received {
+                redraw.request_input_redraw();
                 for terminal_event in terminal_events {
                     let identity_before_input = RedrawIdentity::from_session(&state);
                     if let event::Event::Resize(width, height) = &terminal_event {
@@ -1717,20 +1720,12 @@ pub(super) fn dispatch_motion_aware_input(
     platform: &dyn Platform,
     received_at: Instant,
 ) -> (ShellAction, bool) {
-    if let InputEvent::Mouse(mouse) = &input
-        && (mouse.kind != ui::MouseEventKind::Moved
-            || state.interaction.pointer_position != Some(mouse.coordinates()))
-    {
-        state.interaction.pointer_motion = true;
-    }
-    if !state.interaction.pointer_motion {
-        if let Some(close) = motion.cancel_for_suspend(state) {
-            state.apply_routed_event(close, platform, received_at);
+    motion.finish_before_input(&input);
+    if let Some(close) = motion.take_deferred_close(state) {
+        state.apply_routed_event(close, platform, received_at);
+        if input.is_mouse() || matches!(&input, InputEvent::Key(key) if key.label() == "Esc") {
+            return (ShellAction::Redraw, false);
         }
-        motion.remember(
-            state,
-            Rect::new(0, 0, state.terminal_size.0, state.terminal_size.1),
-        );
     }
     if state.handle_auto_admin_input_at(&input, received_at) {
         return (ShellAction::Redraw, false);

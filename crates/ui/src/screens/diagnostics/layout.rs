@@ -176,7 +176,7 @@ fn diagnostics_content_hit_test_parts(
 /// returned window start is clamped so the active selection remains visible.
 pub fn diagnostics_layout(main: Rect, model: &DiagnosticsViewModel) -> DiagnosticsLayout {
     let panel = main;
-    let inner = inset_rect(panel, 1);
+    let inner = crate::components::Surface::new().titled("").inner(panel);
     let header = line_in_rect(inner, inner.y);
     let content_y = header.bottom();
     let bar = super::render::diagnostics_action_bar(model);
@@ -263,7 +263,7 @@ pub fn diagnostics_content_layout(
     content: Rect,
     model: &DiagnosticsViewModel,
 ) -> DiagnosticsContentLayout {
-    let column_gap = u16::from(content.width >= 3);
+    let column_gap = 2.min(content.width);
     let available_width = content.width.saturating_sub(column_gap);
     let list_width = if model.table_data().0.len() > 3 && available_width >= 80 {
         (available_width * 3 / 5).min(available_width.saturating_sub(36))
@@ -284,7 +284,9 @@ pub fn diagnostics_content_layout(
         detail_width,
         content.height,
     );
-    let list_inner = inset_rect(list_panel, 1);
+    let list_inner = crate::components::Surface::new()
+        .titled("")
+        .inner(list_panel);
     let header_area = line_in_rect(list_inner, list_inner.y);
     let list_inner = Rect::new(
         list_inner.x,

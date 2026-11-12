@@ -584,8 +584,10 @@ fn pointer_input(session: &mut ShellSession, point: CellPosition, hover: bool) {
             InputEvent::mouse_up(PointerButton::Left, point),
         ]
     };
-    for event in events {
-        if let Some(event) = session.prepare_input(event, platform.as_ref(), Instant::now()) {
+    let started = Instant::now();
+    for (index, event) in events.into_iter().enumerate() {
+        let received = started + Duration::from_millis(index as u64 * 10);
+        if let Some(event) = session.prepare_input(event, platform.as_ref(), received) {
             match event {
                 InputEvent::Key(key) => session.handle_management_key(&key),
                 InputEvent::Paste(text) => session.handle_management_paste(&text),

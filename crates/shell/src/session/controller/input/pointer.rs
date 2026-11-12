@@ -203,6 +203,24 @@ impl ShellSession {
         {
             return self.launcher_run_settings_button_at(point);
         }
+        if self.resolved_overlay_owner() == Some(ShellComponent::Launcher)
+            && self.pages.launcher.launcher_pending_confirmation.is_some()
+            && let Some(layout) = self.launcher_content_layout()
+            && rect_contains(layout.panel, point)
+        {
+            let confirmation = layout.confirmation?;
+            return [
+                ("launcher.confirmation.confirm", confirmation.confirm),
+                ("launcher.confirmation.cancel", confirmation.cancel),
+            ]
+            .into_iter()
+            .find(|(_, area)| rect_contains(*area, point))
+            .map(|(id, area)| ui::components::ButtonRegion {
+                id: id.into(),
+                area,
+                disabled: false,
+            });
+        }
         if self.pages.user_management.user_management_more_open
             && self.active_screen() == ShellScreen::UserManagement
         {
