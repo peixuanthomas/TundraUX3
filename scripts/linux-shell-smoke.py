@@ -762,7 +762,7 @@ def check_system_settings_environment(master, output, child):
     print("PASS: unsupported OS settings shows an environment limit and F4 explains systemd requirements without authorization")
 
 
-def check_editor_resize(master, slave, output, child, isolated):
+def check_editor_resize(master, slave, output, child, isolated, cli, env):
     directory = isolated / "resize-workflow"
     directory.mkdir()
     path = directory / "notes.txt"
@@ -789,18 +789,38 @@ def check_editor_resize(master, slave, output, child, isolated):
         raise SystemExit("Editor did not open the resize fixture")
     if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
         raise SystemExit("Editor did not settle before typing")
-    for keys, marker in [
-        (b"\x1b[19~", b"Normal"),
-        (b"ggi\x1b[200~Vim regression \x1b[201~", b"Insert"),
-        (b"\x1b", b"Normal"),
-        (b"u\x1b[19~", b"Off"),
+    os.write(master, b"\x1b[19~")
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        frame = control_snapshot(master, output, child, cli, env)
+        if frame["page"] == "Editor" and any(
+            item["role"] == "terminal" and "resize baseline" in item["text"]
+            for item in frame["nodes"]
+        ):
+            break
+        read_available(master, output, 0.05)
+    else:
+        raise SystemExit("Vim did not import the resize fixture into its native viewport:\n" + output_diagnostic(output))
+    # Real Vim owns mode feedback; Normal has no label and Insert uses its native prompt.
+    # Check the painted buffer because the mode toggle keeps animating while Vim is idle.
+    for keys, expected in [
+        (b"ggi\x1b[200~Vim regression \x1b[201~",
+         [("-- INSERT --", True), ("Vim regression resize baseline", True)]),
+        (b"\x1b", [("-- INSERT --", False), ("Vim regression resize baseline", True)]),
+        (b"u", [("Vim regression", False), ("resize baseline", True)]),
+        (b"\x1b[19~", [("F8 VIM mode disabled", True), ("resize baseline", True)]),
     ]:
         offset = len(output)
         os.write(master, keys)
-        if not wait_for_output(master, output, marker, child, 5.0, offset):
-            raise SystemExit("Vim mode did not show " + repr(marker) + ":\n" + output_diagnostic(output[offset:]))
-        if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
-            raise SystemExit("Editor did not settle after the Vim input")
+        for label, present in expected:
+            if not wait_for_painted_text(master, output, label, child, present=present):
+                raise SystemExit(
+                    f"Vim viewport did not show {label!r} ({present}):\n"
+                    + output_diagnostic(output[offset:])
+                )
+    if path.read_text() != original:
+        raise SystemExit("Vim mode switching saved the resize fixture")
+    print("PASS: real Vim imports the document, shows Insert, exits with Esc, undoes, and returns without saving")
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 41, 116, 0, 0))
     os.kill(child.pid, signal.SIGWINCH)
     if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
@@ -1054,7 +1074,7 @@ def main() -> int:
             raise SystemExit("Home did not settle before pointer regression")
 
         check_animation_settings(master, output, child, cli, env)
-        check_editor_resize(master, slave, output, child, isolated)
+        check_editor_resize(master, slave, output, child, isolated, cli, env)
         check_system_settings_environment(master, output, child)
         check_status_details(master, output, child, cli, env)
 

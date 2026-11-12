@@ -60,6 +60,8 @@ These scripts use isolated XDG directories and real PTYs to check initial setup,
 
 Readiness and global-button targeting use automation snapshots and control IDs. Page assertions use business content and painted screens, so changes to decorative frames or bar coordinates do not change the workflow contract. Shell and its companion CLI must come from the same build.
 
+The resize workflow first checks the imported document in Vim's native viewport, its Insert indicator, Esc, undo, and return to the standard editor without saving.
+
 The native Trash round-trip test creates only temporary items:
 
 ```sh
