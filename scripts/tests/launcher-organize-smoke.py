@@ -212,6 +212,7 @@ def main():
 
             def open_context():
                 card = next(node for node in items() if f"launcher.item.{custom_id}" in node["id"])
+                ui("wait", "--id", card["id"])
                 ui("click", "--id", card["id"], "--button", "right")
                 return until(lambda current: not current["animation_running"]
                     and any("launcher.menu.0" in node["id"] for node in current["nodes"]))
