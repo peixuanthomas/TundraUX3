@@ -590,7 +590,7 @@ def check_permission_draft(master, slave, output, child, path):
         raise SystemExit("physical Space did not clear the selected permission box")
     if screen_after(b" ")[owner_row][column:column + 3] != "[x]":
         raise SystemExit("physical Space did not restore the selected permission box")
-    directories = next((i for i, line in enumerate(screen) if line.strip() == "Directories"), len(screen))
+    directories = next((i for i, line in enumerate(screen) if "Directories" in line), len(screen))
     directory_owner = next((i for i in range(directories + 1, len(screen)) if "Owner" in screen[i]), None)
     if directory_owner is None or "[-]" not in screen[directory_owner]:
         raise SystemExit("directory permission draft was not painted mixed:\n" + "\n".join(screen))
