@@ -287,6 +287,120 @@ fn local_request_waits_for_a_rendered_frame_and_rejects_stale_actions() {
 }
 
 #[test]
+fn overdue_scroll_steps_share_a_frame_without_dispatching_future_steps() {
+    let directory = TempDirectory::new();
+    let mut control = ControlRuntime::new(directory.0.clone());
+    control.synchronize(true).unwrap();
+    control.publish(snapshot());
+    let info = control.server.as_ref().unwrap().info.clone();
+    let reader = std::thread::spawn(move || {
+        platform::shell_control::exchange(
+            &info,
+            &Request::new(Action::Scroll {
+                target: Target::Position { x: 16, y: 8 },
+                direction: "down".into(),
+                count: 400,
+            }),
+            Duration::from_secs(3),
+        )
+        .unwrap()
+    });
+    let origin = Instant::now();
+    let deadline = origin + Duration::from_secs(3);
+    let wheel = mouse((16, 8), MouseEventKind::ScrollDown);
+    loop {
+        let events = control.poll_batch(origin);
+        if !events.is_empty() {
+            assert_eq!(events, vec![wheel.clone()]);
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let early = origin + Duration::from_millis(1);
+    assert!(control.poll_batch(early).is_empty());
+    assert_eq!(
+        control.poll_timeout(early, Duration::from_millis(16)),
+        Duration::from_millis(1)
+    );
+    assert_eq!(
+        control.poll_batch(origin + Duration::from_millis(16)),
+        vec![wheel.clone(); 8]
+    );
+    assert!(!control.needs_frame());
+    control.publish(snapshot());
+    assert!(!reader.is_finished());
+    assert_eq!(
+        control.poll_batch(origin + Duration::from_millis(798)),
+        vec![wheel; 391]
+    );
+    assert!(control.needs_frame());
+    assert!(!reader.is_finished());
+    control.publish(snapshot());
+    while !reader.is_finished() {
+        assert!(control.poll_batch(Instant::now()).is_empty());
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let response = reader.join().unwrap();
+    assert!(response.ok);
+    assert_eq!(response.snapshot.unwrap().number, 3);
+}
+
+#[test]
+fn overdue_click_and_drag_events_keep_separate_frame_boundaries() {
+    for action in [
+        Action::Click {
+            target: Target::Position { x: 16, y: 8 },
+            button: Button::Left,
+            double: true,
+        },
+        Action::Drag {
+            from: Target::Position { x: 1, y: 1 },
+            to: Target::Position { x: 16, y: 8 },
+            duration_ms: 160,
+            button: Button::Left,
+        },
+    ] {
+        let directory = TempDirectory::new();
+        let mut control = ControlRuntime::new(directory.0.clone());
+        control.synchronize(true).unwrap();
+        control.publish(snapshot());
+        let expected = action_events(&action, &snapshot()).unwrap();
+        let info = control.server.as_ref().unwrap().info.clone();
+        let reader = std::thread::spawn(move || {
+            platform::shell_control::exchange(&info, &Request::new(action), Duration::from_secs(3))
+                .unwrap()
+        });
+        let origin = Instant::now();
+        let deadline = origin + Duration::from_secs(3);
+        loop {
+            let events = control.poll_batch(origin);
+            if !events.is_empty() {
+                assert_eq!(events, vec![expected[0].1.clone()]);
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        for (_, event) in expected.into_iter().skip(1) {
+            assert_eq!(
+                control.poll_batch(origin + Duration::from_secs(1)),
+                vec![event]
+            );
+        }
+        assert!(control.needs_frame());
+        control.publish(snapshot());
+        while !reader.is_finished() {
+            assert!(control.poll_batch(Instant::now()).is_empty());
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(reader.join().unwrap().ok);
+    }
+}
+
+#[test]
 fn disconnect_does_not_drop_other_requests_received_in_the_same_poll() {
     let directory = TempDirectory::new();
     let mut control = ControlRuntime::new(directory.0.clone());
@@ -372,9 +486,7 @@ fn exchange_request(control: &mut ControlRuntime, request: Request) -> (Response
     let deadline = Instant::now() + Duration::from_secs(3);
     let mut events = Vec::new();
     while !reader.is_finished() {
-        if let Some(event) = control.poll(Instant::now()) {
-            events.push(event);
-        }
+        events.extend(control.poll_batch(Instant::now()));
         if control.needs_frame() {
             control.publish(control.snapshot.clone().unwrap());
         }
@@ -525,14 +637,14 @@ fn physical_input_cancels_the_rest_of_an_external_drag() {
         .unwrap()
     });
     let deadline = Instant::now() + Duration::from_secs(3);
-    while control.poll(Instant::now()).is_none() {
+    while control.poll_batch(Instant::now()).is_empty() {
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(1));
     }
     control.observe_user_input(&Event::Paste("user text".into()));
-    assert_eq!(control.poll(Instant::now()), Some(Event::FocusLost));
+    assert_eq!(control.poll_batch(Instant::now()), vec![Event::FocusLost]);
     while !reader.is_finished() {
-        assert_eq!(control.poll(Instant::now()), None);
+        assert!(control.poll_batch(Instant::now()).is_empty());
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(1));
     }

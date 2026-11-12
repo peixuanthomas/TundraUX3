@@ -1405,8 +1405,8 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             for event in &terminal_events {
                 user_operated |= control.observe_user_input(event);
             }
-            if !user_operated && let Some(event) = control.poll(Instant::now()) {
-                terminal_events.push(event);
+            if !user_operated {
+                terminal_events.extend(control.poll_batch(Instant::now()));
             }
             let terminal_event_received = !terminal_events.is_empty();
             if terminal_event_received {

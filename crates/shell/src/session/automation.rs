@@ -235,6 +235,31 @@ impl ControlRuntime {
         self.awaiting_frame
     }
 
+    pub fn poll_batch(&mut self, now: Instant) -> Vec<Event> {
+        let Some(event) = self.poll(now) else {
+            return Vec::new();
+        };
+        let scroll = matches!(
+            event,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollUp
+                    | MouseEventKind::ScrollDown
+                    | MouseEventKind::ScrollLeft
+                    | MouseEventKind::ScrollRight,
+                ..
+            })
+        );
+        let mut events = vec![event];
+        // Due wheel steps share a frame; presses and releases retain their painted boundary.
+        if scroll {
+            while self.events.front().is_some_and(|(at, _)| *at <= now) {
+                events.push(self.events.pop_front().expect("ready scroll event").1);
+            }
+            self.awaiting_frame = self.events.is_empty();
+        }
+        events
+    }
+
     pub fn poll_timeout(&self, now: Instant, fallback: Duration) -> Duration {
         if self.active.is_none() && !self.releases.is_empty() {
             return Duration::ZERO;
