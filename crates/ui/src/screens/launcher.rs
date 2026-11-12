@@ -1,6 +1,7 @@
 use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
+use ratatui::text::Line;
 use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use crate::components::{
@@ -1024,7 +1025,8 @@ fn render_launcher_grid(
             continue;
         }
         surface.render_surface_frame(frame, item_layout.area, theme);
-        let style = surface.surface_style(item_layout.area, theme);
+        let label_style = surface.surface_style(item_layout.area, theme);
+        let style = label_style.remove_modifier(Modifier::UNDERLINED);
         let rendered_native = item.custom_icon.is_none()
             && !surface.state.disabled
             && item_layout.icon_area.width > 0
@@ -1040,8 +1042,7 @@ fn render_launcher_grid(
             .min(inner.bottom().saturating_sub(2.min(inner.height)))
             .max(inner.y);
         frame.render_widget(
-            Paragraph::new(fit_text(&item.name, inner.width))
-                .style(style)
+            Paragraph::new(Line::styled(fit_text(&item.name, inner.width), label_style))
                 .alignment(HorizontalAlignment::Center),
             Rect::new(inner.x, name_y, inner.width, u16::from(inner.height > 0)),
         );

@@ -6,7 +6,7 @@ mod support;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier};
 use support::terminal_output;
 use ui::{
     AuthField, BootstrapAdminViewModel, ClockViewModel, DebugDiagnosticsViewModel,
@@ -174,6 +174,25 @@ fn short_home_cards_show_names_without_clipping_ascii_or_image_icons_after_resiz
                         .collect::<Vec<_>>()
                         .join("\n");
                     assert!(text.replace(' ', "").contains(&entry.label));
+                    let buffer = terminal.backend().buffer();
+                    let underlined: String = tile
+                        .positions()
+                        .filter_map(|pos| {
+                            let cell = &buffer[pos];
+                            cell.modifier
+                                .contains(Modifier::UNDERLINED)
+                                .then_some(cell.symbol())
+                        })
+                        .collect();
+                    assert_eq!(
+                        underlined,
+                        if item.index == home.selected_entry_index() {
+                            &entry.label
+                        } else {
+                            ""
+                        },
+                        "tile height {tile_height}, graphical icons {graphical}"
+                    );
                     let icon = home.home_icon_for_label(entry.icon_identity()).unwrap();
                     if tile_height < 5 {
                         assert!(ui::home_entry_icon_area(tile).is_empty());

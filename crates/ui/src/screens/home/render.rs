@@ -1,7 +1,8 @@
 use crate::components::{terminal_width, truncate_to_terminal_width};
 use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
-use ratatui::text::Line;
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 
 use super::{HomeDisplayMode, HomeViewModel};
@@ -119,7 +120,8 @@ fn render_user_main(
             continue;
         }
         surface.render_surface_frame(frame, tile, theme);
-        let style = surface.surface_style(tile, theme);
+        let label_style = surface.surface_style(tile, theme);
+        let style = label_style.remove_modifier(Modifier::UNDERLINED);
         let content_width = usize::from(tile.width);
         let rendered_graphic = icon_area.width > 0
             && icon_area.height > 0
@@ -133,9 +135,13 @@ fn render_user_main(
                 .enumerate()
             {
                 frame.render_widget(
-                    Paragraph::new(centered_home_tile_line(line, icon.width(), content_width))
-                        .alignment(HorizontalAlignment::Left)
-                        .style(style),
+                    Paragraph::new(centered_home_tile_line(
+                        Span::raw(line.as_str()),
+                        icon.width(),
+                        content_width,
+                    ))
+                    .alignment(HorizontalAlignment::Left)
+                    .style(style),
                     Rect::new(
                         icon_area.x,
                         icon_area
@@ -152,21 +158,24 @@ fn render_user_main(
         let label_y = icon_area.bottom();
         if label_y < inner.bottom() {
             frame.render_widget(
-                Paragraph::new(Line::styled(
-                    centered_home_tile_text(&entry.label, content_width),
-                    style,
+                Paragraph::new(centered_home_tile_text(
+                    &entry.label,
+                    content_width,
+                    label_style,
                 ))
-                .alignment(HorizontalAlignment::Left)
-                .style(style),
+                .alignment(HorizontalAlignment::Left),
                 Rect::new(inner.x, label_y, inner.width, 1),
             );
         }
         let description_y = label_y.saturating_add(1);
         if description_y < inner.bottom() {
             frame.render_widget(
-                Paragraph::new(centered_home_tile_text(&entry.description, content_width))
-                    .alignment(HorizontalAlignment::Left)
-                    .style(style),
+                Paragraph::new(centered_home_tile_text(
+                    &entry.description,
+                    content_width,
+                    style,
+                ))
+                .alignment(HorizontalAlignment::Left),
                 Rect::new(inner.x, description_y, inner.width, 1),
             );
         }
@@ -231,25 +240,18 @@ fn render_home_account_summary(
 }
 
 fn centered_home_tile_line(
-    line: &str,
+    span: Span<'_>,
     measured_width: usize,
     content_width: usize,
-) -> Line<'static> {
-    Line::from(centered_home_tile_value(
-        line,
-        measured_width,
-        content_width,
-    ))
-}
-
-fn centered_home_tile_text(text: &str, content_width: usize) -> String {
-    let text = truncate_to_terminal_width(text, content_width);
-    centered_home_tile_value(&text, Line::from(text.as_str()).width(), content_width)
-}
-
-fn centered_home_tile_value(text: &str, measured_width: usize, content_width: usize) -> String {
+) -> Line<'_> {
     let padding = " ".repeat(content_width.saturating_sub(measured_width) / 2);
-    format!("{padding}{text}")
+    Line::from(vec![Span::raw(padding), span])
+}
+
+fn centered_home_tile_text(text: &str, content_width: usize, style: Style) -> Line<'static> {
+    let span = Span::styled(truncate_to_terminal_width(text, content_width), style);
+    let width = span.width();
+    centered_home_tile_line(span, width, content_width)
 }
 
 pub fn home_entry_tile_areas(main: Rect, entry_count: usize) -> Vec<Rect> {

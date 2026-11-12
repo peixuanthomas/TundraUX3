@@ -6,6 +6,7 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier},
+    text::Line,
     widgets::{Paragraph, Widget},
 };
 use ui::{
@@ -110,6 +111,11 @@ fn borderless_rich_button_shares_capture_hit_and_content_style() {
     button.render_surface(area, &mut buffer, &theme);
     assert_eq!(buffer[(area.x, area.y)].symbol(), " ");
     assert_eq!(buffer[(area.x, area.y)].bg, style.bg.unwrap());
+    assert!(
+        !buffer[(area.x, area.y)]
+            .modifier
+            .contains(Modifier::UNDERLINED)
+    );
     assert!(style.add_modifier.contains(Modifier::UNDERLINED));
     assert_eq!(buttons.regions().len(), 1);
     assert_eq!(buttons.regions()[0].area, area);
@@ -400,8 +406,7 @@ fn focused_bordered_buttons_keep_the_underline_on_text_without_underlining_the_f
             let mut buffer = Buffer::empty(area);
             if rich_content {
                 button.render_surface(area, &mut buffer, &theme);
-                Paragraph::new("Save")
-                    .style(button.surface_style(area, &theme))
+                Paragraph::new(Line::styled("Save", button.surface_style(area, &theme)))
                     .render(Rect::new(1, 1, 10, 1), &mut buffer);
             } else {
                 button.render(area, &mut buffer, &theme);
@@ -416,6 +421,8 @@ fn focused_bordered_buttons_keep_the_underline_on_text_without_underlining_the_f
                                 .intersects(Modifier::BOLD | Modifier::UNDERLINED),
                             "frame at ({x}, {y}): {emphasis:?}, rich={rich_content}"
                         );
+                    } else if buffer[(x, y)].symbol() == " " {
+                        assert!(!buffer[(x, y)].modifier.contains(Modifier::UNDERLINED));
                     }
                 }
             }

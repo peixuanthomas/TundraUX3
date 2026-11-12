@@ -261,6 +261,43 @@ fn render(model: &LauncherViewModel, width: u16, height: u16) -> String {
 }
 
 #[test]
+fn focused_command_line_card_underlines_only_the_application_name() {
+    use ratatui::style::{Color, Modifier};
+
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
+    let load = i18n::LanguageSnapshot::load(&assets, "zh-CN", 1).unwrap();
+    let _language = i18n::enter_snapshot(std::sync::Arc::new(load.snapshot));
+    let entry = LauncherItemViewModel::command_line();
+    let name = entry.name.clone();
+    let mut model =
+        LauncherViewModel::new(vec![entry], Some(0), LauncherViewMode::LargeIcons, true);
+    let main = Rect::new(0, 0, 108, 18);
+    let tile = launcher_layout(main, &model).items[0];
+    let theme = TundraTheme::default_dark().with_accent_color(Color::Green);
+    let mut terminal = Terminal::new(TestBackend::new(main.width, main.height)).unwrap();
+
+    for search_focused in [false, true] {
+        model.search.set_focused(search_focused);
+        let context = ui::RenderContext::from_theme(&theme, Default::default(), Default::default());
+        terminal
+            .draw(|frame| ui::render_launcher_content(frame, main, &model, &context, None))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let underlined: String = tile
+            .area
+            .positions()
+            .filter_map(|pos| {
+                let cell = &buffer[pos];
+                cell.modifier
+                    .contains(Modifier::UNDERLINED)
+                    .then_some(cell.symbol())
+            })
+            .collect();
+        assert_eq!(underlined, if search_focused { "" } else { &name });
+    }
+}
+
+#[test]
 fn unavailable_launcher_cards_stay_gray_when_selected() {
     use ratatui::style::Color;
     for status in [

@@ -356,14 +356,15 @@ impl Button {
     fn bordered_widget<'a>(&'a self, area: Rect, theme: &TundraTheme) -> Paragraph<'a> {
         let state = self.render_state(area, theme);
         let style = self.style_for_state(state, theme);
-        Paragraph::new(self.label_text(area.height.saturating_sub(2)))
+        let background_style = style.remove_modifier(Modifier::UNDERLINED);
+        Paragraph::new(self.label_text(area.height.saturating_sub(2)).style(style))
             .alignment(self.label_alignment)
-            .style(style)
+            .style(background_style)
             .block(
                 theme
                     .block()
                     .borders(Borders::ALL)
-                    .style(style)
+                    .style(background_style)
                     .border_style(self.border_style(state, theme)),
             )
     }
@@ -371,9 +372,9 @@ impl Button {
     fn borderless_widget<'a>(&'a self, area: Rect, theme: &TundraTheme) -> Paragraph<'a> {
         let state = self.render_state(area, theme);
         let style = self.style_for_state(state, theme);
-        Paragraph::new(self.label_text(area.height))
+        Paragraph::new(self.label_text(area.height).style(style))
             .alignment(self.label_alignment)
-            .style(style)
+            .style(style.remove_modifier(Modifier::UNDERLINED))
     }
 
     fn label_text(&self, height: u16) -> Text<'_> {
@@ -422,7 +423,9 @@ impl Button {
 
     fn surface_widget(&self, area: Rect, theme: &TundraTheme) -> Paragraph<'static> {
         let state = self.render_state(area, theme);
-        let style = self.surface_style_for_state(state, theme);
+        let style = self
+            .surface_style_for_state(state, theme)
+            .remove_modifier(Modifier::UNDERLINED);
         Paragraph::new("")
             .alignment(HorizontalAlignment::Left)
             .style(style)
@@ -439,8 +442,8 @@ impl Button {
             )
     }
 
-    /// Resolves rich-content colours without registering another pointer or capture region.
-    /// Use this style for content painted over [`Button::render_surface_frame`].
+    /// Resolves the rich-content label style without registering another region.
+    /// Apply it to the label text to keep the focus underline out of the surrounding cells.
     pub fn surface_style(&self, area: Rect, theme: &TundraTheme) -> Style {
         self.surface_style_for_state(self.resolved_state(area, theme), theme)
     }
