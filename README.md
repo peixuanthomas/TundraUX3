@@ -63,38 +63,6 @@ To run the environment check from a source build:
 cargo run --locked -p cli --bin tundra-cli -- doctor
 ```
 
-## Using the interface
-
-Open supported system tasks directly from **Home**, or open the remaining applications from **Launcher**. Applications on Home are not repeated in Launcher. Common file actions and editor tools stay visible. Management pages offer an expert area with F3 that stays open when you select another item.
-
-Home cards show application names without letter shortcuts. Small terminals use names only so every entry fits on one page at the minimum size. Click a card, or select it with the arrow keys and press Enter/Space.
-
-The interface uses neutral dark surfaces, compact rows, and visible actions. One-row title and status bars leave 18 content rows at 108 × 20. Keyboard, mouse, and touch share short, interruptible transitions; enable reduced motion in Settings to show changes immediately.
-
-| Input | Action |
-| --- | --- |
-| Arrow keys / Tab | Move between items and controls |
-| Enter / Space | Open, confirm, or toggle |
-| Esc / Back button | Return or close the current dialog |
-| F1 | Show help for the current page |
-| F2 | Edit Home icons or organize Launcher entries |
-| F4 | Configure how an external Launcher item runs |
-| F8 in the editor | Switch between the standard editor and Vim |
-
-On Home, choose **Edit icons** or press F2 to reorder icons by dragging or with Shift+Left/Right. Choose **Done** or press Esc to finish; each user’s order is saved automatically. Esc during a drag cancels that move.
-
-On the dashboard, arrow keys move between cards by their visual position, including mixed-size and staggered layouts.
-
-Mouse and touchscreen users can click or tap controls, scroll lists, and drag scrollbars. An on-screen keyboard is available for text fields.
-
-In management lists, Ctrl/Cmd+click toggles individual selections, Shift+click selects a range, and Shift+Enter toggles the current row. Tab/Shift+Tab moves between regions and controls; arrow keys operate the focused region. See [list selection](docs/list-selection.md).
-
-Use the title-bar **Tasks** button to view running work or approval requests, read saved output, return to the related page, or cancel a task. Press it again to close Tasks and return to the previous page. Language, appearance, animations, weather, and application options are available in **Settings**.
-
-Linux updates default to Release with release notes and download progress. Beta adds build progress and saves complete compiler output for troubleshooting. Source updates reuse a complete installed Vim when its version configuration is unchanged, compiling only Shell and CLI; see [application updates](crates/app/docs/update.md).
-
-Linux uses ASCII icons by default. If your terminal supports images, you can switch to image icons in **Settings → Appearance → Theme**.
-
 ## Companion CLI
 
 `tundra-cli` provides diagnostics, configuration, logs, system-management commands, and control of a running interface:
