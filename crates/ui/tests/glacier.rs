@@ -3,7 +3,8 @@ use std::time::Duration;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ui::components::{
-    ComponentEvent, DataTable, InputEvent, MouseButton, NavRail, NavRailItem, Toast, ToastTone,
+    BusyIndicator, ComponentEvent, DataTable, InputEvent, MouseButton, NavRail, NavRailItem, Toast,
+    ToastTone,
 };
 use ui::{
     FrostMotion, MotionDirection, MotionFrame, MotionIdentity, MotionOverlayIdentity,
@@ -98,6 +99,62 @@ fn pure_motion_schedule_covers_start_mid_end_interruption_reversal_and_idle() {
         .expect("popover reversal");
     assert_eq!(reversed.direction, MotionDirection::Exiting);
     assert_eq!(reversed.progress, 1_000);
+}
+
+#[test]
+fn busy_label_sweeps_whole_glyphs_and_honors_speed_color_and_reduced_motion() {
+    let initial = MotionFrame::default();
+    let late = MotionFrame {
+        now: Duration::from_millis(350),
+        ..initial
+    };
+    let fast = MotionFrame {
+        now: late.now / 2,
+        animation_speed_percent: 200,
+        ..initial
+    };
+    let theme = TundraTheme::default_dark();
+    let line = |motion, capabilities| {
+        let context = RenderContext::from_theme(&theme, motion, capabilities);
+        BusyIndicator::from_motion(motion).label("扫描 e\u{301}", 16, &context)
+    };
+    let started = line(initial, RenderCapabilities::default());
+    let mid = line(late, RenderCapabilities::default());
+    assert_eq!(started.width(), mid.width());
+    assert_ne!(started.spans[2].style.fg, mid.spans[2].style.fg);
+    assert_eq!(mid, line(fast, RenderCapabilities::default()));
+    assert!(mid.spans.iter().any(|span| span.content == "e\u{301}"));
+    let ansi = line(late, RenderCapabilities::ansi());
+    assert_eq!(ansi.spans.len(), 1);
+    assert!(!matches!(
+        ansi.spans[0].style.fg,
+        Some(ratatui::style::Color::Rgb(..))
+    ));
+    let reduced = MotionFrame::reduced(late.now);
+    assert!(
+        line(reduced, RenderCapabilities::default()).spans[0]
+            .content
+            .starts_with('⋯')
+    );
+    assert!(BusyIndicator::redraw_interval(reduced, ui::ColorCapability::TrueColor).is_none());
+}
+
+#[test]
+fn toast_uses_fixed_geometry_and_semantic_edges_from_the_first_frame() {
+    let mut context = RenderContext::default();
+    let toast = Toast::new("保存 文件", ToastTone::Success, context.motion);
+    let bounds = Rect::new(0, 0, 108, 20);
+    let area = toast.layout(bounds);
+    assert_eq!(bounds.right() - area.right(), 2);
+    assert_eq!(area.y, 1);
+    for now in [Duration::ZERO, Duration::from_secs(2)] {
+        context.motion.now = now;
+        let mut buffer = Buffer::empty(bounds);
+        toast.render(area, &mut buffer, &context);
+        assert_eq!(buffer[(area.x, area.y)].symbol(), "│");
+        assert_eq!(buffer[(area.x, area.y)].fg, context.theme.success);
+        assert_eq!(buffer[(area.x + 3, area.y + 1)].symbol(), "保");
+    }
 }
 
 #[test]

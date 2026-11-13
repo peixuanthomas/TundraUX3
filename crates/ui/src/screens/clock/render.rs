@@ -6,7 +6,7 @@ use ratatui::widgets::Paragraph;
 
 use super::layout::{ClockEntryKind, ClockPageLayout, clock_page_layout};
 use super::model::{ClockEntryViewModel, ClockViewModel};
-use crate::components::{Button, List, ListItem, Scrollbar, Surface};
+use crate::components::{Button, DialogLayout, List, ListItem, Scrollbar, Surface};
 use crate::{ClockFontAsset, RenderContext};
 
 const LARGE_CLOCK_NUMERAL_MIN_WIDTH: usize = 64;
@@ -22,6 +22,9 @@ pub fn render_clock_content(
     context: &RenderContext,
 ) {
     let layout = clock_page_layout(main, model);
+    Surface::new()
+        .background(context.theme.canvas)
+        .render_frame(frame, main, context);
     render_clock_face(frame, &layout, model, context);
     render_clock_panel(frame, &layout, model, context);
 }
@@ -84,9 +87,10 @@ fn render_clock_panel(
     if layout.panel.width == 0 || layout.panel.height == 0 {
         return;
     }
-    let theme = &context.compatibility_theme();
+    let theme = &DialogLayout::footer_theme(context);
     Surface::new()
-        .titled(i18n::tr!("ui-clock-alarms-timers"))
+        .titled(format!("  {}", i18n::tr!("ui-clock-alarms-timers")))
+        .raised(true)
         .bordered(false)
         .render_frame(frame, layout.panel, context);
 
@@ -118,7 +122,7 @@ fn render_clock_panel(
             sort.map_or_else(|| label.clone(), |s| s.label(0, &label)),
         )
         .with_bracketed_label(false)
-        .render_borderless_frame(frame, area, theme);
+        .render_inline_frame(frame, area, theme);
     }
 
     render_clock_entry_list(frame, layout, model, ClockEntryKind::Alarm, context);
@@ -172,7 +176,8 @@ fn render_clock_entry_list(
     let selected = rows
         .iter()
         .position(|row| model.selected_entry_id == Some(row.id));
-    let mut list = List::new(format!("clock.{kind:?}"), items);
+    let mut list =
+        List::new(format!("clock.{kind:?}"), items).with_background(context.theme.raised);
     list.set_focused(selected.is_some());
     list.set_selected(selected);
     list.render_borderless_frame(frame, area, &context.compatibility_theme());
@@ -193,9 +198,12 @@ fn render_clock_entry_list(
             ),
             usize::from(row.area.width),
         );
-        let button = Button::new(format!("clock.entry.{}", row.id), label)
-            .with_current(model.selected_entry_id == Some(row.id));
-        button.render_borderless_frame(frame, row.area, &context.compatibility_theme());
+        let mut button = Button::new(format!("clock.entry.{}", row.id), label);
+        let selected = model.selected_entry_id == Some(row.id);
+        button.set_focused(selected);
+        crate::components::SidebarWorkspaceLayout::render_workspace_row(
+            frame, &button, row.area, selected, 0, context,
+        );
     }
 }
 

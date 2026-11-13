@@ -40,7 +40,7 @@ pub use command_palette::{CommandPalette, CommandPaletteCommand};
 pub use command_status::CommandStatus;
 pub use context_menu::{ContextMenu, ContextMenuItem};
 pub use data_table::DataTable;
-pub use dialog::{Dialog, DialogAction};
+pub use dialog::{Dialog, DialogAction, DialogLayout};
 pub use empty_state::EmptyState;
 pub use form_dialog::{
     FormAction, FormButton, FormChoices, FormControl, FormDialog, FormEvent, FormField,
@@ -75,6 +75,6 @@ pub use toast::{Toast, ToastTone};
 
 pub(crate) use big_text::{BigText, heading_size_ratio};
 pub(crate) use foundation::{
-    byte_index_for_char, char_count, clamp_index, inner_area, interactive_style, item_style,
-    terminal_width, tone_color, truncate_to_terminal_width, visible_scrolled_rect,
+    byte_index_for_char, char_count, clamp_index, inner_area, row_style, terminal_width,
+    tone_color, truncate_to_terminal_width, visible_scrolled_rect,
 };

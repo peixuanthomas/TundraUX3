@@ -1,5 +1,5 @@
 use super::*;
-use crate::components::{Button, ProgressGauge, Surface};
+use crate::components::{Button, DialogLayout, ProgressGauge};
 
 pub fn editor_vim_install_layout(area: Rect) -> (Rect, Rect) {
     let width = area.width.min(68);
@@ -10,15 +10,11 @@ pub fn editor_vim_install_layout(area: Rect) -> (Rect, Rect) {
         width,
         height,
     );
-    let button_width = (crate::components::terminal_width(&i18n::tr!("vim-install-cancel")) as u16
-        + 4)
-    .min(width.saturating_sub(4));
-    let cancel = Rect::new(
-        dialog.x + width.saturating_sub(button_width) / 2,
-        dialog.y + height.saturating_sub(4),
-        button_width,
-        3.min(height),
-    );
+    let footer = DialogLayout::new(dialog, 1, None).footer;
+    let cancel = crate::right_aligned_actions(
+        footer,
+        &[crate::components::terminal_width(&i18n::tr!("vim-install-cancel")) as u16 + 2],
+    )[0];
     (dialog, cancel)
 }
 
@@ -30,12 +26,8 @@ pub(super) fn render(
 ) {
     use app::update::VimInstallPhase::*;
     let (dialog, cancel) = editor_vim_install_layout(area);
-    frame.render_widget(Clear, dialog);
-    Surface::new()
-        .titled(i18n::tr!("vim-install-title"))
-        .bordered(true)
-        .raised(true)
-        .render_frame(frame, dialog, context);
+    let chrome = DialogLayout::new(dialog, 1, None);
+    chrome.render_frame(frame, &i18n::tr!("vim-install-title"), context);
     let status = if model.cancelling {
         i18n::tr!("vim-install-cancelling")
     } else {
@@ -51,10 +43,10 @@ pub(super) fn render(
             .style(Style::default().fg(context.theme.text))
             .wrap(ratatui::widgets::Wrap { trim: true }),
         Rect::new(
-            dialog.x + 2,
-            dialog.y + 2,
-            dialog.width.saturating_sub(4),
-            2,
+            chrome.body.x,
+            chrome.body.y,
+            chrome.body.width,
+            chrome.body.height.saturating_sub(1).min(2),
         ),
     );
     let progress = model.progress;
@@ -76,14 +68,14 @@ pub(super) fn render(
             &context.theme,
         ),
         Rect::new(
-            dialog.x + 2,
-            dialog.y + 4,
-            dialog.width.saturating_sub(4),
-            1,
+            chrome.body.x,
+            chrome.body.bottom().saturating_sub(1).max(chrome.body.y),
+            chrome.body.width,
+            chrome.body.height.min(1),
         ),
     );
     let mut button = Button::new("editor.vim-install.cancel", i18n::tr!("vim-install-cancel"));
     button.state.focused = true;
     button.state.disabled = model.cancelling;
-    button.render_frame(frame, cancel, &context.compatibility_theme());
+    button.render_inline_frame(frame, cancel, &DialogLayout::footer_theme(context));
 }

@@ -136,50 +136,54 @@ pub(crate) fn inner_area(area: Rect) -> Rect {
     )
 }
 
-pub(crate) fn interactive_style(state: ComponentState, theme: &TundraTheme) -> Style {
+pub(crate) fn row_style(
+    state: ComponentState,
+    theme: &TundraTheme,
+    base: ratatui::style::Color,
+) -> Style {
     let tokens = theme.tokens();
     if state.disabled {
-        return theme.disabled_style().bg(tokens.surface);
+        return theme.disabled_style().bg(base);
     }
 
-    let mut style = Style::default().fg(tokens.text).bg(tokens.surface);
-
-    if state.selected {
-        style = style.bg(tokens.raised).add_modifier(Modifier::BOLD);
-    } else if state.hovered {
-        style = style.fg(tokens.accent_strong);
+    let mut background = if state.selected {
+        tokens.selected_row_background()
+    } else {
+        base
+    };
+    if state.active || state.hovered {
+        background = tokens.interaction_background(background, state.active);
     }
-
+    let mut style = Style::default().fg(tokens.text).bg(background);
     if state.focused && theme.keyboard_focus_visible() {
         style = style
             .fg(tokens.accent)
             .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
     }
-
-    if state.active {
-        style = style.add_modifier(Modifier::REVERSED);
+    if theme.color_capability == crate::ColorCapability::Ansi {
+        style = style.fg(crate::theme::readable_foreground(
+            style.fg.unwrap(),
+            background,
+        ));
     }
-
     style
 }
 
-pub(crate) fn item_style(
-    focused: bool,
-    hovered: bool,
-    selected: bool,
-    disabled: bool,
-    theme: &TundraTheme,
-) -> Style {
-    interactive_style(
-        ComponentState {
-            focused,
-            hovered,
-            active: false,
-            selected,
-            disabled,
-        },
-        theme,
-    )
+pub(crate) fn row_marker(state: ComponentState, theme: &TundraTheme) -> Span<'static> {
+    let tokens = theme.tokens();
+    let style = Style::default().remove_modifier(Modifier::UNDERLINED | Modifier::BOLD);
+    if state.disabled {
+        return Span::styled(" ", style);
+    }
+    if state.selected {
+        let accent =
+            crate::theme::readable_foreground(tokens.accent, tokens.selected_row_background());
+        Span::styled("▌", style.fg(accent))
+    } else if state.focused && theme.keyboard_focus_visible() {
+        Span::styled("▌", style.fg(tokens.focus))
+    } else {
+        Span::styled(" ", style)
+    }
 }
 
 pub(crate) fn clamp_index(index: usize, len: usize) -> Option<usize> {

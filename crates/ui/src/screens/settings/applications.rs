@@ -35,7 +35,7 @@ impl SettingsApplicationsLayout {
             .min(area.width / 3);
         let [list, _, detail] = Layout::horizontal([
             Constraint::Length(width),
-            Constraint::Length(1),
+            Constraint::Length(2),
             Constraint::Fill(1),
         ])
         .areas(area);
@@ -75,7 +75,8 @@ impl SettingsApplicationsLayout {
         let focused = model.focus == super::SettingsFocus::Content
             && model.selected_field == SettingsField::ApplicationList;
         Surface::new()
-            .titled(i18n::tr!("ui-settings-application-list"))
+            .titled(format!("  {}", i18n::tr!("ui-settings-application-list")))
+            .raised(true)
             .focused(focused)
             .render_frame(frame, self.list, context);
         for (application, area) in &self.options {
@@ -83,11 +84,11 @@ impl SettingsApplicationsLayout {
             let mut button = Button::new(
                 format!("settings.application.{application:?}").to_ascii_lowercase(),
                 application.label(),
-            )
-            .with_current(active)
-            .with_bracketed_label(false);
+            );
             button.set_focused(focused && active);
-            button.render_borderless_frame(frame, *area, &context.compatibility_theme());
+            SidebarWorkspaceLayout::render_navigation_button(
+                frame, &button, *area, active, context,
+            );
         }
     }
 }

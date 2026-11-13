@@ -220,9 +220,11 @@ fn editable_form_fields_use_the_shared_text_cursor_and_keep_actions_visible() {
         terminal
             .draw(|frame| render_management_overlay(frame, bounds, &model, &context))
             .unwrap();
-        let row = layout.fields[0].1.y + 1;
-        let text = (layout.fields[0].1.x..layout.fields[0].1.right())
-            .map(|x| terminal.backend().buffer()[(x, row)].symbol())
+        let input =
+            management_field_input_area(&layout, 0, &model.form.as_ref().unwrap().fields[0]);
+        let text = input
+            .positions()
+            .map(|point| terminal.backend().buffer()[point].symbol())
             .collect::<String>();
         assert!(text.contains("ab_cd"), "visible cursor: {text:?}");
         assert!(!layout.submit.is_empty() && !layout.cancel.is_empty());
@@ -258,7 +260,7 @@ fn multiple_selected_rows_and_the_current_keyboard_row_are_distinct() {
             let cell =
                 &terminal.backend().buffer()[(layout.list_rows.x, layout.list_rows.y + index)];
             assert_eq!(
-                cell.bg == context.theme.accent_soft,
+                cell.bg == context.theme.selected_row_background(),
                 selected.contains(&(index as usize))
             );
             assert_eq!(cell.modifier.contains(Modifier::UNDERLINED), index == 1);
@@ -1053,7 +1055,8 @@ fn informational_dialog_has_one_close_button_and_long_messages_scroll() {
     };
     let main = Rect::new(0, 0, 120, 40);
     let layout = management_layout(main, &model);
-    assert_eq!(layout.form.height, 8);
+    assert_eq!(layout.message.height, 2);
+    assert!(layout.cancel.y < layout.message.y);
     assert!(layout.submit.is_empty());
     let regions = management_button_regions(main, &model);
     assert_eq!(regions.len(), 1);

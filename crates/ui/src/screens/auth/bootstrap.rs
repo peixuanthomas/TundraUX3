@@ -4,7 +4,7 @@ use ratatui::text::Line;
 
 use super::common::render_auth_screen;
 use super::{AuthField, BootstrapAdminViewModel};
-use crate::components::{Button, TextInput};
+use crate::components::{Button, ButtonEmphasis, DialogLayout, TextInput};
 use crate::{RenderContext, TundraTheme};
 
 pub fn render_bootstrap_admin_content(
@@ -22,7 +22,11 @@ pub fn render_bootstrap_admin_content(
 }
 
 pub fn bootstrap_viewport(main: Rect, model: &BootstrapAdminViewModel) -> super::AuthViewport {
-    super::auth_viewport(main, 10, model.scroll_offset)
+    super::auth_viewport(
+        super::common::auth_workspace(main, 64),
+        10,
+        model.scroll_offset,
+    )
 }
 
 pub fn bootstrap_submit_area(main: Rect) -> Rect {
@@ -37,7 +41,7 @@ fn render_bootstrap_unscrolled(
     model: &BootstrapAdminViewModel,
     context: &RenderContext,
 ) {
-    let theme = &context.compatibility_theme();
+    let theme = &DialogLayout::body_theme(context);
     render_auth_screen(
         frame,
         area,
@@ -76,11 +80,9 @@ fn render_bootstrap_unscrolled(
         model.focused_field == AuthField::Password,
         theme,
     );
-    Button::new("bootstrap.submit", i18n::tr!("ui-auth-touch-create-admin")).render_inline_frame(
-        frame,
-        bootstrap_submit_area(area),
-        theme,
-    );
+    Button::new("bootstrap.submit", i18n::tr!("ui-auth-touch-create-admin"))
+        .with_emphasis(ButtonEmphasis::Primary)
+        .render_inline_frame(frame, bootstrap_submit_area(area), theme);
 }
 
 #[allow(clippy::too_many_arguments)]

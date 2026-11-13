@@ -185,7 +185,7 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
         });
     panel_inner.width = panel_inner
         .width
-        .saturating_sub(u16::from(scrollbar.is_some()));
+        .saturating_sub(u16::from(scrollbar.is_some()) * 2);
     let help = Rect::default();
     let total_entries = model.alarms.len().saturating_add(model.countdowns.len());
     let entry_window_start = model

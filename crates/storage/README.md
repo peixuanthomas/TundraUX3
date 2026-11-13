@@ -33,7 +33,7 @@ Future schemas are rejected outright. If a current or older format cannot be par
 - `[editor].explorer_open_extensions` controls the suffixes handed to the built-in editor; custom lists and empty lists take precedence.
 - `animation_timings` stores separate acceleration, constant-speed, and deceleration durations for page/dialog/menu animations, each from 1 to 2000ms.
 - Default page/dialog/menu phases are `[40, 80, 40]`, `[45, 90, 45]`, and `[30, 60, 30]` milliseconds. Existing explicit values and animation speed remain effective; reduced motion bypasses transitions.
-- The default border is `#383838` and accent is `#63D3E5`. Missing preferences use current defaults; explicit colors and the existing legacy-color migration remain supported.
+- The default border is the v1.5.1 Glacier Night `#29434E`, and the accent is `#63D3E5`. Missing preferences use current defaults; explicit colors and the existing legacy-color migration remain supported.
 - Launcher's `order` stores a unified ID order, `custom` stores names, icons, commands, and exit options, and `terminal` stores argument arrays and working directories.
 
 `reset_saved_content` clears saved data. The caller is responsible for backup, confirmation, and restart workflows.

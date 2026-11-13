@@ -9,7 +9,9 @@ use super::{
     ExitConfirmViewModel, ShellChromeViewModel, ShellFrameLayout, ShellLayout,
     TimeSyncDialogViewModel,
 };
-use crate::components::{Button, Surface, terminal_width, truncate_to_terminal_width};
+use crate::components::{
+    Button, DialogLayout, Key, Surface, terminal_width, truncate_to_terminal_width,
+};
 use crate::screens::notifications::notification_tone_style;
 use crate::{RenderContext, TundraTheme};
 
@@ -49,7 +51,7 @@ pub fn render_exit_confirmation_contextual(
         vec![
             crate::NotificationActionViewModel::new("exit", &model.confirm_label),
             crate::NotificationActionViewModel::new("restart", &model.restart_label),
-            crate::NotificationActionViewModel::new("cancel", &model.cancel_label),
+            crate::NotificationActionViewModel::new("cancel", &model.cancel_label).cancel(true),
         ],
     );
     notification.stacked_actions = true;
@@ -77,23 +79,20 @@ pub fn render_time_sync_failure_dialog_contextual(
     model: &TimeSyncDialogViewModel,
     context: &RenderContext,
 ) {
-    let theme = &context.compatibility_theme();
     let dialog = centered_rect(area, area.width.min(34), area.height.min(5));
-    let surface = Surface::new()
-        .titled(i18n::tr!("ui-shell-time-sync"))
-        .bordered(true)
-        .raised(true);
-    let inner = surface.inner(dialog);
-    let dialog_widget = Paragraph::new(Line::from(model.message()))
-        .style(theme.error_style())
-        .alignment(HorizontalAlignment::Center)
-        .wrap(Wrap { trim: true });
-
-    frame.render_widget(Clear, dialog);
-    let mut danger_context = context.clone();
-    danger_context.theme.border = context.theme.danger;
-    surface.render_frame(frame, dialog, &danger_context);
-    frame.render_widget(dialog_widget, inner);
+    let close = Key::Escape.label();
+    let layout = DialogLayout::new(dialog, 0, Some(&close));
+    layout.render_frame(frame, &i18n::tr!("ui-shell-time-sync"), context);
+    frame.render_widget(
+        Paragraph::new(model.message())
+            .style(Style::default().fg(context.theme.danger))
+            .wrap(Wrap { trim: true }),
+        layout.body,
+    );
+    Button::new("shell.time-sync.close", close)
+        .with_bracketed_label(false)
+        .with_background(context.theme.surface)
+        .render_borderless_frame(frame, layout.close, &DialogLayout::close_theme(context));
 }
 
 pub fn render_compact_home(

@@ -4,7 +4,9 @@ use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 
 use super::{LoginField, LoginViewModel};
-use crate::components::{Button, List, ListItem, Scrollbar, Surface, TextInput};
+use crate::components::{
+    Button, ButtonEmphasis, DialogLayout, List, ListItem, Scrollbar, Surface, TextInput,
+};
 use crate::{RenderContext, TundraTheme};
 
 const LOGIN_USER_LIST_WIDTH: u16 = 30;
@@ -27,6 +29,7 @@ pub struct LoginLayout {
 
 pub fn login_viewport(main: Rect, model: &LoginViewModel) -> super::AuthViewport {
     // Stacked user list, password and actions remain reachable on short screens.
+    let main = super::common::auth_workspace(main, 92);
     let viewport = super::auth_viewport(main, 12, model.scroll_offset);
     if login_inner_area(viewport.content).width <= LOGIN_USER_LIST_WIDTH.saturating_add(10) {
         super::auth_viewport(main, 24, model.scroll_offset)
@@ -68,6 +71,7 @@ fn render_login_unscrolled(
 ) {
     let theme = &context.compatibility_theme();
     Surface::new()
+        .background(context.theme.canvas)
         .titled(if model.system_users {
             i18n::tr!("ui-auth-linux-login")
         } else {
@@ -92,11 +96,9 @@ fn render_login_unscrolled(
         model.focused_field == LoginField::PasswordVisibility,
         theme,
     );
-    Button::new("login.submit", i18n::tr!("ui-auth-enter-sign-in")).render_inline_frame(
-        frame,
-        layout.submit,
-        theme,
-    );
+    Button::new("login.submit", i18n::tr!("ui-auth-enter-sign-in"))
+        .with_emphasis(ButtonEmphasis::Primary)
+        .render_inline_frame(frame, layout.submit, theme);
     if layout.help.height > 0 {
         let mut lines = Vec::new();
         if model.system_users {
@@ -135,7 +137,8 @@ fn render_login_user_list(
 
     let mut rows = super::common::auth_content_area(area);
     Surface::new()
-        .titled(i18n::tr!("ui-auth-users"))
+        .titled(format!("  {}", i18n::tr!("ui-auth-users")))
+        .raised(true)
         .render_frame(frame, area, context);
     let visible_rows = usize::from(rows.height);
     let (start, _) = login_user_window_bounds(model, visible_rows);
@@ -167,13 +170,17 @@ fn render_login_user_list(
             .collect()
     };
 
-    let mut list = List::new("login.users", items).with_viewport_start(start);
+    let mut list = List::new("login.users", items)
+        .with_background(context.theme.raised)
+        .with_viewport_start(start);
     list.set_focused(model.focused_field == LoginField::UserList);
     list.set_selected((!model.users.is_empty()).then_some(model.selected_index));
     let scrollbar = (model.users.len() > visible_rows && rows.width > 1 && rows.height > 0)
         .then(|| Rect::new(rows.right() - 1, rows.y, 1, rows.height));
-    rows.width = rows.width.saturating_sub(u16::from(scrollbar.is_some()));
-    list.render_borderless_frame(frame, rows, &context.compatibility_theme());
+    rows.width = rows
+        .width
+        .saturating_sub(u16::from(scrollbar.is_some()) * 2);
+    list.render_borderless_frame(frame, rows, &DialogLayout::footer_theme(context));
     if let Some(scrollbar) = scrollbar {
         Scrollbar::new(model.users.len(), visible_rows, start)
             .render_frame(frame, scrollbar, context);
@@ -190,7 +197,7 @@ fn render_login_username_field(
         return;
     }
 
-    let theme = &context.compatibility_theme();
+    let theme = &DialogLayout::footer_theme(context);
     let selected = model.selected_user();
     let username = selected
         .map(|user| user.username.clone())
@@ -208,8 +215,8 @@ fn render_login_username_field(
         Line::styled(role, theme.muted_style()),
     ];
     let surface = Surface::new()
-        .titled(i18n::tr!("ui-auth-selected-user"))
-        .bordered(false);
+        .titled(format!("  {}", i18n::tr!("ui-auth-selected-user")))
+        .raised(true);
     let inner = surface.inner(area);
     surface.render_frame(frame, area, context);
     frame.render_widget(
@@ -230,7 +237,7 @@ fn render_login_password_field(
         return;
     }
 
-    let theme = &context.compatibility_theme();
+    let theme = &DialogLayout::body_theme(context);
     let focused = model.focused_field == LoginField::Password;
     let surface = Surface::new()
         .titled(i18n::tr!("ui-auth-password"))
@@ -251,20 +258,6 @@ fn render_login_password_field(
             ..context.clone()
         },
     );
-    frame.render_widget(
-        Paragraph::new(i18n::tr!("ui-auth-password")).style(if focused {
-            theme.title_style()
-        } else {
-            theme.body_style()
-        }),
-        Rect::new(
-            area.x.saturating_add(1),
-            area.y,
-            area.width.saturating_sub(2),
-            u16::from(area.height > 0),
-        ),
-    );
-
     if inner.width == 0 || inner.height == 0 {
         return;
     }
@@ -308,7 +301,7 @@ fn render_login_button(
     // Inline focused actions historically use the title style. Combining the
     // component's focus and selection preserves that visual contract.
     button.state.selected = selected;
-    button.render_borderless_frame(frame, line, theme);
+    button.render_inline_frame(frame, line, theme);
 }
 
 pub fn login_layout(main: Rect) -> LoginLayout {
@@ -406,13 +399,18 @@ pub fn login_user_list_visible_rows(main: Rect) -> usize {
 fn login_columns(main: Rect) -> (Rect, Rect) {
     let inner = login_inner_area(main);
     if inner.width <= LOGIN_USER_LIST_WIDTH.saturating_add(10) {
-        let [list, form] =
-            Layout::vertical([Constraint::Percentage(45), Constraint::Percentage(55)]).areas(inner);
+        let [list, _, form] = Layout::vertical([
+            Constraint::Percentage(45),
+            Constraint::Length(1),
+            Constraint::Fill(1),
+        ])
+        .areas(inner);
         return (list, form);
     }
 
-    let [list, form] = Layout::horizontal([
+    let [list, _, form] = Layout::horizontal([
         Constraint::Length(LOGIN_USER_LIST_WIDTH),
+        Constraint::Length(2),
         Constraint::Min(30),
     ])
     .areas(inner);

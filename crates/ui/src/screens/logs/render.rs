@@ -1,11 +1,12 @@
 use super::layout::{controls, logs_action_bar};
 use super::{LogsCategory, LogsHitTarget, LogsViewModel, logs_layout};
-use crate::components::{Button, Surface};
+use crate::components::{BusyIndicator, Button, DialogLayout, Surface};
 use crate::screens::diagnostics::render_diagnostics_content_titled;
 use crate::{DiagnosticsCheckViewModel, DiagnosticsTab, DiagnosticsViewModel, RenderContext};
 use ratatui::{
     Frame,
     layout::Rect,
+    text::Line,
     widgets::{Clear, Paragraph, Wrap},
 };
 
@@ -205,6 +206,7 @@ pub fn render_logs_content(
 
     let layout = logs_layout(main, model);
     Surface::new()
+        .background(context.theme.canvas)
         .titled(i18n::tr!("ui-logs-logs"))
         .bordered(false)
         .render_frame(frame, layout.panel, context);
@@ -216,7 +218,7 @@ pub fn render_logs_content(
         };
         let button = Button::new(format!("logs.category.{:?}", tab.category), label)
             .with_current(tab.category == model.category);
-        button.render_borderless_frame(frame, tab.area, &theme);
+        button.render_inline_frame(frame, tab.area, &theme);
     }
     let unavailable = unavailable_reason(model);
     let content = logs_content_model(model);
@@ -233,20 +235,19 @@ pub fn render_logs_content(
             .1;
         let mut button = Button::new(logs_control_id(model, control.target), label);
         button.set_disabled(!logs_control_enabled(model, control.target));
-        button.render_borderless_frame(frame, control.area, &theme);
+        button.render_inline_frame(frame, control.area, &theme);
     }
     logs_action_bar(model).render(frame, layout.action_bar.area, &background_context);
     frame.render_widget(
         Paragraph::new(if model.loading {
-            format!(
-                "{} {}",
-                crate::components::BusyIndicator::from_motion(context.motion).symbol(),
-                i18n::tr!("ui-logs-loading-logs")
+            BusyIndicator::from_motion(context.motion).label(
+                &i18n::tr!("ui-logs-loading-logs"),
+                layout.filter_summary.width,
+                context,
             )
         } else {
-            model.filter_summary.clone()
-        })
-        .style(theme.muted_style()),
+            Line::styled(model.filter_summary.clone(), theme.muted_style())
+        }),
         layout.filter_summary,
     );
     if let Some(reason) = unavailable {
@@ -294,7 +295,9 @@ pub fn render_logs_content(
             )),
         );
         frame.render_widget(Clear, layout.detail_text);
-        Surface::new().render_frame(frame, layout.detail_text, context);
+        Surface::new()
+            .raised(true)
+            .render_frame(frame, layout.detail_text, context);
         let lines =
             crate::management_wrapped_lines(&logs_detail_text(model), layout.detail_text.width);
         let start = model.detail_scroll.min(
@@ -310,7 +313,7 @@ pub fn render_logs_content(
                     .map(ratatui::text::Line::from)
                     .collect::<Vec<_>>(),
             )
-            .style(theme.body_style()),
+            .style(theme.body_style().bg(context.theme.raised)),
             layout.detail_text,
         );
         if let Some(bar) = layout.detail_scrollbar {
@@ -327,13 +330,10 @@ pub fn render_logs_overlay(
 ) {
     let layout = logs_layout(main, model);
     if let Some(selected) = model.more_selected {
-        let theme = context.compatibility_theme();
-        frame.render_widget(Clear, layout.menu);
-        Surface::new()
-            .bordered(true)
-            .raised(true)
-            .titled(i18n::tr!("ui-logs-more"))
-            .render_frame(frame, layout.menu, context);
+        let chrome = DialogLayout::new(layout.menu, 1, None);
+        chrome.render_frame(frame, &i18n::tr!("ui-logs-more"), context);
+        let footer = DialogLayout::footer_theme(context);
+        let theme = DialogLayout::body_theme(context);
         let options = super::layout::logs_more_controls();
         for control in &layout.menu_controls {
             if let Some((index, (_, label))) = options
@@ -341,12 +341,22 @@ pub fn render_logs_overlay(
                 .enumerate()
                 .find(|(_, item)| item.0 == control.target)
             {
+                let close = control.target == LogsHitTarget::CloseMore;
                 let mut button = Button::new(logs_control_id(model, control.target), label.clone())
-                    .with_centered_label(true);
-                button.state.selected = index == selected;
+                    .with_label_alignment(if close {
+                        ratatui::layout::HorizontalAlignment::Center
+                    } else {
+                        ratatui::layout::HorizontalAlignment::Left
+                    })
+                    .with_background(context.theme.surface)
+                    .with_current(index == selected && !close);
                 button.set_focused(index == selected);
                 button.set_disabled(!logs_control_enabled(model, control.target));
-                button.render_borderless_frame(frame, control.area, &theme);
+                if close {
+                    button.render_inline_frame(frame, control.area, &footer);
+                } else {
+                    button.render_borderless_frame(frame, control.area, &theme);
+                }
             }
         }
         if let Some(bar) = layout.menu_scrollbar {

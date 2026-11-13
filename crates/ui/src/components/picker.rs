@@ -1,14 +1,15 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{HorizontalAlignment, Rect};
-use ratatui::text::Line;
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
 use crate::{RenderContext, TundraTheme};
 
 use super::{
     ComponentEvent, ComponentId, ComponentState, InputEvent, Key, MouseButton, MouseKind,
-    contains_point,
+    contains_point, foundation::row_style,
 };
 
 /// A compact single-choice field. Unlike a page-local cycle control it owns
@@ -95,37 +96,38 @@ impl Picker {
             &["click", "key"],
         );
         let tokens = context.theme;
-        let focused = self.state.focused && context.compatibility_theme().keyboard_focus_visible();
+        let theme = context.compatibility_theme();
+        let focused = self.state.focused && theme.keyboard_focus_visible() && !self.state.disabled;
         let selected = self.selected_value().unwrap_or("—");
-        let marker = if focused { "‹ " } else { "  " };
-        let suffix = if focused { " ›" } else { "  " };
-        let style = if self.state.disabled {
-            ratatui::style::Style::default()
-                .fg(tokens.muted)
-                .bg(tokens.surface)
-        } else if focused {
-            ratatui::style::Style::default()
-                .fg(tokens.focus)
-                .bg(tokens.accent_soft)
-        } else {
-            ratatui::style::Style::default()
-                .fg(tokens.text)
-                .bg(tokens.surface)
-        };
-        let mut block = Block::default().style(style);
+        let style = row_style(self.state, &theme, tokens.control_background());
+        let base = style.remove_modifier(Modifier::UNDERLINED);
+        let mut block = Block::default().style(base);
         if let Some(title) = &self.title {
             block = block
                 .title(title.as_str())
                 .borders(Borders::ALL)
                 .border_style(
-                    ratatui::style::Style::default()
+                    Style::default()
                         .fg(if focused { tokens.focus } else { tokens.border })
-                        .bg(tokens.surface),
+                        .bg(base.bg.unwrap()),
                 );
         }
         let inner = block.inner(area);
         block.render(area, buffer);
-        Paragraph::new(Line::styled(format!("{marker}{selected}{suffix}"), style))
+        let marker_style = if focused {
+            base.fg(crate::theme::readable_foreground(
+                tokens.focus,
+                base.bg.unwrap(),
+            ))
+        } else {
+            base
+        };
+        let line = Line::from(vec![
+            Span::styled("‹ ", marker_style),
+            Span::styled(selected, style),
+            Span::styled(" ›", marker_style),
+        ]);
+        Paragraph::new(line)
             .alignment(HorizontalAlignment::Left)
             .render(inner, buffer);
     }
@@ -139,7 +141,14 @@ impl Picker {
         self.render(
             area,
             buffer,
-            &RenderContext::from_theme(theme, Default::default(), Default::default()),
+            &RenderContext::from_theme(
+                theme,
+                Default::default(),
+                crate::RenderCapabilities {
+                    color: theme.color_capability,
+                    ..Default::default()
+                },
+            ),
         );
     }
 

@@ -120,9 +120,8 @@ fn core_home_tasks_are_visible_and_open_without_launcher_at_minimum_size() {
                 .find(|region| region.id.as_str() == format!("home.entry.{}", item.index))
                 .unwrap();
             assert_eq!(region.area, item.area);
-            if size == (ui::MIN_SHELL_TERMINAL_WIDTH, ui::MIN_SHELL_TERMINAL_HEIGHT) {
-                assert!(ui::home_entry_icon_area(item.area).is_empty());
-            }
+            let icon = ui::home_entry_icon_area(item.area);
+            assert!(icon.is_empty() || (icon.height == 4 && icon.bottom() < item.area.bottom()));
         }
         for key in ["packages", "tasks", "logs", "users"] {
             let index = model
@@ -279,7 +278,12 @@ fn home_letters_are_inactive_and_launcher_shortcuts_require_fresh_unmodified_key
 fn home_scrollbar_reaches_tail_without_opening_a_card() {
     for offset in [-1, 0, 1] {
         let mut state = state((50, 12));
-        let main = main_area(&state);
+        let bounds = Rect::new(0, 0, 50, 12);
+        let mut frame = ui::ShellFrameLayout::new(bounds, None, &ui::RenderContext::default());
+        // Exercise a full page with a short content region, even on hosts with fewer tools.
+        frame = frame.with_input_keyboard(Rect::new(0, 8, bounds.width, 4), 1_000);
+        state.refresh_hit_map_with_frame_layout(Default::default(), frame);
+        let main = frame.main;
         let layout = ui::home_layout(main, &state.to_home_view_model());
         let track = layout.scrollbar.expect("short fallback Home overflows");
         let grab = (track.x.saturating_add_signed(offset), track.y);

@@ -202,9 +202,7 @@ pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
                 area: action.area,
             })
     }));
-    let detail_inner = crate::components::Surface::new()
-        .titled("")
-        .inner(content.detail_panel);
+    let detail_inner = crate::screens::diagnostics::diagnostics_detail_inner(content.detail_panel);
     let detail_text = Rect::new(
         detail_inner.x,
         detail_inner.y,
@@ -238,20 +236,16 @@ pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
         .unwrap_or(40)
         .max(40)
         .min(menu_bounds.width);
-    let menu_height = (menu_items.len() as u16 + 5).min(menu_bounds.height);
+    let menu_height = (menu_items.len() as u16 + 7).min(menu_bounds.height);
     let menu = centered_rect(menu_bounds, menu_width, menu_height);
-    let menu_inner = crate::components::Surface::new().bordered(true).inner(menu);
-    let horizontal_padding = u16::from(menu_inner.width >= 8) * 2;
-    let vertical_padding = u16::from(menu_inner.height >= menu_items.len() as u16 + 3);
-    let menu_body = Rect::new(
-        menu_inner.x + horizontal_padding,
-        menu_inner.y + vertical_padding,
-        menu_inner.width.saturating_sub(horizontal_padding * 2),
-        menu_inner.height.saturating_sub(vertical_padding * 2),
-    );
-    let close = line_in_rect(menu_body, menu_body.bottom().saturating_sub(1));
-    let gap = u16::from(menu_body.height >= menu_items.len() as u16 + 1);
-    let capacity = usize::from(menu_body.height.saturating_sub(1 + gap));
+    let chrome = crate::components::DialogLayout::new(menu, 1, None);
+    let menu_body = chrome.body;
+    let close_label = &menu_items.last().unwrap().1;
+    let close = crate::right_aligned_actions(
+        chrome.footer,
+        &[crate::components::terminal_width(close_label) as u16 + 2],
+    )[0];
+    let capacity = usize::from(menu_body.height);
     let option_count = menu_items.len().saturating_sub(1);
     let start = model
         .more_selected
@@ -290,7 +284,7 @@ pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
                     menu_body.y + index as u16,
                     menu_body
                         .width
-                        .saturating_sub(u16::from(menu_scrollbar.is_some())),
+                        .saturating_sub(u16::from(menu_scrollbar.is_some()) * 2),
                     1,
                 ),
             })

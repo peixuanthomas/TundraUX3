@@ -1,8 +1,8 @@
 use super::{layout::SystemStatusLayout, model::*};
 use crate::RenderContext;
-use crate::components::{EmptyState, ProgressGauge, Surface, tone_color};
+use crate::components::{BusyIndicator, ProgressGauge, Surface, tone_color};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, HorizontalAlignment, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Sparkline};
@@ -15,12 +15,13 @@ pub(super) fn render_overview(
 ) {
     let metrics = &model.dashboard.overview_metrics;
     if metrics.is_empty() {
-        EmptyState::new(format!(
-            "{} {}",
-            crate::components::BusyIndicator::from_motion(context.motion).symbol(),
-            i18n::tr!("ui-system-status-loading-system-metrics")
-        ))
-        .render_frame(frame, layout.canvas, context);
+        BusyIndicator::from_motion(context.motion).render_labeled(
+            frame,
+            layout.canvas,
+            &i18n::tr!("ui-system-status-loading-system-metrics"),
+            HorizontalAlignment::Center,
+            context,
+        );
         return;
     }
     let [summary, _] =
@@ -126,25 +127,27 @@ fn render_metric(
     }
     let placeholder = match &metric.state {
         SystemStatusWidgetState::Loading => Some((
-            format!(
-                "{} {}",
-                crate::components::BusyIndicator::from_motion(context.motion).symbol(),
-                i18n::tr!("ui-system-status-loading")
+            BusyIndicator::from_motion(context.motion).label(
+                &i18n::tr!("ui-system-status-loading"),
+                inner.width,
+                context,
             ),
             i18n::tr!("ui-system-status-waiting-for-a-sample"),
         )),
-        SystemStatusWidgetState::Unavailable { message } => {
-            Some((i18n::tr!("ui-system-status-unavailable"), message.clone()))
-        }
-        SystemStatusWidgetState::Stale { message } if metric.primary.is_empty() => {
-            Some((i18n::tr!("ui-system-status-stale-data"), message.clone()))
-        }
+        SystemStatusWidgetState::Unavailable { message } => Some((
+            Line::raw(i18n::tr!("ui-system-status-unavailable")),
+            message.clone(),
+        )),
+        SystemStatusWidgetState::Stale { message } if metric.primary.is_empty() => Some((
+            Line::raw(i18n::tr!("ui-system-status-stale-data")),
+            message.clone(),
+        )),
         _ => None,
     };
     if let Some((label, message)) = placeholder {
         frame.render_widget(
-            Paragraph::new(vec![Line::raw(label), Line::raw(message)])
-                .style(context.compatibility_theme().muted_style()),
+            Paragraph::new(vec![label, Line::raw(message)])
+                .style(Style::default().fg(context.theme.muted)),
             inner,
         );
         return;

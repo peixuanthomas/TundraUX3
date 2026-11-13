@@ -168,7 +168,7 @@ pub(super) fn render_processes(
             }
         }
         let mut style = Style::default().bg(if selected {
-            context.theme.accent_soft
+            context.theme.selected_row_background()
         } else {
             context.theme.surface
         });
@@ -202,6 +202,7 @@ pub(super) fn render_processes(
             crate::table_sort::table_header_text(&headers[index], rect.width),
         )
         .with_bracketed_label(false)
+        .with_background(context.theme.raised)
         .render_borderless_frame(frame, *rect, &context.compatibility_theme());
     }
 }

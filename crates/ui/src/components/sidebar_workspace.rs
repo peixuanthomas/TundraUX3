@@ -1,9 +1,10 @@
 use ratatui::{
     Frame,
     layout::{HorizontalAlignment, Rect},
+    widgets::Paragraph,
 };
 
-use super::Button;
+use super::{Button, Surface, foundation::row_marker, terminal_width, truncate_to_terminal_width};
 use crate::RenderContext;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -35,6 +36,7 @@ impl WorkspaceFocus {
 /// Navigation and content rectangles shared by painting and pointer capture.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SidebarWorkspaceLayout {
+    pub navigation_area: Rect,
     pub navigation: Vec<Rect>,
     pub content: Rect,
     pub vertical: bool,
@@ -56,17 +58,19 @@ impl SidebarWorkspaceLayout {
     }
 
     fn layout(area: Rect, labels: &[String], active: Option<usize>) -> Self {
-        let capacity = usize::from(area.height).min(labels.len());
-        let vertical = area.width >= 92
-            && capacity > 0
-            && (active.is_some() || usize::from(area.height) >= labels.len());
+        let vertical_padding = u16::from(area.height >= 10);
+        let capacity =
+            usize::from(area.height.saturating_sub(vertical_padding * 2)).min(labels.len());
+        let vertical =
+            area.width >= 92 && capacity > 0 && (active.is_some() || capacity == labels.len());
         let mut navigation = Vec::new();
-        let content = if vertical {
+        let (navigation_area, content) = if vertical {
             let width = labels
                 .iter()
-                .map(|label| (super::terminal_width(label) as u16).saturating_add(2))
+                .map(|label| (terminal_width(label) as u16).saturating_add(5))
                 .max()
                 .unwrap_or(0)
+                .max(20)
                 .min(area.width / 3);
             let start = active
                 .unwrap_or(0)
@@ -77,19 +81,29 @@ impl SidebarWorkspaceLayout {
                     navigation.push(Rect::default());
                     continue;
                 }
-                navigation.push(Rect::new(area.x, area.y + (index - start) as u16, width, 1));
+                navigation.push(Rect::new(
+                    area.x,
+                    area.y + vertical_padding + (index - start) as u16,
+                    width,
+                    1,
+                ));
             }
-            Rect::new(
-                area.x + width + 2,
-                area.y,
-                area.width.saturating_sub(width + 2),
-                area.height,
+            (
+                Rect::new(area.x, area.y, width, area.height),
+                Rect::new(
+                    area.x + width + 2,
+                    area.y,
+                    area.width.saturating_sub(width + 2),
+                    area.height,
+                ),
             )
         } else {
             let mut x = area.x;
             let mut y = area.y;
             for label in labels {
-                let width = (super::terminal_width(label) as u16 + 2).min(area.width);
+                let width = (terminal_width(label) as u16)
+                    .saturating_add(4)
+                    .min(area.width);
                 if x > area.x && x.saturating_add(width) > area.right() {
                     x = area.x;
                     y = y.saturating_add(1);
@@ -98,14 +112,21 @@ impl SidebarWorkspaceLayout {
                     .push(Rect::new(x, y, width, u16::from(y < area.bottom())).intersection(area));
                 x = x.saturating_add(width).saturating_add(2);
             }
-            let top = if labels.is_empty() {
+            let bottom = if labels.is_empty() {
                 area.y
             } else {
-                y.saturating_add(2).min(area.bottom())
+                y.saturating_add(1).min(area.bottom())
             };
-            Rect::new(area.x, top, area.width, area.bottom().saturating_sub(top))
+            let top = bottom
+                .saturating_add(u16::from(!labels.is_empty()))
+                .min(area.bottom());
+            (
+                Rect::new(area.x, area.y, area.width, bottom.saturating_sub(area.y)),
+                Rect::new(area.x, top, area.width, area.bottom().saturating_sub(top)),
+            )
         };
         Self {
+            navigation_area,
             navigation,
             content,
             vertical,
@@ -145,27 +166,57 @@ impl SidebarWorkspaceLayout {
         active: usize,
         context: &RenderContext,
     ) {
-        let theme = context.compatibility_theme();
+        Surface::new()
+            .raised(true)
+            .render_frame(frame, self.navigation_area, context);
         for (index, (button, area)) in buttons.iter().zip(&self.navigation).enumerate() {
-            if area.is_empty() {
-                continue;
-            }
-            let mut button = button
-                .clone()
-                .with_label_alignment(HorizontalAlignment::Left)
-                .with_bracketed_label(false)
-                .with_capture_name(button.label.clone())
-                .with_current(index == active);
-            button.label = format!(
-                "{} {}",
-                if button.state.focused && theme.keyboard_focus_visible() {
-                    ">"
-                } else {
-                    " "
-                },
-                button.label
+            Self::render_navigation_button(frame, button, *area, index == active, context);
+        }
+    }
+
+    pub(crate) fn render_navigation_button(
+        frame: &mut Frame<'_>,
+        button: &Button,
+        area: Rect,
+        current: bool,
+        context: &RenderContext,
+    ) {
+        Self::render_workspace_row(frame, button, area, current, 1, context);
+    }
+
+    pub(crate) fn render_workspace_row(
+        frame: &mut Frame<'_>,
+        button: &Button,
+        area: Rect,
+        current: bool,
+        right_padding: u16,
+        context: &RenderContext,
+    ) {
+        if area.is_empty() {
+            return;
+        }
+        let theme = context.compatibility_theme();
+        let label = truncate_to_terminal_width(
+            &button.label,
+            usize::from(area.width.saturating_sub(2 + right_padding)),
+        );
+        let mut row = button
+            .clone()
+            .with_label_alignment(HorizontalAlignment::Left)
+            .with_bracketed_label(false)
+            .with_capture_name(button.label.clone())
+            .with_background(context.theme.raised)
+            .with_current(current);
+        row.label = format!("  {label}");
+        row.render_borderless_frame(frame, area, &theme);
+        if current || (button.state.focused && theme.keyboard_focus_visible()) {
+            frame.render_widget(
+                Paragraph::new(ratatui::text::Line::from(row_marker(
+                    button.state.selected(current),
+                    &theme,
+                ))),
+                Rect::new(area.x, area.y, 1, 1),
             );
-            button.render_borderless_frame(frame, *area, &theme);
         }
     }
 }

@@ -39,7 +39,7 @@ cp -a assets %{buildroot}%{_datadir}/%{name}/assets
 install -Dm644 %{SOURCE1} %{buildroot}%{_datadir}/applications/tundraux3.desktop
 
 %files
-%license LICENSE LICENSE.weathr
+%license LICENSE LICENSE.weathr LICENSE.opencode
 %doc README-LINUX.txt
 %{_bindir}/tundra-shell
 %{_bindir}/tundra-cli

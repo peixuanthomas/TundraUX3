@@ -243,7 +243,7 @@ impl NotificationBindings {
                     {
                         view = view.with_shortcut(shortcut);
                     }
-                    view.selected(action.selected)
+                    view.selected(action.selected).cancel(action.cancel)
                 })
                 .collect(),
         ))

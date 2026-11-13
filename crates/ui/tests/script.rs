@@ -19,7 +19,7 @@ fn model() -> ScriptViewModel {
 }
 
 #[test]
-fn detail_motion_draws_empty_surfaces_then_restores_source_and_details() {
+fn detail_motion_keeps_source_and_visible_details_readable() {
     let mut model = model();
     model.detail = ScriptPane::Expression;
     model.state.expression_log.push("count = 42".into());
@@ -35,21 +35,13 @@ fn detail_motion_draws_empty_surfaces_then_restores_source_and_details() {
             .unwrap();
         let buffer = terminal.backend().buffer();
         let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
-        if progress > 0 && progress < 1_000 {
-            assert!(!text.contains("#!/usr/bin/env bash"));
-            assert!(!text.contains("count = 42"));
-            assert!(
-                layout
-                    .editor_area
-                    .inner(ratatui::layout::Margin::new(1, 1))
-                    .positions()
-                    .all(|position| buffer[position].symbol() == " ")
-            );
-        } else {
-            assert!(text.contains("#!/usr/bin/env bash"));
-            if progress == 1_000 {
-                assert!(text.contains("count = 42"));
-            }
+        assert!(text.contains("#!/usr/bin/env bash"), "progress {progress}");
+        if layout
+            .rows
+            .iter()
+            .any(|(pane, _, _)| *pane == ScriptPane::Expression)
+        {
+            assert!(text.contains("count = 42"), "progress {progress}");
         }
     }
 }

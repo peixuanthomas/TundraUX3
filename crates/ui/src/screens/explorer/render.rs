@@ -1,7 +1,7 @@
 use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::text::Line;
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use super::{
     ExplorerConflictChoice, ExplorerEntryViewModel, ExplorerLayout, ExplorerOverlayControl,
@@ -9,8 +9,9 @@ use super::{
     ExplorerViewModel, explorer_layout,
 };
 use crate::components::{
-    Button, ComponentTone, DataTable, List, ListItem, PageAction, PageActionBar, PageActionStatus,
-    Panel, Scrollbar, Surface, TextInput, terminal_width,
+    Button, ButtonEmphasis, ComponentTone, DataTable, DialogLayout, List, ListItem, PageAction,
+    PageActionBar, PageActionStatus, Scrollbar, SidebarWorkspaceLayout, Surface, TextInput,
+    terminal_width,
 };
 use crate::screens::shell::fit_cell;
 use crate::{RuntimeAsciiAssets, TundraTheme};
@@ -28,6 +29,7 @@ pub fn render_explorer_content(
     let context = &content_context;
     let theme = &context.compatibility_theme();
     Surface::new()
+        .background(context.theme.canvas)
         .titled(i18n::tr!(if model.save_picker.is_some() {
             "ui-explorer-save-title"
         } else {
@@ -37,6 +39,7 @@ pub fn render_explorer_content(
         .render_frame(frame, area, context);
 
     let layout = explorer_layout(area, model);
+    Surface::new().render_frame(frame, layout.table, context);
     let Some(assets) = model.ascii_assets.as_ref() else {
         frame.render_widget(
             Paragraph::new(i18n::tr!(
@@ -50,11 +53,17 @@ pub fn render_explorer_content(
     };
 
     render_explorer_toolbar(frame, &layout, model, theme);
-    render_explorer_path_bar(frame, &layout, model, theme);
+    Surface::new().render_frame(frame, layout.path_bar, context);
+    render_explorer_path_bar(frame, &layout, model, &DialogLayout::body_theme(context));
     render_explorer_sidebar(frame, &layout, model, assets, context, theme);
     render_explorer_table(frame, &layout, model, assets, context);
     render_explorer_footer(frame, &layout, model, assets, context);
     if let Some(picker) = &model.save_picker {
+        Surface::new().raised(true).render_frame(
+            frame,
+            layout.save_name_label.union(layout.save_cancel),
+            context,
+        );
         let focused = picker.focus == super::ExplorerSaveFocus::Filename;
         frame.render_widget(
             Paragraph::new(i18n::tr!("ui-explorer-save-filename")).style(if focused {
@@ -66,7 +75,12 @@ pub fn render_explorer_content(
         );
         let mut input = picker.input.clone();
         input.set_focused(focused);
-        input.render_borderless_frame_with_prefix(frame, layout.save_name, theme, "");
+        input.render_borderless_frame_with_prefix(
+            frame,
+            layout.save_name,
+            &DialogLayout::body_theme(context),
+            "",
+        );
         for (area, id, label, focus) in [
             (
                 layout.save_button,
@@ -86,7 +100,7 @@ pub fn render_explorer_content(
                 button = button.with_emphasis(crate::components::ButtonEmphasis::Primary);
             }
             button.set_focused(picker.focus == focus);
-            button.render_borderless_frame(frame, area, theme);
+            button.render_inline_frame(frame, area, theme);
         }
     }
 }
@@ -112,15 +126,13 @@ fn render_explorer_toolbar(
         } else {
             shortcut.to_string()
         };
-        render_explorer_button(
-            frame,
-            button_layout.area,
+        let mut action = Button::new(
             format!("explorer.toolbar.{:?}", button.action),
             fit_cell(&text, usize::from(button_layout.area.width)),
-            button.active,
-            button.enabled,
-            theme,
-        );
+        )
+        .with_latched(button.active);
+        action.set_disabled(!button.enabled);
+        action.render_inline_frame(frame, button_layout.area, theme);
     }
 }
 
@@ -194,6 +206,11 @@ fn render_explorer_sidebar(
     context: &crate::RenderContext,
     theme: &TundraTheme,
 ) {
+    if let Some(sidebar) = layout.sidebar {
+        Surface::new()
+            .raised(true)
+            .render_frame(frame, sidebar, context);
+    }
     if let Some(track) = layout.quick_location_scrollbar {
         Scrollbar::new(
             model.quick_locations.len(),
@@ -204,9 +221,9 @@ fn render_explorer_sidebar(
     }
     if let Some(header) = layout.sidebar_header {
         frame.render_widget(
-            Paragraph::new(i18n::tr!("ui-explorer-quick-access"))
+            Paragraph::new(format!("  {}", i18n::tr!("ui-explorer-quick-access")))
                 .alignment(HorizontalAlignment::Left)
-                .style(theme.title_style()),
+                .style(theme.title_style().bg(context.theme.raised)),
             header,
         );
     }
@@ -216,20 +233,15 @@ fn render_explorer_sidebar(
         };
         let icon = explorer_icon_line(assets, &location.icon_key);
         let label = format!("{icon} {}", location.label);
-        let label = if location.current {
-            i18n::tr!("ui-explorer-current-location", label = label)
-        } else {
-            format!("  {label}")
-        };
-        let mut button = Button::new(
-            format!("explorer.quick.{}", location_layout.index),
-            fit_cell(&label, usize::from(location_layout.area.width)),
-        )
-        .with_bracketed_label(false)
-        .with_current(location.current);
+        let mut button = Button::new(format!("explorer.quick.{}", location_layout.index), label);
         button.set_disabled(!location.enabled);
-        button.state.selected = location.drop_target;
-        button.render_borderless_frame(frame, location_layout.area, theme);
+        SidebarWorkspaceLayout::render_navigation_button(
+            frame,
+            &button,
+            location_layout.area,
+            location.current || location.drop_target,
+            context,
+        );
     }
 }
 
@@ -407,7 +419,7 @@ fn render_explorer_table(
             } else {
                 i18n::tr!("ui-explorer-empty-directory")
             })
-            .style(context.compatibility_theme().muted_style())
+            .style(ratatui::style::Style::default().fg(context.theme.muted))
             .alignment(HorizontalAlignment::Center),
             layout.table_body,
         );
@@ -548,7 +560,7 @@ pub fn render_explorer_overlay(
     area: Rect,
     model: &ExplorerViewModel,
     context: &crate::RenderContext,
-    theme: &TundraTheme,
+    _theme: &TundraTheme,
 ) {
     let layout = explorer_layout(area, model);
     let (Some(overlay_layout), Some(overlay)) = (layout.overlay.as_ref(), model.overlay.as_ref())
@@ -568,8 +580,10 @@ pub fn render_explorer_overlay(
         ExplorerOverlayViewModel::Conflict(conflict) => conflict.title.clone(),
         ExplorerOverlayViewModel::Properties(properties) => properties.title.clone(),
     };
-    frame.render_widget(Clear, overlay_layout.area);
-    Panel::new(title).render_frame(frame, overlay_layout.area, context);
+    let chrome = super::layout::explorer_overlay_chrome(overlay_layout.area, overlay);
+    chrome.render_frame(frame, &title, context);
+    let body_theme = &DialogLayout::body_theme(context);
+    let footer_theme = &DialogLayout::footer_theme(context);
 
     match overlay {
         ExplorerOverlayViewModel::ContextMenu(menu) => {
@@ -593,7 +607,7 @@ pub fn render_explorer_overlay(
                             .map(|shortcut| format!("  {shortcut}"))
                             .unwrap_or_default();
                         let text = fit_cell(
-                            &format!("{}{shortcut}", item.label),
+                            &item.label,
                             usize::from(control.area.width.saturating_sub(2)),
                         );
                         let tone = if !item.enabled {
@@ -604,6 +618,7 @@ pub fn render_explorer_overlay(
                             ComponentTone::Default
                         };
                         ListItem::new(format!("explorer.context.{index}"), text)
+                            .with_description(shortcut.trim())
                             .disabled(!item.enabled)
                             .tone(tone)
                     })
@@ -648,7 +663,7 @@ pub fn render_explorer_overlay(
                         button.set_focused(option.focused);
                         button.state.selected = option.focused;
                         button.set_disabled(!control.enabled);
-                        button.render_borderless_frame(frame, control.area, theme);
+                        button.render_inline_frame(frame, control.area, body_theme);
                     }
                     ExplorerOverlayControl::OptionsClose => render_explorer_button(
                         frame,
@@ -657,7 +672,7 @@ pub fn render_explorer_overlay(
                         format!("Esc {}", options.close_label),
                         model.overlay_selection == options.options.len(),
                         control.enabled,
-                        theme,
+                        footer_theme,
                     ),
                     _ => {}
                 }
@@ -669,14 +684,15 @@ pub fn render_explorer_overlay(
                 overlay_layout,
                 conflict,
                 model.overlay_selection,
-                theme,
+                body_theme,
+                footer_theme,
             );
         }
         ExplorerOverlayViewModel::Properties(properties) => {
             for (index, property) in properties
                 .properties
                 .iter()
-                .take(usize::from(overlay_layout.content.height.saturating_sub(2)))
+                .take(usize::from(overlay_layout.content.height))
                 .enumerate()
             {
                 let area = Rect::new(
@@ -713,7 +729,7 @@ pub fn render_explorer_overlay(
                         || (control.control == ExplorerOverlayControl::PropertiesClose
                             && model.overlay_selection == 1),
                     control.enabled,
-                    theme,
+                    footer_theme,
                 );
             }
         }
@@ -725,7 +741,8 @@ fn render_explorer_conflict_dialog(
     layout: &ExplorerOverlayLayout,
     conflict: &crate::ExplorerConflictViewModel,
     selection: usize,
-    theme: &TundraTheme,
+    body_theme: &TundraTheme,
+    footer_theme: &TundraTheme,
 ) {
     let lines = vec![
         Line::from(i18n::tr!(
@@ -738,7 +755,7 @@ fn render_explorer_conflict_dialog(
         )),
         Line::styled(
             i18n::tr!("ui-explorer-an-item-with-this-name-already-exists"),
-            theme.muted_style(),
+            body_theme.muted_style(),
         ),
     ];
     frame.render_widget(
@@ -750,24 +767,16 @@ fn render_explorer_conflict_dialog(
             ExplorerOverlayControl::ConflictChoice(choice) => {
                 let selected =
                     selection < conflict.choices.len() && conflict.selected_choice == choice;
-                render_explorer_button(
-                    frame,
-                    control.area,
+                let mut button = Button::new(
                     format!("explorer.conflict.{choice:?}"),
-                    format!(
-                        "{} {}",
-                        match choice {
-                            ExplorerConflictChoice::KeepBoth => "K",
-                            ExplorerConflictChoice::Replace => "R",
-                            ExplorerConflictChoice::Skip => "S",
-                            ExplorerConflictChoice::Cancel => "Esc/N",
-                        },
-                        choice.label()
-                    ),
-                    selected,
-                    control.enabled,
-                    theme,
+                    super::layout::conflict_choice_label(choice),
                 );
+                if choice == ExplorerConflictChoice::Replace {
+                    button = button.with_emphasis(ButtonEmphasis::Danger);
+                }
+                button.set_focused(selected);
+                button.set_disabled(!control.enabled);
+                button.render_inline_frame(frame, control.area, footer_theme);
             }
             ExplorerOverlayControl::ApplyToRemaining => {
                 let label = fit_cell(
@@ -788,7 +797,7 @@ fn render_explorer_conflict_dialog(
                 button.set_focused(selection == conflict.choices.len());
                 button.state.selected = selection == conflict.choices.len();
                 button.set_disabled(!control.enabled);
-                button.render_borderless_frame(frame, control.area, theme);
+                button.render_inline_frame(frame, control.area, footer_theme);
             }
             _ => {}
         }

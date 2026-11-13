@@ -173,6 +173,7 @@ pub fn launcher_context_menu_layout(main: Rect, menu: &LauncherContextMenu) -> (
                 area.width.saturating_sub(6),
                 u16::from(2 + index < area.height.saturating_sub(1)),
             )
+            .intersection(area)
         })
         .collect();
     (area, rows)
@@ -204,13 +205,15 @@ pub fn launcher_entry_editor_layout(
             cancel: layout.cancel,
         };
     }
-    let area = crate::screens::shell::centered_rect(main, 58.min(main.width), 11.min(main.height));
-    let width = (app::launcher::LAUNCHER_ICON_WIDTH as u16 + 2).min(area.width);
+    let area = crate::screens::shell::centered_rect(main, 58.min(main.width), 15.min(main.height));
+    let chrome = launcher_icon_editor_chrome(area);
+    let width = (app::launcher::LAUNCHER_ICON_WIDTH as u16 + 2).min(chrome.body.width);
+    let canvas_height = (app::launcher::LAUNCHER_ICON_HEIGHT as u16 + 2).min(chrome.body.height);
     let canvas = Rect::new(
-        area.x + area.width.saturating_sub(width) / 2,
-        area.y.saturating_add(3),
+        chrome.body.x + chrome.body.width.saturating_sub(width) / 2,
+        chrome.body.bottom().saturating_sub(canvas_height),
         width,
-        (app::launcher::LAUNCHER_ICON_HEIGHT as u16 + 2).min(area.height.saturating_sub(5)),
+        canvas_height,
     );
     let inner = inset(canvas, 1);
     let inputs = (0..app::launcher::LAUNCHER_ICON_HEIGHT)
@@ -223,20 +226,30 @@ pub fn launcher_entry_editor_layout(
             )
         })
         .collect();
-    let button_width = ((area.width.saturating_sub(4)) / 2).min(20);
-    let buttons_y = area.bottom().saturating_sub(2);
+    let widths = [
+        format!("Esc {}", i18n::tr!("shell-cancel")),
+        format!("F10 {}", i18n::tr!("shell-save")),
+    ]
+    .map(|label| {
+        (terminal_width(&label) as u16 + 2).min(chrome.footer.width.saturating_sub(1) / 2)
+    });
+    let actions = crate::right_aligned_actions(chrome.footer, &widths);
     LauncherEntryEditorLayout {
         area,
         canvas: Some(canvas),
         inputs,
-        submit: Rect::new(area.x.saturating_add(1), buttons_y, button_width, 1),
-        cancel: Rect::new(
-            area.right().saturating_sub(button_width + 1),
-            buttons_y,
-            button_width,
-            1,
-        ),
+        submit: actions[1],
+        cancel: actions[0],
     }
+}
+
+fn launcher_icon_editor_chrome(area: Rect) -> DialogLayout {
+    DialogLayout::with_min_body(
+        area,
+        1,
+        None,
+        app::launcher::LAUNCHER_ICON_HEIGHT as u16 + 2,
+    )
 }
 
 pub fn launcher_entry_overlay_area(main: Rect, model: &LauncherViewModel) -> Option<Rect> {
@@ -258,7 +271,6 @@ pub(super) fn render_entry_overlay(
     model: &LauncherViewModel,
     context: &RenderContext,
 ) -> bool {
-    let theme = context.compatibility_theme();
     if let Some(editor) = &model.entry_editor {
         if editor.action != LauncherEntryAction::Icon {
             crate::render_management_overlay(
@@ -273,27 +285,24 @@ pub(super) fn render_entry_overlay(
             return true;
         }
         let layout = launcher_entry_editor_layout(main, editor);
-        frame.render_widget(Clear, layout.area);
-        Surface::new()
-            .bordered(true)
-            .titled(editor.action.label())
-            .render_frame(frame, layout.area, context);
+        let chrome = launcher_icon_editor_chrome(layout.area);
+        chrome.render_frame(frame, &editor.action.label(), context);
         let message = editor.form().message;
+        let canvas = layout.canvas.unwrap();
         frame.render_widget(
-            Paragraph::new(message)
-                .style(theme.body_style())
-                .wrap(Wrap { trim: false }),
+            Paragraph::new(message).wrap(Wrap { trim: false }),
             Rect::new(
-                layout.area.x + 1,
-                layout.area.y + 1,
-                layout.area.width.saturating_sub(2),
-                2.min(layout.area.height.saturating_sub(2)),
+                chrome.body.x,
+                chrome.body.y,
+                chrome.body.width,
+                canvas.y.saturating_sub(chrome.body.y),
             ),
         );
         Surface::new()
             .bordered(true)
             .focused(editor.selected < editor.inputs.len())
-            .render_frame(frame, layout.canvas.unwrap(), context);
+            .render_frame(frame, canvas, context);
+        let theme = DialogLayout::body_theme(context);
         for (index, (input, area)) in editor.inputs.iter().zip(&layout.inputs).enumerate() {
             let mut input = input.clone();
             input.set_focused(editor.selected == index);
@@ -305,24 +314,27 @@ pub(super) fn render_entry_overlay(
         )
         .with_emphasis(ButtonEmphasis::Primary);
         save.set_focused(editor.selected == editor.inputs.len());
-        save.render_borderless_frame(frame, layout.submit, &theme);
+        let footer = DialogLayout::footer_theme(context);
+        save.render_inline_frame(frame, layout.submit, &footer);
         let mut cancel = Button::new(
             "launcher.edit.cancel",
             format!("Esc {}", i18n::tr!("shell-cancel")),
         );
         cancel.set_focused(editor.selected == editor.inputs.len() + 1);
-        cancel.render_borderless_frame(frame, layout.cancel, &theme);
+        cancel.render_inline_frame(frame, layout.cancel, &footer);
         return true;
     }
     if let Some(menu) = &model.context_menu {
         let (area, rows) = launcher_context_menu_layout(main, menu);
-        frame.render_widget(Clear, area);
+        frame.render_widget(ratatui::widgets::Clear, area);
         Surface::new()
-            .bordered(true)
             .raised(true)
             .render_frame(frame, area, context);
+        let theme = DialogLayout::footer_theme(context);
         for (index, (action, row)) in menu.actions().zip(rows).enumerate() {
             menu.button(index, action)
+                .with_background(context.theme.raised)
+                .with_current(index == menu.selected)
                 .render_borderless_frame(frame, row, &theme);
         }
         return true;

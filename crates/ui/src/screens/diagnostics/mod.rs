@@ -2,6 +2,7 @@ mod layout;
 mod model;
 mod render;
 
+pub(crate) use layout::diagnostics_detail_inner;
 pub use layout::{
     DiagnosticsContentLayout, DiagnosticsHitTarget, DiagnosticsLayout,
     DiagnosticsRepairDialogLayout, DiagnosticsRowLayout, DiagnosticsScrollbarLayout,

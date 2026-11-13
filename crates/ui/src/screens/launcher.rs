@@ -2,11 +2,11 @@ use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Clear, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::components::{
-    Button, ComponentTone, DataTable, PageAction, PageActionBar, PageActionStatus, Scrollbar,
-    ScrollbarOrientation, Surface, terminal_width, truncate_to_terminal_width,
+    Button, ComponentTone, DataTable, DialogLayout, PageAction, PageActionBar, PageActionStatus,
+    Scrollbar, ScrollbarOrientation, Surface, terminal_width, truncate_to_terminal_width,
 };
 use crate::{AssetError, RenderContext, RuntimeAsciiAssets};
 
@@ -423,6 +423,7 @@ pub struct LauncherConfirmationLayout {
     pub message: Rect,
     pub confirm: Rect,
     pub cancel: Rect,
+    chrome: DialogLayout,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -522,10 +523,11 @@ impl LauncherLayout {
 
 pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout {
     let panel = main;
+    let side = u16::from(main.width >= 96) * 2;
     let inner = Rect::new(
-        panel.x,
+        panel.x + side,
         panel.y.saturating_add(u16::from(panel.height > 0)),
-        panel.width,
+        panel.width.saturating_sub(side * 2),
         panel.height.saturating_sub(1),
     );
     let bar = launcher_action_bar(model);
@@ -538,13 +540,28 @@ pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout 
     );
     let action_bar = bar.layout(footer);
     let toolbar = footer;
+    let refresh = model
+        .toolbar
+        .iter()
+        .find(|button| button.action == LauncherToolbarAction::Refresh);
+    let refresh_width = refresh
+        .map(|button| {
+            terminal_width(&format!("{} {}", button.action.shortcut(), button.label)) as u16 + 2
+        })
+        .unwrap_or(0)
+        .min(inner.width / 2);
+    let controls_height = u16::from(inner.y < footer.y);
     let search = Rect::new(
         inner.x,
-        inner.y.saturating_add(1),
-        inner.width,
-        u16::from(inner.y.saturating_add(1) < footer.y),
+        inner.y,
+        inner
+            .width
+            .saturating_sub(refresh_width + u16::from(refresh_width > 0) * 2),
+        controls_height,
     );
-    let content_y = search.bottom();
+    let content_y = search
+        .bottom()
+        .saturating_add(u16::from(search.bottom().saturating_add(1) < footer.y));
     let content = Rect::new(
         inner.x,
         content_y,
@@ -565,20 +582,14 @@ pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout 
                 })
         })
         .collect::<Vec<_>>();
-    if let Some(refresh) = model
-        .toolbar
-        .iter()
-        .find(|b| b.action == LauncherToolbarAction::Refresh)
-    {
+    if let Some(refresh) = refresh {
         toolbar_buttons.push(LauncherToolbarButtonLayout {
             action: refresh.action,
             area: Rect::new(
-                inner.x,
+                inner.right().saturating_sub(refresh_width),
                 inner.y,
-                (terminal_width(&format!("{} {}", refresh.action.shortcut(), refresh.label))
-                    as u16)
-                    .min(inner.width),
-                u16::from(inner.height > 0),
+                refresh_width,
+                controls_height,
             ),
         });
     }
@@ -588,7 +599,10 @@ pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout 
     };
     let columns = match model.view_mode {
         LauncherViewMode::LargeIcons => usize::from(
-            (content.width.saturating_sub(u16::from(scrollbar.is_some())) / GRID_TILE_MIN_WIDTH)
+            (content
+                .width
+                .saturating_sub(u16::from(scrollbar.is_some()) * 2)
+                / GRID_TILE_MIN_WIDTH)
                 .max(1),
         ),
         LauncherViewMode::Details => 1,
@@ -597,7 +611,7 @@ pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout 
     let confirmation = model
         .confirmation
         .as_ref()
-        .map(|_| launcher_confirmation_layout(main));
+        .map(|confirmation| launcher_confirmation_layout(main, confirmation));
     let run_settings = model.run_settings.as_ref().map(|form| {
         let layout = crate::management_layout(
             main,
@@ -709,7 +723,7 @@ fn launcher_grid_layout(
     let rows = usize::from((content.height / GRID_TILE_HEIGHT).max(1));
     let needs_scrollbar =
         model.items.len() > columns.saturating_mul(rows) && content.width > 0 && content.height > 0;
-    let grid_width = content.width.saturating_sub(u16::from(needs_scrollbar));
+    let grid_width = content.width.saturating_sub(u16::from(needs_scrollbar) * 2);
     if needs_scrollbar {
         columns = usize::from((grid_width / GRID_TILE_MIN_WIDTH).max(1));
     }
@@ -799,7 +813,9 @@ fn launcher_details_layout(
         1,
     );
     let needs_scrollbar = model.items.len() > capacity;
-    let row_width = rows_area.width.saturating_sub(u16::from(needs_scrollbar));
+    let row_width = rows_area
+        .width
+        .saturating_sub(u16::from(needs_scrollbar) * 2);
     let items = (start..model.items.len())
         .take(capacity)
         .take(usize::from(rows_area.height))
@@ -866,9 +882,14 @@ fn visible_start(
     start
 }
 
-fn launcher_confirmation_layout(area: Rect) -> LauncherConfirmationLayout {
-    let width = area.width.saturating_sub(4).clamp(1, 72);
-    let height = area.height.saturating_sub(2).clamp(1, 9);
+fn launcher_confirmation_layout(
+    area: Rect,
+    confirmation: &LauncherConfirmationViewModel,
+) -> LauncherConfirmationLayout {
+    let width = area.width.saturating_sub(4).min(72);
+    let content_width = DialogLayout::content_width(width);
+    let lines = crate::management_wrapped_lines(&confirmation.message, content_width.max(1));
+    let height = (lines.len() as u16).saturating_add(7).min(area.height);
     let dialog = Rect::new(
         area.x.saturating_add(area.width.saturating_sub(width) / 2),
         area.y
@@ -876,24 +897,20 @@ fn launcher_confirmation_layout(area: Rect) -> LauncherConfirmationLayout {
         width,
         height,
     );
-    let inner = inset(dialog, 1);
-    let buttons_y = inner.bottom().saturating_sub(1);
-    let button_width = inner.width.saturating_sub(1) / 2;
+    let widths = [
+        terminal_width(&format!("Esc {}", confirmation.cancel_label)) as u16 + 2,
+        terminal_width(&format!("Y {}", confirmation.confirm_label)) as u16 + 2,
+    ];
+    let footer_rows =
+        1 + u16::from(widths[0].saturating_add(widths[1]).saturating_add(1) > content_width);
+    let chrome = DialogLayout::new(dialog, footer_rows, None);
+    let actions = crate::right_aligned_actions(chrome.footer, &widths);
     LauncherConfirmationLayout {
         area: dialog,
-        message: Rect::new(
-            inner.x,
-            inner.y,
-            inner.width,
-            inner.height.saturating_sub(2),
-        ),
-        confirm: Rect::new(inner.x, buttons_y, button_width, 1),
-        cancel: Rect::new(
-            inner.x.saturating_add(button_width).saturating_add(1),
-            buttons_y,
-            inner.width.saturating_sub(button_width).saturating_sub(1),
-            1,
-        ),
+        message: chrome.body,
+        confirm: actions[1],
+        cancel: actions[0],
+        chrome,
     }
 }
 
@@ -907,6 +924,10 @@ pub fn render_launcher_content(
     let layout = launcher_layout(main, model);
     let theme = &context.compatibility_theme();
     Surface::new()
+        .background(context.theme.canvas)
+        .render_frame(frame, layout.panel, context);
+    Surface::new()
+        .background(context.theme.canvas)
         .titled(i18n::tr!(
             "ui-launcher-title",
             mode = if model.organizing {
@@ -915,13 +936,17 @@ pub fn render_launcher_content(
                 launcher_view_mode_label(model.view_mode)
             }
         ))
-        .bordered(false)
-        .render_frame(frame, layout.panel, context);
+        .render_frame(
+            frame,
+            Rect::new(layout.search.x, main.y, layout.content.width, 1).intersection(main),
+            context,
+        );
     render_launcher_toolbar(frame, &layout, model, context);
+    let input_theme = DialogLayout::body_theme(context);
     model.search.render_borderless_frame_with_prefix(
         frame,
         layout.search,
-        theme,
+        &input_theme,
         &format!("{} ", i18n::tr!("ui-launcher-search")),
     );
     match model.view_mode {
@@ -970,19 +995,7 @@ fn render_launcher_toolbar(
             format!("{} {}", button.action.shortcut(), button.label),
         );
         component.set_disabled(!button.enabled);
-        component.render_borderless_frame(frame, button_layout.area, theme);
-        if button_layout.area.height > 1 {
-            frame.render_widget(
-                Paragraph::new(fit_text(&button.description, button_layout.area.width))
-                    .style(theme.muted_style()),
-                Rect::new(
-                    button_layout.area.x,
-                    button_layout.area.y.saturating_add(1),
-                    button_layout.area.width,
-                    1,
-                ),
-            );
-        }
+        component.render_inline_frame(frame, button_layout.area, theme);
     }
 }
 
@@ -1020,10 +1033,6 @@ fn render_launcher_grid(
         surface.set_focused(
             !model.search.state.focused && model.selected_index == Some(item_layout.index),
         );
-        if item_layout.area.height < 2 {
-            surface.render_borderless_frame(frame, item_layout.area, theme);
-            continue;
-        }
         surface.render_surface_frame(frame, item_layout.area, theme);
         let label_style = surface.surface_style(item_layout.area, theme);
         let style = label_style.remove_modifier(Modifier::UNDERLINED);
@@ -1041,6 +1050,14 @@ fn render_launcher_grid(
             .bottom()
             .min(inner.bottom().saturating_sub(2.min(inner.height)))
             .max(inner.y);
+        let detail_style =
+            if style.bg == Some(context.theme.surface) || style.bg == Some(context.theme.raised) {
+                style
+                    .fg(context.theme.muted)
+                    .remove_modifier(Modifier::BOLD)
+            } else {
+                style.remove_modifier(Modifier::BOLD)
+            };
         frame.render_widget(
             Paragraph::new(Line::styled(fit_text(&item.name, inner.width), label_style))
                 .alignment(HorizontalAlignment::Center),
@@ -1052,7 +1069,7 @@ fn render_launcher_grid(
             } else {
                 launcher_status_label(item.status)
             })
-            .style(style)
+            .style(detail_style)
             .alignment(HorizontalAlignment::Center),
             Rect::new(
                 inner.x,
@@ -1107,7 +1124,7 @@ fn render_launcher_details(
     context: &RenderContext,
 ) {
     let theme = &context.compatibility_theme();
-    let scrollbar_width = u16::from(layout.scrollbar.is_some());
+    let scrollbar_width = u16::from(layout.scrollbar.is_some()) * 2;
     let width = layout.content.width.saturating_sub(scrollbar_width);
     if model.items.is_empty() {
         frame.render_widget(
@@ -1137,7 +1154,7 @@ fn render_launcher_details(
     ];
     let rows = model.items.iter().map(|item| {
         vec![
-            fit_text(&format!("[A] {}", item.name), widths[0]),
+            fit_text(&format!("    {}", item.name), widths[0]),
             fit_text(&item.type_label, widths[1]),
             fit_text(&launcher_status_label(item.status), widths[2]),
             fit_text(&item.path, widths[3]),
@@ -1227,33 +1244,26 @@ fn render_launcher_confirmation(
     dialog: &LauncherConfirmationViewModel,
     context: &RenderContext,
 ) {
-    let theme = &context.compatibility_theme();
-    frame.render_widget(Clear, layout.area);
-    Surface::new()
-        .titled(dialog.title.clone())
-        .bordered(true)
-        .raised(true)
-        .render_frame(frame, layout.area, context);
+    let theme = &DialogLayout::footer_theme(context);
+    layout.chrome.render_frame(frame, &dialog.title, context);
     frame.render_widget(
-        Paragraph::new(dialog.message.clone())
-            .style(theme.body_style())
-            .alignment(HorizontalAlignment::Center)
-            .wrap(Wrap { trim: true }),
+        Paragraph::new(dialog.message.clone()).wrap(Wrap { trim: true }),
         layout.message,
     );
     let mut confirm = Button::new(
         "launcher.confirmation.confirm",
         format!("Y {}", dialog.confirm_label),
-    );
+    )
+    .with_emphasis(crate::components::ButtonEmphasis::Primary);
     confirm.state.selected = dialog.confirm_selected;
-    confirm.render_borderless_frame(frame, layout.confirm, theme);
+    confirm.render_inline_frame(frame, layout.confirm, theme);
 
     let mut cancel = Button::new(
         "launcher.confirmation.cancel",
         format!("Esc {}", dialog.cancel_label),
     );
     cancel.state.selected = !dialog.confirm_selected;
-    cancel.render_borderless_frame(frame, layout.cancel, theme);
+    cancel.render_inline_frame(frame, layout.cancel, theme);
 }
 
 fn launcher_view_mode_label(mode: LauncherViewMode) -> String {
@@ -1349,7 +1359,7 @@ pub fn launcher_sort_headers(
     let width = layout
         .content
         .width
-        .saturating_sub(u16::from(layout.scrollbar.is_some()));
+        .saturating_sub(u16::from(layout.scrollbar.is_some()) * 2);
     crate::table_header_areas(
         Rect::new(
             layout.content.x,

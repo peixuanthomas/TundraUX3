@@ -283,7 +283,7 @@ impl Default for AppearanceConfig {
     fn default() -> Self {
         Self {
             border_shape: BorderShape::Rounded,
-            border_color: BorderColor::Rgb(0x38, 0x38, 0x38),
+            border_color: BorderColor::Rgb(0x29, 0x43, 0x4e),
             accent_color: BorderColor::Rgb(0x63, 0xd3, 0xe5),
             icon_display_mode: IconDisplayMode::default(),
             motion_preference: MotionPreference::Full,

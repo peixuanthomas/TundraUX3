@@ -272,18 +272,6 @@ impl FormDialog {
         )
     }
 
-    pub(crate) fn action_bar(&self) -> super::PageActionBar {
-        super::PageActionBar::new(self.identity.as_str()).with_actions(
-            self.actions()
-                .iter()
-                .map(|button| {
-                    super::PageAction::new(button.id.as_str(), button.label())
-                        .disabled(button.disabled)
-                })
-                .collect(),
-        )
-    }
-
     pub fn render_frame(&self, frame: &mut Frame<'_>, main: Rect, context: &RenderContext) {
         crate::render_management_overlay(
             frame,

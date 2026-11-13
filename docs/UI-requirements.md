@@ -4,26 +4,38 @@ This is the shared design and acceptance contract for the complete interface: st
 
 ## Visual language and density
 
-The default dark appearance uses neutral surfaces and one accent. Theme overrides and explicit saved appearance choices remain supported.
+The default dark appearance retains the v1.5.1 Glacier Night blue surfaces and one accent. Layout and control hierarchy follow the OpenCode terminal interface; its black palette is not used. Theme overrides and explicit saved appearance choices remain supported.
 
 | Token | Default | Use |
 | --- | --- | --- |
-| Canvas | `#101010` | Full-frame background |
-| Surface | `#181818` | Grouped or selected content |
-| Raised surface | `#242424` | Raised controls and overlays |
-| Text | `#E6E6E6` | Normal readable content |
-| Muted text | `#999999` | Secondary information |
+| Canvas | `#071116` | Full-frame background |
+| Surface | `#0D1B22` | Grouped content |
+| Raised surface | `#13262F` | Raised controls, sidebars, and overlays |
+| Text | `#E6F1F4` | Normal readable content |
+| Muted text | `#8EA7B0` | Secondary information |
 | Accent | `#63D3E5` | Focus and primary actions |
-| Border | `#383838` | Inputs and necessary overlay boundaries |
+| Border | `#29434E` | Inputs and necessary overlay boundaries |
 
 - Separate ordinary pages, groups, lists, tables, and action areas with headings, whitespace, alignment, or a change of background. Do not draw complete boxes around them or nest decorative frames.
 - A modal, menu, or input may use one boundary. Temporary messages use the shared surface and the corresponding success, warning, or danger color.
-- Ordinary buttons use plain action text without `[]`. Primary actions use an accent fill; destructive actions use the danger color. Selection and the current item use background emphasis independently of keyboard focus.
+- Dialogs share three-column side padding, a title and top-right close action, a readable body, and a raised footer when actions are present. Compact windows reduce vertical gaps before hiding required content. Dim covered content without changing its layout; Toasts remain in the upper-right and do not take focus.
+- Ordinary buttons use plain action text without `[]` on a visible control surface, distinct from nearby static text. Primary actions use an accent fill; destructive actions use the danger color. Selection and the current item use background emphasis independently of keyboard focus.
 - Navigation entries and table rows each occupy one terminal row. Use one row between groups, two columns between adjacent groups, and one cell between grid items. Keep a complete row clickable, including its padding, for mouse and touch.
 - The title bar and status bar each occupy one row. A 108 × 20 terminal therefore retains 18 content rows. Tasks, Help, Back, and the clock remain available; use compact labels when needed. The keyboard entry sits in the status row immediately before the clock.
 - Use the same spacing, typography, and control states across pages. Text must remain readable with truecolor or ANSI color, and with Chinese, English, combining marks, and wide characters.
 
 New defaults apply when a preference is absent. Preserve existing legacy-color migration and explicit saved border, color, theme, animation speed, and timing preferences; do not overwrite them merely because defaults changed.
+
+### OpenCode source reference
+
+The implementation reference is `anomalyco/opencode` at commit `5b131f5995a9f7fad458c59a7a5e39686237beb8`, inspected on 2026-11-13. Use its terminal components, not its desktop/web CSS:
+
+- [Dialog, header, layout, buttons, and footer](https://github.com/anomalyco/opencode/blob/5b131f5995a9f7fad458c59a7a5e39686237beb8/packages/tui/src/ui/dialog.tsx): a single modal surface, padded title and body, distinct footer actions, and an obscured background.
+- [Selection dialog](https://github.com/anomalyco/opencode/blob/5b131f5995a9f7fad458c59a7a5e39686237beb8/packages/tui/src/ui/dialog-select.tsx): full-row interaction, grouped options, muted supporting text, and separate active/current markers.
+- [Session sidebar](https://github.com/anomalyco/opencode/blob/5b131f5995a9f7fad458c59a7a5e39686237beb8/packages/tui/src/routes/session/sidebar.tsx): a distinct surface with shared padding and spacing between groups.
+- [Spinner](https://github.com/anomalyco/opencode/blob/5b131f5995a9f7fad458c59a7a5e39686237beb8/packages/tui/src/component/spinner.tsx), [shimmer text](https://github.com/anomalyco/opencode/blob/5b131f5995a9f7fad458c59a7a5e39686237beb8/packages/tui/src/component/shimmer-text.tsx), and [animation scheduling](https://github.com/anomalyco/opencode/blob/5b131f5995a9f7fad458c59a7a5e39686237beb8/packages/tui/src/ui/animation.ts): elapsed-time feedback, motion-disabled fallbacks, and scheduling only while motion remains active.
+
+OpenCode's dialog mounts directly; it does not supply TundraUX3's page/dialog entrance transitions. The existing configurable phases below remain TundraUX3 behavior. Keep TundraUX3's release-inside-target activation, safety confirmations, localization, terminal compatibility, and application workflows when adapting these visual patterns.
 
 ## Text and action entry points
 
@@ -56,7 +68,7 @@ The shared Button, Theme, and RenderContext own control states. Pages pass focus
 - A stationary pointer must not highlight another button or reclaim emphasis after keyboard input. Repeated reports of the same coordinates do not switch input methods.
 - Activate a button only after pressing and releasing within the same target. Dragging outside, losing focus, resizing, or changing pages cancels the pending action.
 - A double click requires a released first click followed by a second press on the same target and cell within 500ms. Scrolling, dragging, keyboard input, focus loss, and resizing clear that record.
-- Only the topmost dialog receives hover, press, text, or keyboard input. Covered pages retain their state. Toasts do not take focus.
+- Only the topmost dialog receives hover, press, text, or keyboard input. Covered pages retain their state. Toasts do not take keyboard focus, but their painted area blocks pointer activation of covered controls until the Toast disappears.
 - Hide keyboard emphasis on window focus loss while preserving logical focus. Current-page and record-selection emphasis remains independent of the input method.
 - Selected text fields use accent feedback and a blinking underscore cursor at the actual position. Up/Down switches fields; Left/Right moves the cursor. Mask passwords and scroll long text with the cursor.
 - Keyboard, mouse, and touch trigger the same transition behavior. Focus, activation, text input, scrolling, and cancellation take effect immediately, including during animation.
@@ -74,6 +86,7 @@ Use restrained transitions to explain state changes without delaying operation. 
 | On-screen keyboard | 160ms | Clipped expansion or collapse from the bottom |
 | Progress graphic | 200ms | Interpolation toward the real value, without overshoot |
 | Busy indicator | 80ms per step | One terminal character |
+| Loading label | 1200ms per sweep | Muted text with OpenCode's moving highlight |
 
 - Page, dialog, and menu bodies are readable on the first frame. Do not show an empty moving outline or wait for the transition to reveal text. Opening and closing keep the intended final layout and blend only the presentation.
 - Details expand rightward in wide windows and vertically in narrow windows. The list, details, and keyboard use the same current geometry for painting, clipping, PTY sizing, automation, and hit testing. Do not insert blank intermediate frames.
@@ -81,6 +94,7 @@ Use restrained transitions to explain state changes without delaying operation. 
 - New navigation, reverse actions, repeated switching, input-method changes, and resize interrupt or retarget the active transition. Do not queue animations or require an extra key or click to finish one.
 - Reduced motion renders the terminal state directly, including details, keyboard, progress, and busy feedback. No hidden animation continues afterward.
 - Active UI transitions schedule frames at 60 FPS. Idle UI has no animation timer. Weather and continuous rainbow effects retain their separate 30 FPS policy. Cursor blink, clocks, and real data refresh retain their own deadlines.
+- A visible loading label refreshes at 20Hz in truecolor. ANSI uses only the 80ms spinner cadence without RGB interpolation; reduced motion uses a static ellipsis and schedules neither effect. Respect animation speed and terminal-column width for Chinese and combining text.
 - Slow output advances by elapsed time and skips missed frames. Never replay accumulated animation frames after the terminal stalls.
 - Motion curves, durations, clipping, spacing, and pane geometry belong in `crates/ui`; Shell owns input routing, navigation, dialog stacking, and transition lifecycle.
 

@@ -86,6 +86,7 @@ jobs:
           }
           Copy-Item LICENSE package/
           Copy-Item crates/weathr/LICENSE.weathr package/
+          Copy-Item third_party/opencode/LICENSE package/LICENSE.opencode
           Compress-Archive -Path package/* -DestinationPath TundraUX3-v1.5.1-windows-x64.zip
           $hash = (Get-FileHash TundraUX3-v1.5.1-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  TundraUX3-v1.5.1-windows-x64.zip" |
@@ -226,6 +227,7 @@ jobs:
           done
           cp LICENSE package/
           cp crates/weathr/LICENSE.weathr package/
+          cp third_party/opencode/LICENSE package/LICENSE.opencode
           mkdir -p package/vim-arm64 package/vim-x86_64 package/vim
           tar -xzf dist/vim-engines/release-vim-arm64/vim-engine.tar.gz -C package/vim-arm64
           tar -xzf dist/vim-engines/release-vim-x86_64/vim-engine.tar.gz -C package/vim-x86_64
@@ -237,7 +239,7 @@ jobs:
           lipo -info package/tundra-cli
           lipo -info package/vim/vim
           tar -C package -czf TundraUX3-v1.5.1-macos-universal.tar.gz \
-            tundra-shell tundra-cli assets vim LICENSE LICENSE.weathr
+            tundra-shell tundra-cli assets vim LICENSE LICENSE.weathr LICENSE.opencode
           shasum -a 256 TundraUX3-v1.5.1-macos-universal.tar.gz \
             > TundraUX3-v1.5.1-macos-universal.sha256
 

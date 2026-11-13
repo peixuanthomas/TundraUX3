@@ -1,7 +1,7 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{HorizontalAlignment, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Borders, Paragraph, Widget};
 
@@ -12,7 +12,7 @@ use super::foundation::{
 };
 use super::{
     ComponentEvent, ComponentId, ComponentState, InputEvent, Key, MouseButton, MouseKind,
-    byte_index_for_char, char_count, contains_point, inner_area, interactive_style,
+    byte_index_for_char, char_count, contains_point, inner_area,
 };
 
 /// Keeps the cursor and selection when the text belongs to an existing form model.
@@ -70,6 +70,7 @@ pub struct TextInput {
     sensitive: bool,
     capture_focused: Option<bool>,
     capture_name: Option<String>,
+    background: Option<Color>,
 }
 
 impl TextInput {
@@ -96,11 +97,17 @@ impl TextInput {
             sensitive: false,
             capture_focused: None,
             capture_name: None,
+            background: None,
         }
     }
 
     pub fn with_placeholder(mut self, placeholder: impl Into<String>) -> Self {
         self.placeholder = placeholder.into();
+        self
+    }
+
+    pub const fn with_background(mut self, background: Color) -> Self {
+        self.background = Some(background);
         self
     }
 
@@ -369,7 +376,12 @@ impl TextInput {
         start.min(self.cursor)
     }
 
-    fn display_line(&self, max_width: usize, theme: &TundraTheme) -> Line<'static> {
+    fn display_line(
+        &self,
+        max_width: usize,
+        theme: &TundraTheme,
+        background: Color,
+    ) -> Line<'static> {
         let placeholder_visible = self.placeholder_is_visible();
         let mut display = if placeholder_visible {
             self.placeholder.clone()
@@ -393,7 +405,7 @@ impl TextInput {
             0
         };
         let tokens = theme.tokens();
-        let selected_style = Style::default().fg(tokens.surface).bg(tokens.focus);
+        let selected_style = tokens.filled_style(tokens.focus);
         let mut spans = Vec::new();
         let mut run = String::new();
         let mut run_style = Style::default();
@@ -411,10 +423,9 @@ impl TextInput {
                     .as_ref()
                     .is_some_and(|range| range.contains(&text_index));
             let style = if is_cursor {
-                theme
-                    .title_style()
-                    .fg(theme.accent_color)
-                    .add_modifier(Modifier::SLOW_BLINK)
+                Style::default()
+                    .fg(crate::theme::readable_foreground(tokens.accent, background))
+                    .add_modifier(Modifier::BOLD | Modifier::SLOW_BLINK)
             } else if selected {
                 selected_style
             } else {
@@ -432,28 +443,32 @@ impl TextInput {
 
     fn bordered_widget(&self, area: Rect, theme: &TundraTheme) -> Paragraph<'static> {
         self.capture(area);
-        let style = interactive_style(self.state, theme);
+        let tokens = theme.tokens();
+        let style = self.field_style(theme, tokens.surface);
+        let hovered = theme
+            .buttons
+            .as_ref()
+            .map_or(self.state.hovered, |buttons| {
+                buttons
+                    .hover_position
+                    .is_some_and(|(x, y)| contains_point(area, x, y))
+            });
+        let border = if !self.state.disabled
+            && ((self.state.focused && theme.keyboard_focus_visible()) || hovered)
+        {
+            crate::theme::readable_foreground(tokens.accent, style.bg.unwrap())
+        } else {
+            tokens.border
+        };
         let block = theme
             .block()
             .borders(Borders::ALL)
             .style(style)
-            .border_style(if self.state.focused && !self.state.disabled {
-                theme.border_style().fg(theme.accent_color)
-            } else {
-                theme.selectable_border_style(self.state.selected)
-            });
-        let line = self.display_line(block.inner(area).width as usize, theme);
-        let text_style = if self.placeholder_is_visible() {
-            theme.muted_style()
-        } else if self.state.focused && !self.state.disabled {
-            theme.title_style().fg(theme.accent_color)
-        } else {
-            theme.body_style()
-        }
-        .remove_modifier(Modifier::SLOW_BLINK);
+            .border_style(crate::theme::solid_border_style(style.fg(border)));
+        let line = self.display_line(block.inner(area).width as usize, theme, style.bg.unwrap());
         Paragraph::new(line)
             .alignment(HorizontalAlignment::Left)
-            .style(text_style)
+            .style(style)
             .block(block)
     }
 
@@ -465,17 +480,43 @@ impl TextInput {
     ) -> Paragraph<'static> {
         self.capture(area);
         let prefix_width = terminal_width(prefix);
-        let mut line = self.display_line((area.width as usize).saturating_sub(prefix_width), theme);
-        line.spans.insert(0, Span::raw(prefix.to_string()));
-        let style = if self.placeholder_is_visible() {
-            theme.muted_style()
+        let tokens = theme.tokens();
+        let style = self.field_style(theme, tokens.raised);
+        let background = style.bg.unwrap();
+        let mut line = self.display_line(
+            (area.width as usize).saturating_sub(prefix_width),
+            theme,
+            background,
+        );
+        let prefix_style = if self.state.disabled {
+            style
         } else {
-            interactive_style(self.state, theme)
-        }
-        .remove_modifier(Modifier::SLOW_BLINK);
+            style.fg(crate::theme::readable_foreground(tokens.muted, background))
+        };
+        line.spans
+            .insert(0, Span::styled(prefix.to_string(), prefix_style));
         Paragraph::new(line)
             .alignment(HorizontalAlignment::Left)
             .style(style)
+    }
+
+    fn field_style(&self, theme: &TundraTheme, base: Color) -> Style {
+        let tokens = theme.tokens();
+        let background = self.background.unwrap_or(base);
+        if self.state.disabled {
+            return theme.disabled_style().bg(background);
+        }
+        let foreground = if self.placeholder_is_visible() {
+            tokens.muted
+        } else if self.state.focused && theme.keyboard_focus_visible() {
+            tokens.accent
+        } else {
+            tokens.text
+        };
+        Style::default()
+            .fg(crate::theme::readable_foreground(foreground, background))
+            .bg(background)
+            .remove_modifier(Modifier::SLOW_BLINK)
     }
 
     fn capture(&self, area: Rect) {

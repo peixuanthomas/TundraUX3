@@ -269,7 +269,16 @@ fn unavailable_settings_retain_gray_buttons_and_register_disabled_hit_regions() 
                 let label: String = (region.area.x..region.area.right())
                     .map(|x| terminal.backend().buffer()[(x, region.area.y)].symbol())
                     .collect();
-                assert_eq!(label.trim(), "55");
+                let expected = match (enabled, kind) {
+                    (
+                        true,
+                        SettingsControlKind::Cycle
+                        | SettingsControlKind::Picker
+                        | SettingsControlKind::Palette,
+                    ) => "55 ↵",
+                    _ => "55",
+                };
+                assert_eq!(label.trim(), expected);
                 if !enabled {
                     for x in region.area.x..region.area.right() {
                         let cell = &terminal.backend().buffer()[(x, region.area.y)];
@@ -328,7 +337,7 @@ fn settings_scrollbar_only_appears_when_content_overflows() {
     let track = overflowing.scrollbar.expect("settings scrollbar");
     assert!(overflowing.max_scroll_offset > 0);
     assert_eq!(overflowing.scroll_offset, overflowing.max_scroll_offset);
-    assert_eq!(track.x, overflowing.detail.right());
+    assert_eq!(track.x, overflowing.detail.right() + 1);
     assert_eq!(track.y, overflowing.detail.y);
     assert_eq!(track.height, overflowing.detail.height);
 
@@ -387,7 +396,13 @@ fn field_and_category_hit_targets_match_their_visible_areas() {
         Some(SettingsHitTarget::Field(SettingsField::ShowHidden))
     );
     assert_eq!(
-        settings_hit_test(&layout, (0, 0)),
+        settings_hit_test(
+            &layout,
+            (
+                layout.category_cards[0].area.x,
+                layout.category_cards[0].area.y
+            )
+        ),
         Some(SettingsHitTarget::Category(SettingsCategory::Appearance)),
     );
 }
@@ -572,7 +587,11 @@ fn picker_truncates_wide_labels_by_terminal_columns() {
         .iter()
         .filter(|cell| cell.symbol() == "…")
         .count();
-    assert_eq!(wide_cells, 35);
+    let layout = settings_layout(Rect::new(0, 0, 80, 24), &model);
+    assert_eq!(
+        wide_cells,
+        usize::from(layout.picker_options[0].area.width.saturating_sub(3) / 2)
+    );
     assert_eq!(ellipsis_cells, 1);
 
     let row = (0..buffer.area.height)
@@ -1150,14 +1169,18 @@ fn number_dialog_renders_shared_controls_and_blocks_the_underlying_dialog() {
                 .draw(|frame| ui::render_settings_overlay(frame, &layout, &model, &context))
                 .unwrap();
             let output = terminal_output(&terminal);
-            let mut title_row = String::new();
-            let mut column = number.dialog.x;
-            while column < number.dialog.right() {
-                let cell = &terminal.backend().buffer()[(column, number.dialog.y)];
-                title_row.push_str(cell.symbol());
-                column += cell.cell_width();
-            }
-            assert!(title_row.contains(title), "{width} × {height}: {title_row}");
+            let buffer = terminal.backend().buffer();
+            let title_visible = (number.dialog.y..number.input.y).any(|y| {
+                let mut x = number.dialog.x;
+                let mut row = String::new();
+                while x < number.dialog.right() {
+                    let cell = &buffer[(x, y)];
+                    row.push_str(cell.symbol());
+                    x += cell.cell_width();
+                }
+                row.contains(title)
+            });
+            assert!(title_visible, "{width} × {height}: {output}");
             assert!(output.contains("125"));
             let regions = buttons.regions();
             for (id, rect) in [
@@ -1191,7 +1214,10 @@ fn settings_groups_use_titles_and_spacing_without_page_or_group_frames() {
         let main = ui::ShellFrameLayout::new(Rect::new(0, 0, width, height), None, &context).main;
         let layout = settings_layout(main, &model);
         assert_eq!(layout.main, main);
-        assert_eq!(layout.workspace.navigation[0].y, main.y);
+        assert_eq!(
+            layout.workspace.navigation[0].y,
+            layout.workspace.navigation_area.y + 1
+        );
         assert!(
             layout
                 .category_cards

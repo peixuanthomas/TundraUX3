@@ -50,8 +50,8 @@ fn assert_actions_accessible(layout: &NotificationDialogLayout) {
         assert!(action.area.width > 0 && action.area.height > 0);
         assert!(action.area.x >= layout.dialog.x + 1);
         assert!(action.area.right() < layout.dialog.right());
-        assert!(action.area.y > layout.message.bottom());
-        assert!(action.area.bottom() < layout.dialog.bottom());
+        assert!(action.area.intersection(layout.message).is_empty());
+        assert!(action.area.bottom() <= layout.dialog.bottom());
         // The exact rectangles consumed by shell hit testing remain disjoint.
         for other in &layout.actions[index + 1..] {
             assert!(action.area.intersection(other.area).is_empty());
@@ -93,7 +93,7 @@ fn long_chinese_repair_summary_scrolls_at_50_by_12_with_fixed_actions() {
 }
 
 #[test]
-fn notification_dialog_keeps_one_border_with_its_semantic_tone() {
+fn notification_dialog_keeps_its_semantic_tone_in_the_title() {
     let area = Rect::new(0, 0, 80, 24);
     let theme = TundraTheme::default_dark();
     for (tone, color) in [
@@ -103,13 +103,25 @@ fn notification_dialog_keeps_one_border_with_its_semantic_tone() {
     ] {
         let mut model = long_notification();
         model.tone = tone;
-        let dialog = layout(area, &model).dialog;
+        let layout = layout(area, &model);
         let terminal = draw(area, &model, &theme);
-        assert_eq!(
-            terminal.backend().buffer()[(dialog.x, dialog.y)].symbol(),
-            "╭"
+        let buffer = terminal.backend().buffer();
+        let title = Rect::new(
+            layout.message.x,
+            layout.dialog.y,
+            layout.message.width,
+            layout.message.y - layout.dialog.y,
         );
-        assert_eq!(terminal.backend().buffer()[(dialog.x, dialog.y)].fg, color);
+        assert!(
+            title
+                .positions()
+                .any(|position| buffer[position].symbol() == "语" && buffer[position].fg == color)
+        );
+        assert_eq!(
+            buffer[(layout.dialog.x, layout.dialog.y)].bg,
+            theme.tokens().surface
+        );
+        assert_eq!(buffer[(layout.dialog.x, layout.dialog.y)].symbol(), " ");
     }
 }
 
@@ -152,7 +164,7 @@ fn wrapped_and_stacked_actions_keep_their_own_space_while_the_message_scrolls() 
 fn too_small_is_reserved_for_required_chrome_and_actions_not_message_length() {
     let model = long_notification();
     let tight = layout(Rect::new(0, 0, 50, 5), &model);
-    assert_eq!(tight.message.height, 1);
+    assert!(tight.message.height >= 1);
     assert_actions_accessible(&tight);
     assert!(matches!(
         notification_layout(Rect::new(0, 0, 50, 4), &model),

@@ -1,6 +1,8 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Borders, HighlightSpacing, List as RatatuiList, ListItem as RatatuiListItem,
     ListState as RatatuiListState, StatefulWidget,
@@ -10,7 +12,7 @@ use crate::TundraTheme;
 
 use super::{
     ComponentEvent, ComponentId, ComponentState, ComponentTone, InputEvent, Key, MouseButton,
-    MouseKind, Surface, contains_point, item_style, tone_color,
+    MouseKind, Surface, contains_point, foundation::row_style,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +60,7 @@ pub struct List {
     hovered: Option<usize>,
     viewport_start: Option<usize>,
     highlight_symbol: Option<String>,
+    background: Option<Color>,
 }
 
 impl List {
@@ -97,7 +100,8 @@ impl List {
             selected,
             hovered: None,
             viewport_start: None,
-            highlight_symbol: Some("> ".to_string()),
+            highlight_symbol: Some("▌ ".to_string()),
+            background: None,
         }
     }
     pub const fn with_viewport_start(mut self, start: usize) -> Self {
@@ -106,6 +110,11 @@ impl List {
     }
     pub fn with_highlight_symbol(mut self, symbol: Option<impl Into<String>>) -> Self {
         self.highlight_symbol = symbol.map(Into::into);
+        self
+    }
+
+    pub const fn with_background(mut self, background: Color) -> Self {
+        self.background = Some(background);
         self
     }
 
@@ -149,6 +158,10 @@ impl List {
         self.handle_event_in(event, area, false)
     }
 
+    pub fn borderless_item_index_at(&self, area: Rect, column: u16, row: u16) -> Option<usize> {
+        self.item_index_at(area, column, row, false)
+    }
+
     fn handle_event_in(&mut self, event: InputEvent, area: Rect, bordered: bool) -> ComponentEvent {
         match event {
             InputEvent::Key(key) if !key.is_press_like() => ComponentEvent::None,
@@ -161,17 +174,23 @@ impl List {
                 self.hovered = None;
                 ComponentEvent::Consumed
             }
-            InputEvent::Key(key) if self.state.focused => match key.key {
-                Key::Up => self.select_previous(),
-                Key::Down => self.select_next(),
-                Key::Home => self.select_first(),
-                Key::End => self.select_last(),
-                Key::Enter | Key::Space => self
-                    .selected_item()
-                    .map(|item| ComponentEvent::Activated(item.id.clone()))
-                    .unwrap_or(ComponentEvent::Consumed),
-                _ => ComponentEvent::None,
-            },
+            InputEvent::Key(key) if self.state.focused => {
+                let result = match key.key {
+                    Key::Up => self.select_previous(),
+                    Key::Down => self.select_next(),
+                    Key::Home => self.select_first(),
+                    Key::End => self.select_last(),
+                    Key::Enter | Key::Space => self
+                        .selected_item()
+                        .map(|item| ComponentEvent::Activated(item.id.clone()))
+                        .unwrap_or(ComponentEvent::Consumed),
+                    _ => ComponentEvent::None,
+                };
+                if result.is_consumed() {
+                    self.hovered = None;
+                }
+                result
+            }
             InputEvent::Mouse(mouse) => {
                 let index = self.item_index_at(area, mouse.column(), mouse.row(), bordered);
                 match mouse.kind {
@@ -183,11 +202,15 @@ impl List {
                             ComponentEvent::None
                         }
                     }
-                    MouseKind::ScrollUp if contains_point(area, mouse.column(), mouse.row()) => {
-                        self.select_previous()
-                    }
-                    MouseKind::ScrollDown if contains_point(area, mouse.column(), mouse.row()) => {
-                        self.select_next()
+                    MouseKind::ScrollUp | MouseKind::ScrollDown
+                        if contains_point(area, mouse.column(), mouse.row()) =>
+                    {
+                        self.hovered = None;
+                        if mouse.kind == MouseKind::ScrollUp {
+                            self.select_previous()
+                        } else {
+                            self.select_next()
+                        }
                     }
                     MouseKind::Down(MouseButton::Left) | MouseKind::Click(MouseButton::Left) => {
                         self.select_from_pointer(index)
@@ -239,7 +262,7 @@ impl List {
         }
 
         self.state.focused = true;
-        self.hovered = Some(index);
+        self.hovered = None;
         self.selected = Some(index);
         ComponentEvent::Selected(self.id.clone(), index)
     }
@@ -298,47 +321,74 @@ impl List {
 
     fn ratatui_widget<'a>(&'a self, theme: &TundraTheme, bordered: bool) -> RatatuiList<'a> {
         let start = self.viewport_start.unwrap_or(0);
+        let tokens = theme.tokens();
+        let background = self.background.unwrap_or(tokens.surface);
         let items = self
             .items
             .iter()
             .enumerate()
             .skip(start)
             .map(|(index, item)| {
-                let label = match &item.description {
-                    Some(description) => format!("{} - {}", item.label, description),
-                    None => item.label.clone(),
+                let selected = self.selected == Some(index);
+                let state = ComponentState {
+                    focused: self.state.focused && selected,
+                    selected,
+                    hovered: self.hovered == Some(index),
+                    disabled: self.state.disabled || item.disabled,
+                    ..Default::default()
                 };
-                let mut style = item_style(
-                    self.state.focused && self.selected == Some(index),
-                    self.hovered == Some(index),
-                    false,
-                    item.disabled,
-                    theme,
-                );
-                if !item.disabled && self.selected != Some(index) && self.hovered != Some(index) {
-                    style = style.fg(tone_color(item.tone, theme));
+                let mut style = row_style(state, theme, background);
+                if !state.disabled && item.tone != ComponentTone::Default {
+                    let foreground = item.tone.color(&tokens);
+                    let foreground = if theme.color_capability == crate::ColorCapability::Ansi {
+                        crate::theme::readable_foreground(foreground, style.bg.unwrap())
+                    } else {
+                        foreground
+                    };
+                    style = style.fg(foreground);
                 }
-                RatatuiListItem::new(label).style(style)
+                let mut label = Line::from(Span::styled(item.label.as_str(), style));
+                if let Some(description) = &item.description {
+                    let hint = if state.disabled {
+                        style
+                    } else {
+                        style.fg(crate::theme::readable_foreground(
+                            tokens.muted,
+                            style.bg.unwrap(),
+                        ))
+                    };
+                    label
+                        .spans
+                        .push(Span::styled(format!(" - {description}"), hint));
+                }
+                RatatuiListItem::new(label).style(style.remove_modifier(Modifier::UNDERLINED))
             });
         let selected_disabled = self
             .selected
             .and_then(|index| self.items.get(index))
-            .is_some_and(|item| item.disabled);
+            .is_some_and(|item| item.disabled)
+            || self.state.disabled;
+        let marker = self.highlight_symbol.as_deref().unwrap_or("");
+        let marker = if selected_disabled {
+            Span::raw(" ".repeat(super::terminal_width(marker)))
+        } else {
+            let state = ComponentState::default()
+                .selected(true)
+                .hovered(self.hovered == self.selected && self.selected.is_some());
+            let background = row_style(state, theme, background).bg.unwrap();
+            Span::styled(
+                marker,
+                Style::default().fg(crate::theme::readable_foreground(tokens.accent, background)),
+            )
+        };
         let widget = RatatuiList::new(items)
-            .style(theme.surface_style())
-            .highlight_symbol(self.highlight_symbol.as_deref().unwrap_or(""))
+            .style(theme.surface_style().bg(background))
+            .highlight_symbol(marker)
             .highlight_spacing(if self.highlight_symbol.is_some() {
                 HighlightSpacing::Always
             } else {
                 HighlightSpacing::Never
-            })
-            .highlight_style(item_style(
-                self.state.focused,
-                false,
-                true,
-                selected_disabled,
-                theme,
-            ));
+            });
 
         if !bordered && self.title.is_none() {
             return widget;
@@ -355,12 +405,12 @@ impl List {
                     Borders::NONE
                 })
                 .border_style(theme.selectable_border_style(self.state.focused))
-                .style(theme.surface_style()),
+                .style(theme.surface_style().bg(background)),
             None => theme
                 .block()
                 .borders(Borders::ALL)
                 .border_style(theme.selectable_border_style(self.state.focused))
-                .style(theme.raised_style()),
+                .style(theme.surface_style().bg(background)),
         };
         widget.block(block)
     }
@@ -371,7 +421,10 @@ impl List {
             return RatatuiListState::default()
                 .with_selected(
                     self.selected
-                        .and_then(|selected| selected.checked_sub(start)),
+                        .and_then(|selected| selected.checked_sub(start))
+                        .filter(|selected| {
+                            *selected < usize::from(self.inner(area, bordered).height)
+                        }),
                 )
                 .with_offset(0);
         }

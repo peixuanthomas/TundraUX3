@@ -1,15 +1,187 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{HorizontalAlignment, Rect};
-use ratatui::widgets::{Borders, Clear, Paragraph, Widget, Wrap};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::widgets::{Clear, Paragraph, Widget, Wrap};
 
-use crate::TundraTheme;
+use crate::{RenderContext, TundraTheme};
 
 use super::foundation::terminal_width;
 use super::{
     Button, ComponentEvent, ComponentId, ComponentState, InputEvent, Key, MouseButton, MouseKind,
-    clamp_index, contains_point, inner_area,
+    PageAction, PageActionBar, clamp_index, contains_point,
 };
+
+/// Geometry shared by a dialog's rendering and hit testing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DialogLayout {
+    pub area: Rect,
+    pub header: Rect,
+    pub close: Rect,
+    pub body: Rect,
+    pub footer: Rect,
+    band: Rect,
+}
+
+impl DialogLayout {
+    pub const INSET: u16 = 3;
+
+    const fn inset(width: u16) -> u16 {
+        if width >= 12 {
+            Self::INSET
+        } else if width >= 6 {
+            1
+        } else {
+            0
+        }
+    }
+
+    pub const fn content_width(width: u16) -> u16 {
+        width - Self::inset(width) * 2
+    }
+
+    pub fn new(area: Rect, footer_rows: u16, close_label: Option<&str>) -> Self {
+        Self::with_min_body(area, footer_rows, close_label, 1)
+    }
+
+    pub fn with_min_body(
+        area: Rect,
+        footer_rows: u16,
+        close_label: Option<&str>,
+        minimum_body_rows: u16,
+    ) -> Self {
+        let x = area.x + Self::inset(area.width);
+        let width = Self::content_width(area.width);
+        let header_height = u16::from(area.height > 0);
+        let available = area.height.saturating_sub(header_height);
+        let footer_rows = footer_rows.min(available);
+        let spare = (available - footer_rows).saturating_sub(minimum_body_rows);
+        let top = u16::from(spare >= 3);
+        let bottom = u16::from(spare >= 3);
+        let header_gap = u16::from(spare >= 1);
+        let footer_gap = u16::from(footer_rows > 0 && spare >= 4);
+        let footer_padding = u16::from(footer_rows > 0 && spare >= 5);
+        let close_width = close_label.map_or(0, |label| {
+            (terminal_width(label).saturating_add(2)).min(usize::from(width)) as u16
+        });
+        let header = Rect::new(
+            x,
+            area.y + top,
+            width.saturating_sub(close_width.saturating_add(u16::from(close_width > 0))),
+            header_height,
+        );
+        let close = Rect::new(
+            x + width - close_width,
+            header.y,
+            close_width,
+            header.height,
+        );
+        let footer = Rect::new(x, area.bottom() - bottom - footer_rows, width, footer_rows);
+        let band = Rect::new(
+            area.x,
+            footer.y - footer_padding,
+            area.width,
+            if footer_rows > 0 {
+                footer_padding + footer_rows + bottom
+            } else {
+                0
+            },
+        );
+        let body_y = header.bottom() + header_gap;
+        let body = Rect::new(
+            x,
+            body_y,
+            width,
+            band.y.saturating_sub(footer_gap).saturating_sub(body_y),
+        );
+        Self {
+            area,
+            header,
+            close,
+            body,
+            footer,
+            band,
+        }
+    }
+
+    pub fn render(self, buffer: &mut Buffer, title: &str, context: &RenderContext) {
+        Clear.render(self.area, buffer);
+        buffer.set_style(
+            self.area,
+            Style::default()
+                .fg(context.theme.text)
+                .bg(context.theme.surface),
+        );
+        buffer.set_style(self.band, Style::default().bg(context.theme.raised));
+        Paragraph::new(title)
+            .style(Style::default().add_modifier(Modifier::BOLD))
+            .render(self.header, buffer);
+    }
+
+    pub fn render_frame(self, frame: &mut Frame<'_>, title: &str, context: &RenderContext) {
+        self.render(frame.buffer_mut(), title, context);
+    }
+
+    pub(crate) fn surface_theme(theme: &TundraTheme) -> RenderContext {
+        RenderContext::from_theme(
+            theme,
+            Default::default(),
+            crate::RenderCapabilities {
+                color: theme.color_capability,
+                ..Default::default()
+            },
+        )
+    }
+
+    pub fn body_theme(context: &RenderContext) -> TundraTheme {
+        Self::theme_on(context, context.theme.surface)
+    }
+
+    pub fn footer_theme(context: &RenderContext) -> TundraTheme {
+        Self::theme_on(context, context.theme.raised)
+    }
+
+    pub fn close_theme(context: &RenderContext) -> TundraTheme {
+        let mut theme = Self::body_theme(context);
+        theme.foreground = context.theme.muted;
+        theme
+    }
+
+    pub(crate) fn action_areas(
+        self,
+        bar: &PageActionBar,
+        selected: Option<usize>,
+    ) -> Vec<(usize, Rect)> {
+        let height = bar.height(self.footer.width);
+        let canvas = Rect::new(self.footer.x, 0, self.footer.width, height);
+        let actions = bar.layout(canvas).actions;
+        let start = height.saturating_sub(self.footer.height);
+        let start = selected
+            .and_then(|index| actions.iter().find(|action| action.index == index))
+            .map_or(start, |action| start.min(action.area.y));
+        let visible = Rect::new(self.footer.x, start, self.footer.width, self.footer.height);
+        actions
+            .into_iter()
+            .filter_map(|action| {
+                let mut area = action.area.intersection(visible);
+                if area.is_empty() {
+                    return None;
+                }
+                area.y = self.footer.y + area.y - start;
+                Some((action.index, area))
+            })
+            .collect()
+    }
+
+    fn theme_on(context: &RenderContext, background: Color) -> TundraTheme {
+        let mut theme = context.compatibility_theme();
+        theme.background = background;
+        if let Some(buttons) = &mut theme.buttons {
+            buttons.background = background;
+        }
+        theme
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DialogAction {
@@ -36,6 +208,7 @@ pub struct Dialog {
     pub open: bool,
     selected_action: Option<usize>,
     buttons: Vec<Button>,
+    close_button: Button,
 }
 
 impl Dialog {
@@ -45,7 +218,41 @@ impl Dialog {
         buffer: &mut Buffer,
         context: &crate::RenderContext,
     ) {
-        self.render(area, buffer, &context.compatibility_theme());
+        if !self.open {
+            return;
+        }
+        let _scope = crate::automation::scope(self.id.as_str(), "dialog", &self.title, area);
+        let (layout, actions) = self.layout(area);
+        layout.render(buffer, &self.title, context);
+        self.close_button
+            .clone()
+            .with_background(context.theme.surface)
+            .render_borderless(layout.close, buffer, &DialogLayout::close_theme(context));
+        Paragraph::new(self.body.join("\n"))
+            .wrap(Wrap { trim: false })
+            .style(Style::default().fg(context.theme.muted))
+            .render(layout.body, buffer);
+
+        let theme = DialogLayout::footer_theme(context);
+        for (index, action_area) in actions {
+            let action = &self.actions[index];
+            let mut button = self
+                .buttons
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| Button::new(action.id.clone(), action.label.clone()))
+                .with_bracketed_label(false)
+                .with_background(context.theme.control_background())
+                .with_label_alignment(HorizontalAlignment::Center)
+                .with_focus_fill(Some(context.theme.accent_soft));
+            let label_width = action_area
+                .width
+                .saturating_sub(u16::from(action_area.width > 4) * 2);
+            button.label = crate::management_wrapped_lines(&action.label, label_width).join("\n");
+            button.state.focused = self.state.focused && self.selected_action == Some(index);
+            button.state.selected = self.selected_action == Some(index);
+            button.render_borderless(action_area, buffer, &theme);
+        }
     }
 
     pub fn new(
@@ -54,9 +261,13 @@ impl Dialog {
         body: impl Into<String>,
         actions: Vec<DialogAction>,
     ) -> Self {
+        let id = id.into();
         let selected_action = clamp_index(0, actions.len());
         let mut dialog = Self {
-            id: id.into(),
+            close_button: Button::new(format!("{}.close", id.as_str()), Key::Escape.label())
+                .with_bracketed_label(false)
+                .with_centered_label(true),
+            id,
             title: title.into(),
             body: vec![body.into()],
             actions,
@@ -82,6 +293,7 @@ impl Dialog {
         self.state.focused = open;
         if !open {
             self.state.active = false;
+            self.cancel_pointer();
         }
         self.sync_button_states();
     }
@@ -103,7 +315,7 @@ impl Dialog {
 
     /// Returns the button areas used by both rendering and hit testing.
     pub fn action_areas(&self, area: Rect) -> Vec<(usize, Rect)> {
-        self.action_layout(area)
+        self.layout(area).1
     }
 
     pub fn handle_event(&mut self, event: InputEvent, area: Rect) -> ComponentEvent {
@@ -121,48 +333,55 @@ impl Dialog {
             }
             InputEvent::FocusLost => {
                 self.state.focused = false;
+                self.cancel_pointer();
                 self.sync_button_states();
                 ComponentEvent::Consumed
             }
-            InputEvent::Key(key) => match key.key {
-                Key::Escape => {
-                    self.close();
-                    ComponentEvent::Dismissed(self.id.clone())
+            InputEvent::Resize { .. } => {
+                self.cancel_pointer();
+                ComponentEvent::Consumed
+            }
+            InputEvent::Key(key) => {
+                self.cancel_pointer();
+                match key.key {
+                    Key::Escape => self.dismiss(),
+                    Key::Tab | Key::Right | Key::Down => self.select_next_action(),
+                    Key::BackTab | Key::Left | Key::Up => self.select_previous_action(),
+                    Key::Enter | Key::Space => self.activate_selected_action(),
+                    _ => ComponentEvent::Consumed,
                 }
-                Key::Tab | Key::Right | Key::Down => self.select_next_action(),
-                Key::BackTab | Key::Left | Key::Up => self.select_previous_action(),
-                Key::Enter | Key::Space => self.activate_selected_action(),
-                _ => ComponentEvent::Consumed,
-            },
+            }
             InputEvent::Mouse(mouse) => {
-                if !contains_point(area, mouse.column(), mouse.row())
-                    && !matches!(
-                        mouse.kind,
-                        MouseKind::Up(MouseButton::Left) | MouseKind::Drag(MouseButton::Left)
-                    )
-                {
-                    return ComponentEvent::Consumed;
-                }
-
-                let action = self.action_index_at(area, mouse.column(), mouse.row());
+                let (layout, actions) = self.layout(area);
                 if matches!(
                     mouse.kind,
                     MouseKind::Down(MouseButton::Left)
                         | MouseKind::Click(MouseButton::Left)
                         | MouseKind::DoubleClick(MouseButton::Left)
-                ) && let Some(index) = action
-                {
-                    self.selected_action = Some(index);
-                    self.sync_button_states();
+                ) {
+                    self.cancel_pointer();
+                    if let Some((index, _)) = actions
+                        .iter()
+                        .find(|(_, action)| contains_point(*action, mouse.column(), mouse.row()))
+                    {
+                        self.selected_action = Some(*index);
+                        self.sync_button_states();
+                    }
                 }
 
-                let layout = self.action_layout(area);
-                let mut changed = false;
+                let close = self
+                    .close_button
+                    .handle_event(InputEvent::Mouse(mouse), layout.close);
+                if matches!(close, ComponentEvent::Activated(_)) {
+                    return self.dismiss();
+                }
+                let mut changed = matches!(
+                    close,
+                    ComponentEvent::Changed(_) | ComponentEvent::FocusRequested(_)
+                );
                 let mut activated = None;
-                for (index, button_area) in layout {
-                    let Some(button) = self.buttons.get_mut(index) else {
-                        continue;
-                    };
+                for (index, button_area) in actions {
+                    let button = &mut self.buttons[index];
                     match button.handle_event(InputEvent::Mouse(mouse), button_area) {
                         ComponentEvent::Activated(id) => activated = Some(id),
                         ComponentEvent::Changed(_) | ComponentEvent::FocusRequested(_) => {
@@ -185,48 +404,12 @@ impl Dialog {
     }
 
     pub fn render(&self, area: Rect, buffer: &mut Buffer, theme: &TundraTheme) {
-        if !self.open {
-            return;
-        }
-        let _scope = crate::automation::scope(self.id.as_str(), "dialog", &self.title, area);
-
-        Clear.render(area, buffer);
-        self.block(theme).render(area, buffer);
-        self.render_body(area, buffer, theme);
-
-        let buttons = self.buttons_for_render();
-        for (index, action_area) in self.action_layout(area) {
-            if let Some(button) = buttons.get(index) {
-                button.render_borderless(action_area, buffer, theme);
-            }
-        }
+        self.render_with_context(area, buffer, &DialogLayout::surface_theme(theme));
     }
 
     /// Renders the dialog through a Ratatui [`Frame`].
     pub fn render_frame(&self, frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
-        if !self.open {
-            return;
-        }
-        let _scope = crate::automation::scope(self.id.as_str(), "dialog", &self.title, area);
-
-        frame.render_widget(Clear, area);
-        frame.render_widget(self.block(theme), area);
-        let inner = inner_area(area);
-        let body_height = self.body_height(area);
-        frame.render_widget(
-            Paragraph::new(self.body.join("\n"))
-                .wrap(Wrap { trim: false })
-                .alignment(HorizontalAlignment::Left)
-                .style(theme.raised_style()),
-            Rect::new(inner.x, inner.y, inner.width, body_height),
-        );
-
-        let buttons = self.buttons_for_render();
-        for (index, action_area) in self.action_layout(area) {
-            if let Some(button) = buttons.get(index) {
-                button.render_borderless_frame(frame, action_area, theme);
-            }
-        }
+        self.render(area, frame.buffer_mut(), theme);
     }
 
     fn select_next_action(&mut self) -> ComponentEvent {
@@ -270,61 +453,40 @@ impl Dialog {
             .unwrap_or(ComponentEvent::Consumed)
     }
 
-    fn action_index_at(&self, area: Rect, column: u16, row: u16) -> Option<usize> {
-        self.action_layout(area)
-            .into_iter()
-            .find_map(|(index, action_area)| {
-                contains_point(action_area, column, row).then_some(index)
-            })
+    fn dismiss(&mut self) -> ComponentEvent {
+        self.close();
+        ComponentEvent::Dismissed(self.id.clone())
     }
 
-    fn action_layout(&self, area: Rect) -> Vec<(usize, Rect)> {
-        let inner = inner_area(area);
-        if inner.is_empty() {
-            return Vec::new();
+    fn cancel_pointer(&mut self) {
+        self.close_button.state.active = false;
+        self.close_button.state.hovered = false;
+        for button in &mut self.buttons {
+            button.state.active = false;
+            button.state.hovered = false;
         }
-        let mut x = 0u16;
-        let mut row = 0u16;
-        let mut actions = Vec::new();
-        for (index, action) in self.actions.iter().enumerate() {
-            let width = u16::try_from(terminal_width(&action.label))
-                .unwrap_or(u16::MAX)
-                .saturating_add(2)
-                .min(inner.width);
-            if x > 0 && x.saturating_add(width) > inner.width {
-                row = row.saturating_add(1);
-                x = 0;
-            }
-            actions.push((index, Rect::new(inner.x + x, row, width, 1)));
-            x = x.saturating_add(width).saturating_add(1);
-        }
-        let capacity = inner.height.saturating_sub(1).max(1);
-        let selected_row = actions
-            .iter()
-            .find(|(index, _)| Some(*index) == self.selected_action)
-            .map_or(0, |(_, area)| area.y);
-        let start = selected_row.saturating_add(1).saturating_sub(capacity);
-        let visible_rows = row.saturating_add(1).min(capacity);
-        let y = inner.bottom().saturating_sub(visible_rows);
-        actions
-            .into_iter()
-            .filter_map(|(index, mut area)| {
-                if area.y < start || area.y >= start.saturating_add(capacity) {
-                    return None;
-                }
-                area.y = y + area.y - start;
-                Some((index, area))
-            })
-            .collect()
     }
 
-    fn body_height(&self, area: Rect) -> u16 {
-        let inner = inner_area(area);
-        self.action_layout(area)
-            .iter()
-            .map(|(_, action)| action.y.saturating_sub(inner.y))
-            .min()
-            .unwrap_or(inner.height)
+    fn layout(&self, area: Rect) -> (DialogLayout, Vec<(usize, Rect)>) {
+        let bar = PageActionBar::new("").with_actions(
+            self.actions
+                .iter()
+                .map(|action| PageAction::new(action.id.clone(), action.label.clone()))
+                .collect(),
+        );
+        let footer_rows = bar
+            .height(DialogLayout::content_width(area.width))
+            .min(area.height.saturating_sub(2));
+        let body_rows = area.height.saturating_sub(footer_rows + 1).min(3);
+        let layout = DialogLayout::with_min_body(
+            area,
+            footer_rows,
+            Some(&self.close_button.label),
+            body_rows,
+        );
+        let mut actions = layout.action_areas(&bar, self.selected_action);
+        actions.sort_unstable_by_key(|(index, _)| *index);
+        (layout, actions)
     }
 
     fn sync_buttons(&mut self) {
@@ -340,7 +502,9 @@ impl Dialog {
             self.buttons = self
                 .actions
                 .iter()
-                .map(|action| Button::new(action.id.clone(), action.label.clone()))
+                .map(|action| {
+                    Button::new(action.id.clone(), action.label.clone()).with_bracketed_label(false)
+                })
                 .collect();
         }
         self.selected_action = self
@@ -359,43 +523,5 @@ impl Dialog {
                 button.state.hovered = false;
             }
         }
-    }
-
-    fn buttons_for_render(&self) -> Vec<Button> {
-        self.actions
-            .iter()
-            .enumerate()
-            .map(|(index, action)| {
-                let mut button = self
-                    .buttons
-                    .get(index)
-                    .cloned()
-                    .unwrap_or_else(|| Button::new(action.id.clone(), action.label.clone()));
-                button.state.focused = self.state.focused && self.selected_action == Some(index);
-                button.state.selected = self.selected_action == Some(index);
-                button
-            })
-            .collect()
-    }
-
-    fn render_body(&self, area: Rect, buffer: &mut Buffer, theme: &TundraTheme) {
-        let inner = inner_area(area);
-        let body_height = self.body_height(area);
-        Paragraph::new(self.body.join("\n"))
-            .wrap(Wrap { trim: false })
-            .alignment(HorizontalAlignment::Left)
-            .style(theme.raised_style())
-            .render(
-                Rect::new(inner.x, inner.y, inner.width, body_height),
-                buffer,
-            );
-    }
-
-    fn block(&self, theme: &TundraTheme) -> ratatui::widgets::Block<'static> {
-        theme
-            .block()
-            .title(self.title.clone())
-            .borders(Borders::ALL)
-            .style(theme.raised_style())
     }
 }

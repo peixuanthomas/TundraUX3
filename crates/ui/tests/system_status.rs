@@ -265,8 +265,9 @@ fn size_picker_renders_exact_rows_and_captures_dashboard_hits() {
     m.dashboard.picker_anchor = Some(anchor);
     let l = system_status_layout(main, &m);
     assert_eq!(l.size_picker_items.len(), 3);
-    assert_eq!(l.size_picker_items[0].area.x, anchor.0 + 1);
-    assert_eq!(l.size_picker_items[0].area.y, anchor.1 + 1);
+    let chrome = ui::components::DialogLayout::new(Rect::new(anchor.0, anchor.1, 42, 8), 0, None);
+    assert_eq!(l.size_picker_items[0].area.x, chrome.body.x);
+    assert_eq!(l.size_picker_items[0].area.y, chrome.body.y);
     for (index, row) in l.size_picker_items.iter().enumerate() {
         assert_eq!(
             system_status_hit_test(&l, (row.area.x, row.area.y)),
@@ -303,15 +304,20 @@ fn add_picker_viewport_hit_rows_match_absolute_rendered_items() {
     });
     let main = full_main(100, 12);
     let l = system_status_layout(main, &m);
-    assert_eq!(l.picker_viewport_start, 2);
+    let capacity = usize::from(
+        ui::components::DialogLayout::new(Rect::new(0, 0, 42, main.height), 0, None)
+            .body
+            .height,
+    );
+    let start = 10usize.saturating_sub(capacity);
+    assert_eq!(l.picker_viewport_start, start);
     assert_eq!(
         l.picker_items
             .iter()
             .map(|row| row.index)
             .collect::<Vec<_>>(),
-        vec![2, 3, 4, 5, 6, 7, 8, 9]
+        (start..=9).collect::<Vec<_>>()
     );
-    assert!(!l.picker_items.iter().any(|row| row.index < 2));
     let selected = l.picker_items.iter().find(|row| row.index == 9).unwrap();
     assert_eq!(
         system_status_hit_test(&l, (selected.area.x, selected.area.y)),

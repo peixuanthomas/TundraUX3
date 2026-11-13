@@ -1351,7 +1351,7 @@ fn system_status_right_click_opens_contextual_edit_pickers() {
     );
     assert_eq!(
         contextual_layout.size_picker_items[0].area.x,
-        widget_point.0 + 1
+        widget_point.0 + ui::components::DialogLayout::INSET
     );
 
     let size_row = contextual_layout.size_picker_items[2].area;

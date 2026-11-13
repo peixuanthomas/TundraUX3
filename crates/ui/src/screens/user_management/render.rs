@@ -1,13 +1,14 @@
 use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
-use ratatui::widgets::{Clear, Paragraph, Wrap};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Paragraph, Wrap};
 
 use super::layout::{UserManagementColumnMode, UserManagementLayout, user_management_layout};
 use super::model::{
     UserManagementFeedbackTone, UserManagementFocus, UserManagementUserViewModel,
     UserManagementViewModel,
 };
-use crate::components::{Button, ComponentTone, DataTable, Scrollbar, Surface};
+use crate::components::{Button, ComponentTone, DataTable, DialogLayout, Scrollbar, Surface};
 use crate::screens::clock::render_clock_line;
 use crate::screens::shell::fit_cell;
 use crate::{RenderContext, TundraTheme};
@@ -25,6 +26,7 @@ pub fn render_user_management_content(
     let theme = &context.compatibility_theme();
     let layout = user_management_layout(main, model);
     Surface::new()
+        .background(context.theme.canvas)
         .titled(i18n::tr!("ui-user-management-user-management"))
         .bordered(false)
         .render_frame(frame, layout.panel, context);
@@ -37,13 +39,14 @@ pub fn render_user_management_content(
             user = model.current_user.clone(),
             count = model.users.len()
         ),
-        theme.body_style(),
+        theme.muted_style(),
         HorizontalAlignment::Left,
     );
     render_user_management_table(frame, &layout, model, context);
     if !layout.details.is_empty() {
         Surface::new()
-            .titled(i18n::tr!("management-touch-details"))
+            .titled(format!("  {}", i18n::tr!("management-touch-details")))
+            .raised(true)
             .render_frame(frame, layout.details, context);
         let details = model
             .selected_user()
@@ -64,21 +67,25 @@ pub fn render_user_management_content(
                     ),
                 ]
                 .into_iter()
-                .map(|(label, value)| format!("{label}: {value}"))
+                .map(|(label, value)| {
+                    Line::from(vec![
+                        Span::styled(
+                            format!("{label}: "),
+                            ratatui::style::Style::default().fg(context.theme.muted),
+                        ),
+                        Span::raw(value),
+                    ])
+                })
                 .collect::<Vec<_>>()
-                .join("\n")
             })
-            .unwrap_or_else(|| i18n::tr!("ui-user-management-no-user-selected"));
-        frame.render_widget(
-            Paragraph::new(details)
-                .wrap(Wrap { trim: false })
-                .style(theme.body_style()),
-            Surface::new().titled("").inner(layout.details),
-        );
+            .unwrap_or_else(|| vec![Line::from(i18n::tr!("ui-user-management-no-user-selected"))]);
+        let inner = crate::screens::diagnostics::diagnostics_detail_inner(layout.details);
+        frame.render_widget(Paragraph::new(details).wrap(Wrap { trim: false }), inner);
     }
     if !layout.actions_panel.is_empty() {
         Surface::new()
-            .titled(i18n::tr!("management-touch-actions"))
+            .titled(format!("  {}", i18n::tr!("management-touch-actions")))
+            .raised(true)
             .render_frame(frame, layout.actions_panel, context);
     }
     if let Some(track) = layout.scrollbar {
@@ -99,7 +106,6 @@ fn render_user_management_table(
     model: &UserManagementViewModel,
     context: &RenderContext,
 ) {
-    let theme = &context.compatibility_theme();
     let widths = user_management_column_widths(layout.header.width, layout.column_mode);
     let headers = user_management_header_cells(layout.column_mode, &widths);
     let rows = model
@@ -164,7 +170,7 @@ fn render_user_management_table(
             frame,
             empty,
             i18n::tr!("ui-user-management-no-users-available-padded"),
-            theme.muted_style(),
+            ratatui::style::Style::default().fg(context.theme.muted),
             HorizontalAlignment::Left,
         );
     }
@@ -316,13 +322,12 @@ pub fn render_user_management_overlay(
 ) {
     let layout = user_management_layout(main, model);
     if let Some(menu) = layout.more_menu {
-        frame.render_widget(Clear, menu);
-        Surface::new()
-            .bordered(true)
-            .raised(true)
-            .titled(i18n::tr!("ui-user-management-more"))
-            .render_frame(frame, menu, context);
-        let theme = context.compatibility_theme();
+        DialogLayout::new(menu, 0, None).render_frame(
+            frame,
+            &i18n::tr!("ui-user-management-more"),
+            context,
+        );
+        let theme = DialogLayout::body_theme(context);
         for action_layout in &layout.actions {
             let action = model
                 .visible_actions()
@@ -333,14 +338,15 @@ pub fn render_user_management_overlay(
                 format!("user-management.action.{:?}", action.action),
                 super::layout::user_management_action_label(&action),
             )
-            .with_focus_fill(Some(context.theme.accent_soft))
+            .with_label_alignment(HorizontalAlignment::Left)
+            .with_background(context.theme.surface)
             .with_emphasis(if action.dangerous {
                 crate::components::ButtonEmphasis::Danger
             } else {
                 crate::components::ButtonEmphasis::Normal
             });
             button.set_disabled(!action.enabled);
-            button.state.selected = model.focus == UserManagementFocus::Action(action.action);
+            button.set_focused(model.focus == UserManagementFocus::Action(action.action));
             button.render_borderless_frame(frame, action_layout.area, &theme);
         }
         return;

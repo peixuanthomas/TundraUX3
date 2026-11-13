@@ -43,7 +43,7 @@ The English and Chinese `modules/` files include:
 | `ui-launcher.ftl` | Persistent search, no results, search shortcuts, and entry/context-menu actions |
 | `help.ftl` | Ctrl/Cmd selection, Shift ranges, Shift+Enter, and Tab focus navigation with arrows in the focused region |
 | `management-common.ftl` | Persistent expert areas on management pages |
-| `management.ftl` | Management prompts, including returning to waiting applications through title-bar Tasks |
+| `management.ftl` | Management prompts and the AutoAdmin dialog title, including returning to waiting applications through title-bar Tasks |
 | `ui-explorer.ftl` | Save-picker filename, Save, and Cancel labels, separate from creating a file |
 | `ui-shell.ftl`, `ui-auth.ftl` | Global tasks and approval status, the shared terminal-size prompt, completion with default appearance, and the application administrator's scope |
 | `management-network-disks.ftl` | Connection states and reasons configuration is unavailable or read-only |

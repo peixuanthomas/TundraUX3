@@ -12,7 +12,7 @@ cargo run --locked -p cli --bin tundra-cli -- debug ui-test
 
 The preview uses the built-in dark theme and English, without reading or saving user configuration, language files, or logs. The terminal must be at least 88 columns × 30 rows; 120 × 36 is recommended.
 
-Shared controls demonstrate the production neutral palette, plain action labels, filled primary actions, danger color, disabled states, and focus independent of selection. Use the actual Shell at 108 × 20 to validate minimum-size page workflows; this control gallery has its own larger layout.
+Shared controls demonstrate the Glacier Night blue palette, distinct control surfaces, filled primary actions, danger color, disabled states, and focus independent of selection. The dialog page uses the same padded header, close action, and footer as production. Use the actual Shell at 108 × 20 to validate minimum-size page workflows; this control gallery has its own larger layout.
 
 F1–F6, PageUp/PageDown, or the bottom buttons switch pages. Tab/Shift+Tab moves focus. Esc, Ctrl+C, or the Exit button ends the preview.
 

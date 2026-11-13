@@ -53,6 +53,7 @@ for locale in en-US zh-CN; do
 done
 install -Dm644 LICENSE "$stage_root/$portable_name/LICENSE"
 install -Dm644 crates/weathr/LICENSE.weathr "$stage_root/$portable_name/LICENSE.weathr"
+install -Dm644 third_party/opencode/LICENSE "$stage_root/$portable_name/LICENSE.opencode"
 install -Dm644 docs/packaging/linux/README-LINUX.txt "$stage_root/$portable_name/README-LINUX.txt"
 # The updater requires this marker beside both portable binaries.
 install -Dm644 packaging/linux/tundra-installation.json "$stage_root/$portable_name/tundra-installation.json"

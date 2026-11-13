@@ -2,13 +2,14 @@ use std::time::Duration;
 
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{HorizontalAlignment, Rect};
-use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Paragraph, Widget};
+use ratatui::layout::Rect;
+use ratatui::style::Style;
+use ratatui::text::Line;
+use ratatui::widgets::{Clear, Paragraph, Widget};
 
-use super::Surface;
 use crate::{
-    MotionDirection, MotionFrame, MotionTransitionKind, RenderContext, schedule_motion_range,
+    ColorCapability, MotionDirection, MotionFrame, MotionTransitionKind, RenderContext,
+    schedule_motion_range,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -115,40 +116,71 @@ impl Toast {
         }
     }
 
+    pub fn layout(&self, bounds: Rect) -> Rect {
+        let width = bounds.width.saturating_sub(6).min(60);
+        let height = (crate::management_wrapped_lines(&self.message, width.saturating_sub(6)).len()
+            + 2)
+        .min(usize::from(bounds.height.saturating_sub(2)).min(6)) as u16;
+        Rect::new(
+            bounds.right().saturating_sub(width + 2).max(bounds.x),
+            bounds.y + u16::from(bounds.height > 1),
+            width,
+            height,
+        )
+    }
+
     pub fn render(&self, area: Rect, buffer: &mut Buffer, context: &RenderContext) {
-        if !self.is_visible(context.motion) || area.width == 0 || area.height == 0 {
+        if !self.is_visible(context.motion) || area.is_empty() {
             return;
         }
-        let area = if self.visible_progress(context.motion) < 500 {
-            Rect::new(
-                area.x.saturating_add(1),
-                area.y,
-                area.width.saturating_sub(1),
-                area.height,
-            )
-        } else {
-            area
-        };
         crate::automation::control("", "status", &self.message, area, Default::default(), &[]);
         let tokens = context.theme;
-        let mut surface_context = context.clone();
-        surface_context.theme.border = match self.tone {
-            ToastTone::Info => tokens.border,
+        let feedback = match self.tone {
+            ToastTone::Info => tokens.accent,
             ToastTone::Success => tokens.success,
             ToastTone::Warning => tokens.warning,
             ToastTone::Danger => tokens.danger,
         };
-        let style = Style::default().fg(tokens.text).bg(tokens.raised);
-        let surface = Surface::new().bordered(true).raised(true);
-        let inner = surface.inner(area);
-        surface.render(area, buffer, &surface_context);
-        if area.width <= 2 || area.height <= 2 {
-            return;
+        let background = if context.capabilities.color == ColorCapability::TrueColor {
+            use animate::Interpolate;
+            let progress = f32::from(self.visible_progress(context.motion)) / 1_000.0;
+            ratatui::style::Color::lerp(&tokens.surface, &tokens.raised, progress)
+        } else {
+            tokens.raised
+        };
+        Clear.render(area, buffer);
+        buffer.set_style(area, Style::default().fg(tokens.text).bg(background));
+        let horizontal = if area.width >= 10 { 3 } else { 0 };
+        let vertical = u16::from(area.height > 2);
+        let text = Rect::new(
+            area.x + horizontal,
+            area.y + vertical,
+            area.width.saturating_sub(horizontal * 2),
+            area.height.saturating_sub(vertical * 2),
+        );
+        let mut lines = crate::management_wrapped_lines(&self.message, text.width);
+        if lines.len() > usize::from(text.height) {
+            lines.truncate(usize::from(text.height));
+            if let Some(last) = lines.last_mut() {
+                *last = super::truncate_to_terminal_width(
+                    last,
+                    usize::from(text.width.saturating_sub(1)),
+                );
+                last.push('…');
+            }
         }
-        Paragraph::new(self.message.as_str())
-            .alignment(HorizontalAlignment::Left)
-            .style(style.add_modifier(Modifier::BOLD))
-            .render(inner, buffer);
+        Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>()).render(text, buffer);
+        if horizontal > 0 {
+            let bounds = buffer.area;
+            for x in [area.x, area.right() - 1] {
+                for point in Rect::new(x, area.y, 1, area.height)
+                    .intersection(bounds)
+                    .positions()
+                {
+                    buffer[point].set_symbol("│").set_fg(feedback);
+                }
+            }
+        }
     }
 
     pub fn render_frame(&self, frame: &mut Frame<'_>, area: Rect, context: &RenderContext) {

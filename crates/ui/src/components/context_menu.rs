@@ -1,14 +1,12 @@
+use crate::TundraTheme;
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::widgets::{Borders, Clear, Widget};
-
-use crate::TundraTheme;
 
 use super::foundation::terminal_width;
 use super::{
-    ComponentEvent, ComponentId, ComponentState, InputEvent, Key, List, ListItem, MouseButton,
-    MouseKind, contains_point, inner_area,
+    Button, ComponentEvent, ComponentId, ComponentState, DialogLayout, InputEvent, Key, List,
+    ListItem, MouseButton, MouseKind, contains_point,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +39,8 @@ pub struct ContextMenu {
     pub state: ComponentState,
     pub open: bool,
     list: List,
+    close_button: Button,
+    pressed: Option<(ComponentId, Rect)>,
 }
 
 impl ContextMenu {
@@ -49,12 +49,15 @@ impl ContextMenu {
         let mut list = Self::make_list(&id, &items);
         list.set_focused(false);
         Self {
+            close_button: Button::new(format!("{}.close", id.as_str()), Key::Escape.label())
+                .with_bracketed_label(false),
             id,
             title: None,
             items,
             state: ComponentState::default(),
             open: false,
             list,
+            pressed: None,
         }
     }
 
@@ -77,6 +80,9 @@ impl ContextMenu {
         self.list.set_focused(open);
         if !open {
             self.list.set_hovered(None);
+            self.pressed = None;
+            self.close_button.set_focused(false);
+            self.close_button.state.hovered = false;
         }
     }
 
@@ -94,15 +100,15 @@ impl ContextMenu {
             .items
             .iter()
             .map(|item| u16::try_from(terminal_width(&item.label)).unwrap_or(u16::MAX))
-            .chain(
-                self.title
-                    .iter()
-                    .map(|title| u16::try_from(terminal_width(title)).unwrap_or(u16::MAX)),
-            )
+            .chain(self.title.iter().map(|title| {
+                u16::try_from(terminal_width(title) + terminal_width(&self.close_button.label) + 3)
+                    .unwrap_or(u16::MAX)
+            }))
             .max()
             .unwrap_or(0);
-        let width = content_width.saturating_add(2).max(4);
-        let height = (self.items.len() as u16).saturating_add(2).max(3);
+        let width = content_width.saturating_add(6).max(12);
+        let extra_rows = if self.title.is_some() { 4 } else { 2 };
+        let height = (self.items.len() as u16).saturating_add(extra_rows).max(3);
         let max_x = bounds.x.saturating_add(bounds.width.saturating_sub(width));
         let max_y = bounds
             .y
@@ -133,11 +139,17 @@ impl ContextMenu {
                 self.close();
                 ComponentEvent::Dismissed(self.id.clone())
             }
+            InputEvent::Resize { .. } => {
+                self.pressed = None;
+                self.close_button.set_focused(false);
+                ComponentEvent::Consumed
+            }
             InputEvent::Key(key) if key.key == Key::Escape => {
                 self.close();
                 ComponentEvent::Dismissed(self.id.clone())
             }
             InputEvent::Key(key) => {
+                self.pressed = None;
                 let list_area = self.list_area(area);
                 let event = self
                     .list
@@ -150,7 +162,8 @@ impl ContextMenu {
                 }
             }
             InputEvent::Mouse(mouse) => {
-                let inside = contains_point(area, mouse.column(), mouse.row());
+                let point = (mouse.column(), mouse.row());
+                let inside = contains_point(area, point.0, point.1);
                 if !inside
                     && matches!(
                         mouse.kind,
@@ -160,18 +173,62 @@ impl ContextMenu {
                     self.close();
                     return ComponentEvent::Dismissed(self.id.clone());
                 }
-
-                let activates = matches!(
-                    mouse.kind,
-                    MouseKind::Down(MouseButton::Left)
-                        | MouseKind::Click(MouseButton::Left)
-                        | MouseKind::DoubleClick(MouseButton::Left)
-                );
+                let close = self.layout(area).close;
+                if matches!(mouse.kind, MouseKind::Down(_)) {
+                    self.close_button.set_focused(false);
+                } else if mouse.kind == MouseKind::Move && !contains_point(close, point.0, point.1)
+                {
+                    self.close_button.state.active = false;
+                }
+                if self.title.is_some()
+                    && matches!(
+                        self.close_button
+                            .handle_event(InputEvent::Mouse(mouse), close),
+                        ComponentEvent::Activated(_)
+                    )
+                {
+                    self.close();
+                    return ComponentEvent::Dismissed(self.id.clone());
+                }
                 let list_area = self.list_area(area);
+                let row = self
+                    .list
+                    .borderless_item_index_at(list_area, point.0, point.1)
+                    .and_then(|index| self.items.get(index))
+                    .filter(|item| !item.disabled)
+                    .map(|item| {
+                        (
+                            item.id.clone(),
+                            Rect::new(list_area.x, point.1, list_area.width, 1),
+                        )
+                    });
+                match mouse.kind {
+                    MouseKind::Down(MouseButton::Left) => {
+                        self.pressed = row;
+                        return ComponentEvent::Changed(self.id.clone());
+                    }
+                    MouseKind::Drag(MouseButton::Left) | MouseKind::Move => {
+                        if self.pressed != row {
+                            self.pressed = None;
+                        }
+                    }
+                    MouseKind::Up(MouseButton::Left) => {
+                        if let Some(pressed) = self.pressed.take()
+                            && row.as_ref() == Some(&pressed)
+                        {
+                            self.close();
+                            return ComponentEvent::Activated(pressed.0);
+                        }
+                        return ComponentEvent::Consumed;
+                    }
+                    _ => self.pressed = None,
+                }
                 let event = self
                     .list
                     .handle_event_borderless(InputEvent::Mouse(mouse), list_area);
-                if activates && matches!(event, ComponentEvent::Selected(_, _)) {
+                if mouse.kind == MouseKind::Click(MouseButton::Left)
+                    && matches!(event, ComponentEvent::Selected(_, _))
+                {
                     return self.activate_selected();
                 }
                 self.translate_list_event(event)
@@ -191,34 +248,28 @@ impl ContextMenu {
             area,
         );
 
-        Clear.render(area, buffer);
-        let block = self.block(theme);
-        let inner = block.inner(area);
-        block.render(area, buffer);
-
-        let list = self.list_for_render();
-        list.render_borderless(inner, buffer, theme);
+        let context = DialogLayout::surface_theme(theme);
+        let layout = self.layout(area);
+        layout.render(buffer, self.title.as_deref().unwrap_or(""), &context);
+        self.close_button
+            .clone()
+            .with_background(context.theme.surface)
+            .render_borderless(layout.close, buffer, &DialogLayout::close_theme(&context));
+        let mut list = self.list_for_render();
+        if let Some((id, _)) = &self.pressed {
+            list.set_hovered(list.items.iter().position(|item| &item.id == id));
+        }
+        list.with_background(context.theme.surface)
+            .render_borderless(
+                self.list_area(area),
+                buffer,
+                &DialogLayout::body_theme(&context),
+            );
     }
 
     /// Renders the context menu through a Ratatui [`Frame`].
     pub fn render_frame(&self, frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
-        if !self.open {
-            return;
-        }
-        let _scope = crate::automation::scope(
-            self.id.as_str(),
-            "menu",
-            self.title.as_deref().unwrap_or(""),
-            area,
-        );
-
-        frame.render_widget(Clear, area);
-        let block = self.block(theme);
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-
-        let list = self.list_for_render();
-        list.render_borderless_frame(frame, inner, theme);
+        self.render(area, frame.buffer_mut(), theme);
     }
 
     fn activate_selected(&mut self) -> ComponentEvent {
@@ -252,7 +303,9 @@ impl ContextMenu {
         let hovered = self.list.hovered_index();
         let mut list = Self::make_list(&self.id, &self.items);
         list.state = self.state;
-        list.set_selected(selected);
+        list.set_selected(
+            selected.filter(|index| self.items.get(*index).is_some_and(|item| !item.disabled)),
+        );
         list.set_hovered(hovered);
         self.list = list;
     }
@@ -260,7 +313,11 @@ impl ContextMenu {
     fn list_for_render(&self) -> List {
         let mut list = Self::make_list(&self.id, &self.items);
         list.state = self.state;
-        list.set_selected(self.list.selected_index());
+        list.set_selected(
+            self.list
+                .selected_index()
+                .filter(|index| self.items.get(*index).is_some_and(|item| !item.disabled)),
+        );
         list.set_hovered(self.list.hovered_index());
         list
     }
@@ -275,23 +332,31 @@ impl ContextMenu {
                 })
                 .collect(),
         )
+        .with_highlight_symbol(Some("▌   "))
     }
 
     fn list_area(&self, area: Rect) -> Rect {
-        inner_area(area)
+        let body = self.layout(area).body;
+        if self.title.is_some() {
+            Rect::new(area.x, body.y, area.width, body.height)
+        } else {
+            let padding = u16::from(area.height > 2);
+            Rect::new(
+                area.x,
+                area.y + padding,
+                area.width,
+                area.height - padding * 2,
+            )
+        }
     }
 
-    fn block<'a>(&'a self, theme: &TundraTheme) -> ratatui::widgets::Block<'a> {
-        match self.title.as_deref() {
-            Some(title) => theme
-                .block()
-                .title(title)
-                .borders(Borders::ALL)
-                .style(theme.body_style()),
-            None => theme
-                .block()
-                .borders(Borders::ALL)
-                .style(theme.body_style()),
-        }
+    fn layout(&self, area: Rect) -> DialogLayout {
+        DialogLayout::new(
+            area,
+            0,
+            self.title
+                .as_ref()
+                .map(|_| self.close_button.label.as_str()),
+        )
     }
 }

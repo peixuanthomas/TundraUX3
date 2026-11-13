@@ -22,10 +22,14 @@ fn animation_timings_use_light_defaults_and_round_trip_explicit_old_phases() {
 #[test]
 fn explicit_old_timings_and_colors_survive_round_trip() {
     let value: AppearanceConfig = serde_json::from_str(
-        r##"{"border_color":"#29434E","animation_timings":{"page":[55,110,55],"dialog":[45,90,45],"menu":[40,80,40]}}"##,
+        r##"{"border_color":"#383838","animation_timings":{"page":[55,110,55],"dialog":[45,90,45],"menu":[40,80,40]}}"##,
     ).unwrap();
     assert_eq!(value.animation_timings.page, [55, 110, 55]);
     assert_eq!(value.animation_timings.menu, [40, 80, 40]);
+    assert_eq!(
+        value.border_color,
+        storage::BorderColor::Rgb(0x38, 0x38, 0x38)
+    );
     assert!(!value.animation_timings.is_default());
     let saved = serde_json::to_string(&value).unwrap();
     assert_eq!(
@@ -34,7 +38,7 @@ fn explicit_old_timings_and_colors_survive_round_trip() {
     );
     assert_eq!(
         AppearanceConfig::default().border_color,
-        storage::BorderColor::Rgb(0x38, 0x38, 0x38)
+        storage::BorderColor::Rgb(0x29, 0x43, 0x4e)
     );
     assert!(AnimationTimingsConfig::default().is_default());
 }

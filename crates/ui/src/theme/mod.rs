@@ -1,4 +1,4 @@
-//! Neutral terminal visual tokens and the compatibility theme used by existing
+//! Terminal visual tokens and the compatibility theme used by existing
 //! screens. New components consume [`ThemeTokens`]; the small `TundraTheme`
 //! facade keeps older view models source-compatible while they are migrated.
 
@@ -129,25 +129,25 @@ impl ThemeTokens {
             .bg(background)
     }
 
-    /// The neutral base palette. The established name remains source-compatible.
+    /// The Glacier Night base palette.
     pub const fn glacier_night() -> Self {
         Self {
             border_shape: BorderShape::Rounded,
-            canvas: Color::Rgb(0x10, 0x10, 0x10),
+            canvas: Color::Rgb(0x07, 0x11, 0x16),
             editor_canvas: Color::Black,
-            surface: Color::Rgb(0x18, 0x18, 0x18),
-            raised: Color::Rgb(0x24, 0x24, 0x24),
-            border: Color::Rgb(0x38, 0x38, 0x38),
-            text: Color::Rgb(0xE6, 0xE6, 0xE6),
-            muted: Color::Rgb(0x99, 0x99, 0x99),
+            surface: Color::Rgb(0x0D, 0x1B, 0x22),
+            raised: Color::Rgb(0x13, 0x26, 0x2F),
+            border: Color::Rgb(0x29, 0x43, 0x4E),
+            text: Color::Rgb(0xE6, 0xF1, 0xF4),
+            muted: Color::Rgb(0x8E, 0xA7, 0xB0),
             accent: Color::Rgb(0x63, 0xD3, 0xE5),
-            accent_soft: Color::Rgb(0x2F, 0x50, 0x56),
+            accent_soft: Color::Rgb(0x15, 0x3B, 0x46),
             accent_strong: Color::Rgb(0x76, 0xE1, 0xF1),
             focus: Color::Rgb(0xA4, 0xF1, 0xFA),
             success: Color::Rgb(0x79, 0xD6, 0x9B),
             warning: Color::Rgb(0xEB, 0xCB, 0x78),
             danger: Color::Rgb(0xF2, 0x7D, 0x89),
-            shadow: Color::Rgb(0x08, 0x08, 0x08),
+            shadow: Color::Rgb(0x02, 0x06, 0x08),
         }
     }
 
@@ -155,6 +155,9 @@ impl ThemeTokens {
     /// surface colours remain fixed, so a preference cannot turn ordinary
     /// cards into large accent-coloured fields.
     pub fn with_accent(mut self, accent: Color) -> Self {
+        if self.accent == accent {
+            return self;
+        }
         self.accent = accent;
         self.accent_soft = mix(accent, self.surface, 30);
         self.accent_strong = lighten(accent, 18);
@@ -162,9 +165,32 @@ impl ThemeTokens {
         self
     }
 
+    pub fn control_background(&self) -> Color {
+        match self.raised {
+            Color::Rgb(..) => lighten(self.raised, 5),
+            _ => Color::Blue,
+        }
+    }
+
+    pub fn selected_row_background(&self) -> Color {
+        match self.raised {
+            Color::Rgb(..) => lighten(self.raised, 8),
+            _ => Color::Blue,
+        }
+    }
+
+    pub(crate) fn interaction_background(&self, base: Color, pressed: bool) -> Color {
+        match base {
+            Color::Rgb(..) => lighten(base, if pressed { 10 } else { 5 }),
+            _ if pressed => Color::Gray,
+            Color::Blue => Color::Black,
+            _ => Color::Blue,
+        }
+    }
+
     /// Uses the explicitly limited ANSI palette when true colour is not
     /// available. The mapping intentionally stays stable across terminals:
-    /// black surfaces, white/gray text, the user's named ANSI accent with a
+    /// black, blue and gray surfaces, the user's named ANSI accent with a
     /// brighter focus, green success, yellow warning, and light-red danger.
     pub fn for_capability(self, capability: ColorCapability) -> Self {
         if capability == ColorCapability::TrueColor {
@@ -172,26 +198,27 @@ impl ThemeTokens {
         }
 
         let accent = ansi_accent(self.accent);
+        let ansi = |color, fallback| match color {
+            Color::Rgb(..) | Color::Indexed(_) => fallback,
+            color => color,
+        };
         Self {
             border_shape: self.border_shape,
-            canvas: Color::Black,
-            editor_canvas: Color::Black,
-            surface: Color::Black,
-            raised: Color::Black,
-            border: match self.border {
-                Color::Rgb(..) | Color::Indexed(_) => Color::DarkGray,
-                color => color,
-            },
-            text: Color::White,
-            muted: Color::Gray,
+            canvas: ansi(self.canvas, Color::Black),
+            editor_canvas: ansi(self.editor_canvas, Color::Black),
+            surface: ansi(self.surface, Color::DarkGray),
+            raised: ansi(self.raised, Color::Black),
+            border: ansi(self.border, Color::DarkGray),
+            text: ansi(self.text, Color::White),
+            muted: ansi(self.muted, Color::Gray),
             accent,
             accent_soft: Color::DarkGray,
-            accent_strong: accent,
-            focus: lighten(accent, 42),
-            success: Color::Green,
-            warning: Color::Yellow,
-            danger: Color::LightRed,
-            shadow: Color::Black,
+            accent_strong: ansi(self.accent_strong, accent),
+            focus: ansi(self.focus, lighten(accent, 42)),
+            success: ansi(self.success, Color::Green),
+            warning: ansi(self.warning, Color::Yellow),
+            danger: ansi(self.danger, Color::LightRed),
+            shadow: ansi(self.shadow, Color::Black),
         }
     }
 }
@@ -704,6 +731,7 @@ impl RenderContext {
         TundraTheme {
             color_capability: self.capabilities.color,
             buttons: self.buttons.clone(),
+            resolved_tokens: Some(self.theme),
             background: self.theme.canvas,
             foreground: self.theme.text,
             accent_color: self.theme.accent,
@@ -760,6 +788,8 @@ impl BorderShape {
 pub struct TundraTheme {
     pub color_capability: ColorCapability,
     pub buttons: Option<crate::components::ButtonFrame>,
+    #[doc(hidden)]
+    pub resolved_tokens: Option<ThemeTokens>,
     pub background: Color,
     pub foreground: Color,
     /// Color used for selected items, focus affordances, and other emphasis.
@@ -808,6 +838,7 @@ impl TundraTheme {
         Self {
             color_capability: ColorCapability::TrueColor,
             buttons: None,
+            resolved_tokens: None,
             background: tokens.canvas,
             foreground: tokens.text,
             accent_color: tokens.accent,
@@ -834,7 +865,10 @@ impl TundraTheme {
     }
 
     pub fn tokens(&self) -> ThemeTokens {
-        let mut tokens = ThemeTokens::glacier_night().with_accent(self.accent_color);
+        let mut tokens = self
+            .resolved_tokens
+            .unwrap_or_default()
+            .with_accent(self.accent_color);
         tokens.border_shape = self.border_shape;
         tokens.canvas = self.background;
         tokens.text = self.foreground;
@@ -855,7 +889,8 @@ impl TundraTheme {
     }
 
     pub fn border_style(&self) -> Style {
-        solid_border_style(Style::default().fg(self.border_color).bg(self.background))
+        let tokens = self.tokens();
+        solid_border_style(Style::default().fg(tokens.border).bg(tokens.canvas))
     }
 
     pub fn keyboard_focus_visible(&self) -> bool {
@@ -887,15 +922,24 @@ impl TundraTheme {
         self.button_accent_color()
     }
 
+    pub(crate) fn button_hover_fill(&self) -> Color {
+        let accent = self.button_accent_color();
+        if self.color_capability == ColorCapability::Ansi {
+            return self.tokens().interaction_background(accent, false);
+        }
+        color_rgb(accent).map_or(accent, |(r, g, b)| lighten(Color::Rgb(r, g, b), 14))
+    }
+
     /// Press feedback: move each RGB channel 35% toward white.
     pub fn button_pressed_color(&self) -> Color {
         self.buttons.as_ref().map_or_else(
             || {
                 if self.color_capability == ColorCapability::Ansi {
-                    return match lighten(self.accent_color, 35) {
+                    let accent = self.button_accent_color();
+                    return match lighten(accent, 35) {
                         Color::Black => Color::DarkGray,
                         Color::DarkGray => Color::Gray,
-                        color if color == self.accent_color => Color::White,
+                        color if color == accent => Color::White,
                         color => color,
                     };
                 }
@@ -903,14 +947,26 @@ impl TundraTheme {
                     lighten(Color::Rgb(r, g, b), 35)
                 })
             },
-            |frame| frame.pressed_color,
+            |frame| {
+                if self.color_capability == ColorCapability::Ansi {
+                    ansi_accent(frame.pressed_color)
+                } else {
+                    frame.pressed_color
+                }
+            },
         )
     }
 
     pub fn button_accent_color(&self) -> Color {
-        self.buttons
+        let accent = self
+            .buttons
             .as_ref()
-            .map_or(self.accent_color, |frame| frame.accent)
+            .map_or(self.accent_color, |frame| frame.accent);
+        if self.color_capability == ColorCapability::Ansi {
+            ansi_accent(accent)
+        } else {
+            accent
+        }
     }
 
     /// Unavailable actions use neutral gray in both true-color and ANSI
@@ -959,7 +1015,9 @@ impl TundraTheme {
 
     pub fn surface_style(&self) -> Style {
         let tokens = self.tokens();
-        Style::default().fg(tokens.text).bg(tokens.surface)
+        Style::default()
+            .fg(readable_foreground(tokens.text, tokens.surface))
+            .bg(tokens.surface)
     }
 
     pub fn raised_style(&self) -> Style {
@@ -997,6 +1055,22 @@ fn contrast_text(background: Color) -> Option<Color> {
     } else {
         Color::White
     })
+}
+
+pub(crate) fn readable_foreground(preferred: Color, background: Color) -> Color {
+    let (Some(foreground), Some(background_luminance)) = (
+        relative_luminance(preferred),
+        relative_luminance(background),
+    ) else {
+        return preferred;
+    };
+    let contrast = (foreground.max(background_luminance) + 0.05)
+        / (foreground.min(background_luminance) + 0.05);
+    if contrast >= 4.5 {
+        preferred
+    } else {
+        contrast_text(background).unwrap_or(preferred)
+    }
 }
 
 fn relative_luminance(color: Color) -> Option<f64> {
@@ -1081,7 +1155,7 @@ fn mix(foreground: Color, background: Color, foreground_percent: u8) -> Color {
     )
 }
 
-fn lighten(color: Color, amount: u8) -> Color {
+pub(crate) fn lighten(color: Color, amount: u8) -> Color {
     let Color::Rgb(red, green, blue) = color else {
         return match color {
             Color::Cyan => Color::LightCyan,

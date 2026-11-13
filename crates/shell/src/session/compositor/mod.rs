@@ -118,6 +118,8 @@ pub(crate) struct ScreenCompositor {
     motion: ShellMotionEffects,
     progress: SpringProgress,
     toast: Option<ui::components::Toast>,
+    toast_area: Option<Rect>,
+    toast_pressed_buttons: HashSet<PointerButton>,
     appearance: Option<(ui::ThemeTokens, u64)>,
     keyboard_open: bool,
     terminal_image_picker: Option<ui::EditorImagePicker>,
@@ -151,6 +153,7 @@ impl ScreenCompositor {
         frame: &mut Frame<'_>,
         display: &mut weathr::EmbeddedDisplay,
     ) -> io::Result<()> {
+        self.toast_area = None;
         let bounds = frame.area();
         let buffer = display.render((bounds.width, bounds.height))?;
         frame.buffer_mut().merge(buffer);
@@ -239,6 +242,7 @@ impl ScreenCompositor {
         error: crate::startup::terminal_size::ShellTerminalSizeError,
         theme: &ui::TundraTheme,
     ) {
+        self.toast_area = None;
         for cache in self.terminal_images.values_mut() {
             cache.clear();
             self.terminal_image_cleanup.extend(cache.take_cleanup());
@@ -280,6 +284,10 @@ impl ScreenCompositor {
         let page_overlay = top_overlay.is_some_and(|overlay| {
             overlay.category != super::overlays::ShellOverlayCategory::ShellModal
         });
+        let page_dialogs = overlays
+            .iter()
+            .filter(|overlay| overlay.category == super::overlays::ShellOverlayCategory::PageDialog)
+            .count();
         if let Some(capture) = &mut capture {
             capture.set_group("page", "page", bounds, modal || page_overlay);
         }
@@ -303,10 +311,30 @@ impl ScreenCompositor {
         }
         let mut frame_context = prepared.context.clone();
         frame_context.motion = state.interaction_motion_frame(frame_context.motion);
-        let hovered = state
+        let mut chrome = prepared.chrome.clone();
+        chrome.terminal_size = (bounds.width, bounds.height);
+        let layout = ui::ShellFrameLayout::new(
+            bounds,
+            chrome.status.time_button_label.as_deref(),
+            &frame_context,
+        )
+        .with_back_shortcut(chrome.back_shortcut)
+        .with_help_button(state.help_button_available())
+        .with_tasks_button(state.tasks_button_label().as_deref());
+        let layout = state.input_keyboard_content_layout(layout);
+        let toast_area = self
+            .toast
+            .as_ref()
+            .filter(|toast| !modal && !page_overlay && toast.is_visible(frame_context.motion))
+            .filter(|_| prepared.notification.is_none() && prepared.chrome.status.error.is_none())
+            .and_then(|toast| layout.status_message.map(|_| toast.layout(layout.main)))
+            .filter(|area| !area.is_empty());
+        self.toast_area = toast_area;
+        let hover_position = state
             .interaction
             .hover_position()
-            .and_then(|point| state.button_at(point));
+            .filter(|point| toast_area.is_none_or(|area| !area.contains((*point).into())));
+        let hovered = hover_position.and_then(|point| state.button_at(point));
         let pressed = if let Some((region, _)) = &state.screen_keyboard.pressed {
             Some(region.clone())
         } else if state.auto_admin_visible() {
@@ -324,16 +352,11 @@ impl ScreenCompositor {
             &frame_context.compatibility_theme(),
         );
         buttons.keyboard_focus_visible = state.interaction.keyboard_focus_visible();
+        if overlays.is_empty() {
+            buttons.hover_position = hover_position;
+        }
         frame_context.buttons = Some(buttons.clone());
         let context = &frame_context;
-        let mut chrome = prepared.chrome.clone();
-        chrome.terminal_size = (bounds.width, bounds.height);
-        let layout =
-            ui::ShellFrameLayout::new(bounds, chrome.status.time_button_label.as_deref(), context)
-                .with_back_shortcut(chrome.back_shortcut)
-                .with_help_button(state.help_button_available())
-                .with_tasks_button(state.tasks_button_label().as_deref());
-        let layout = state.input_keyboard_content_layout(layout);
         // Use the actual frame bounds, including a resize arriving just before draw.
         state.terminal_size = (bounds.width, bounds.height);
         state.refresh_hit_map_with_frame_layout(context.transitions, layout);
@@ -353,7 +376,7 @@ impl ScreenCompositor {
         let icons = icons.filter(|_| state.graphical_icons_enabled());
         if visible_content {
             // Raster cells compose safely while modal surfaces or layouts move.
-            let picker = (overlays.is_empty() && !keyboard_animating)
+            let picker = (overlays.is_empty() && !keyboard_animating && toast_area.is_none())
                 .then_some(self.terminal_image_picker.as_ref())
                 .flatten();
             let page = state.content_page_id();
@@ -410,7 +433,13 @@ impl ScreenCompositor {
             ui::render_compact_home(frame, layout.main, &chrome, &context.compatibility_theme());
         }
         if visible_content {
+            if page_dialogs > 0 {
+                ui::dim_modal_backdrop(frame.buffer_mut(), layout.main, context);
+            }
             content.render_overlay_underlay(frame, &layout, context);
+            if page_dialogs > 1 {
+                ui::dim_modal_backdrop(frame.buffer_mut(), layout.main, context);
+            }
         }
         let capture_after_page_overlays =
             self.motion.needs_shell_modal_base() || self.motion.needs_page_overlay_base();
@@ -440,16 +469,8 @@ impl ScreenCompositor {
         let mut displayed_status = chrome.status.clone();
         if prepared.notification.is_none()
             && prepared.chrome.status.error.is_none()
-            && let (Some(toast), Some(area)) = (&self.toast, layout.status_message)
+            && let Some(toast) = self.toast.as_ref()
         {
-            // Reuse the status button's resolved colors, including hover/press,
-            // while keeping the existing Toast timing and semantic border style.
-            let mut toast_context = context.clone();
-            if area.width > 2 && area.height > 2 {
-                toast_context.theme.border = frame.buffer_mut()[(area.x, area.y + 1)].fg;
-                toast_context.theme.text = frame.buffer_mut()[(area.x + 1, area.y + 1)].fg;
-            }
-            toast.render_frame(frame, area, &toast_context);
             if toast.is_visible(context.motion) {
                 displayed_status.toast = Some(toast.message.clone());
             }
@@ -457,6 +478,12 @@ impl ScreenCompositor {
         state.displayed_status = Some(displayed_status.full_message());
         if capture_after_page_overlays {
             self.motion.capture_base(frame.buffer_mut(), state);
+        }
+        if prepared.notification.is_some()
+            || prepared.help.is_some()
+            || prepared.time_sync.is_some()
+        {
+            ui::dim_modal_backdrop(frame.buffer_mut(), bounds, context);
         }
         if let Some(capture) = &mut capture
             && (prepared.notification.is_some()
@@ -494,6 +521,7 @@ impl ScreenCompositor {
             );
         }
         if let Some(auto_admin) = state.auto_admin_view() {
+            ui::dim_modal_backdrop(frame.buffer_mut(), bounds, context);
             if let Some(capture) = &mut capture {
                 capture.set_group(
                     "authorization",
@@ -564,6 +592,12 @@ impl ScreenCompositor {
             state,
             &terminal_areas,
         );
+        if let (Some(toast), Some(area)) = (&self.toast, toast_area) {
+            if let Some(capture) = &mut capture {
+                capture.set_group("toast", "status", area, false);
+            }
+            toast.render_frame(frame, area, context);
+        }
         if let Some(capture) = &mut capture
             && let Some(launcher) = state.keyboard_launcher_area()
         {
@@ -591,12 +625,14 @@ impl ScreenCompositor {
                 .and_then(|(_, motion)| motion.next_redraw_in(context.motion)),
             script_animating.then_some(ui::ANIMATION_FRAME_INTERVAL),
             self.motion.next_redraw_in(context.motion),
-            (!context.motion.reduced_motion
-                && overlays.is_empty()
-                && content.busy_visible(layout.main))
-            .then_some(ui::BusyIndicator::FRAME_INTERVAL),
+            (overlays.is_empty() && visible_content && content.busy_visible(layout.main))
+                .then(|| {
+                    ui::BusyIndicator::redraw_interval(context.motion, context.capabilities.color)
+                })
+                .flatten(),
             self.toast
                 .as_ref()
+                .filter(|_| toast_area.is_some())
                 .filter(|toast| toast.requests_redraw(context.motion))
                 .map(|_| ui::ANIMATION_FRAME_INTERVAL),
         ]
@@ -609,18 +645,20 @@ impl ScreenCompositor {
             snapshot.animation_running = animation_running;
             snapshot.background_tasks_running =
                 state.tasks.has_running() || state.auto_admin_running();
-            for node in snapshot
-                .nodes
-                .iter_mut()
-                .filter(|node| node.id.starts_with("chrome/") && node.role == "button")
-            {
+            for node in snapshot.nodes.iter_mut().filter(|node| node.actionable) {
                 let point = (
                     node.rect.x + node.rect.width / 2,
                     node.rect.y + node.rect.height / 2,
                 );
-                node.actionable &= state.button_at(point).is_some_and(|button| {
-                    node.id.strip_prefix("chrome/") == Some(button.id.as_str()) && !button.disabled
-                });
+                if toast_area.is_some_and(|area| area.contains(point.into())) {
+                    node.actionable = false;
+                } else if let Some(id) = node.id.strip_prefix("chrome/")
+                    && node.role == "button"
+                {
+                    node.actionable = state
+                        .button_at(point)
+                        .is_some_and(|button| id == button.id.as_str() && !button.disabled);
+                }
                 if !node.actionable {
                     node.actions.clear();
                 }
@@ -712,6 +750,7 @@ impl ScreenCompositor {
         self.motion.cancel_for_suspend(state)
     }
     pub(super) fn cancel_for_bounds_change(&mut self) {
+        self.toast_area = None;
         self.motion.cancel_for_bounds_change();
     }
     pub(super) fn take_deferred_close(&mut self, state: &ShellSession) -> Option<RoutedEvent> {
@@ -724,8 +763,46 @@ impl ScreenCompositor {
         platform: &dyn Platform,
         received_at: Instant,
     ) -> Option<InputEvent> {
+        if matches!(input, InputEvent::FocusLost) || state.screen_saver.active {
+            self.toast_pressed_buttons.clear();
+        }
         if state.screen_saver.active {
             return state.prepare_input(input, platform, received_at);
+        }
+        if let InputEvent::Mouse(mouse) = &input {
+            let covered = self
+                .toast_area
+                .is_some_and(|area| area.contains(mouse.coordinates().into()));
+            let blocked_gesture = match mouse.kind {
+                ui::MouseEventKind::Down(button) => {
+                    if covered {
+                        self.toast_pressed_buttons.insert(button);
+                    } else {
+                        self.toast_pressed_buttons.remove(&button);
+                    }
+                    covered
+                }
+                ui::MouseEventKind::Up(button) => self.toast_pressed_buttons.remove(&button),
+                ui::MouseEventKind::Drag(button) => {
+                    if covered {
+                        self.toast_pressed_buttons.insert(button);
+                    }
+                    self.toast_pressed_buttons.contains(&button)
+                }
+                _ => false,
+            };
+            if covered || blocked_gesture {
+                state.consume_screen_saver_input(&input, received_at);
+                state.interaction.pointer_position = None;
+                state.hovered_component = None;
+                if mouse.kind != ui::MouseEventKind::Moved {
+                    state.cancel_pointer_gestures_for_modal();
+                    state.pages.editor.editor_drag_anchor = None;
+                    state.pages.system_status.system_status_widget_drag = None;
+                    state.last_click = None;
+                }
+                return None;
+            }
         }
         if matches!(input, InputEvent::FocusLost | InputEvent::Resize { .. }) {
             if let Some(close) = self.motion.cancel_for_suspend(state) {

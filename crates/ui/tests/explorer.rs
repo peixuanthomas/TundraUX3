@@ -123,7 +123,7 @@ fn quick_access_without_a_current_location_does_not_select_the_trash() {
         ratatui::style::Color::DarkGray
     );
     assert_eq!(buffer[(trash.x, trash.y)].fg, theme.foreground);
-    assert_eq!(buffer[(trash.x, trash.y)].bg, theme.background);
+    assert_eq!(buffer[(trash.x, trash.y)].bg, context.theme.raised);
     assert_eq!(buffer[(trash.x, trash.y)].symbol(), " ");
 }
 
@@ -235,7 +235,7 @@ fn explorer_quick_access_scrolls_current_location_into_view() {
     assert_eq!(scrolled.quick_locations.last().unwrap().index, 11);
     assert_eq!(
         scrolled.quick_locations[0].area.right(),
-        scrolled.quick_location_scrollbar.unwrap().x
+        scrolled.quick_location_scrollbar.unwrap().x - 1
     );
 }
 
@@ -353,6 +353,12 @@ fn explorer_layout_keeps_focused_entry_visible_and_adds_scrollbar() {
         (scrollbar.track.x, scrollbar.track.bottom()),
     ] {
         assert_ne!(layout.hit_test(x, y), Some(ExplorerHitTarget::Scrollbar));
+    }
+    for row in &layout.rows {
+        assert_eq!(
+            layout.hit_test(row.area.right() - 1, row.area.y),
+            Some(ExplorerHitTarget::Entry(row.index))
+        );
     }
     assert!(layout.visible_start > 0);
     assert!(layout.rows.iter().any(|row| row.index == 15));
@@ -572,7 +578,14 @@ fn explorer_name_dialog_renders_clickable_input_and_actions() {
         assert_eq!(cell.symbol(), character.to_string());
         if index < 10 {
             assert_eq!(cell.bg, theme.tokens().focus);
-            assert_eq!(cell.fg, theme.tokens().surface);
+            assert_eq!(
+                cell.fg,
+                theme
+                    .tokens()
+                    .filled_style(theme.tokens().focus)
+                    .fg
+                    .unwrap()
+            );
         } else {
             assert_ne!(cell.bg, theme.tokens().focus);
         }

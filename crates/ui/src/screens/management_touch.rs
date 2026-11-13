@@ -1,13 +1,16 @@
 use crate::{
     RenderContext,
-    components::{Button, Scrollbar, ScrollbarOrientation, Surface, TextInput},
+    components::{
+        Button, ButtonEmphasis, DialogLayout, FormAction, PageAction, PageActionBar, Scrollbar,
+        ScrollbarOrientation, Surface, TextInput,
+    },
 };
 use ratatui::{
     Frame,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Clear, Paragraph},
+    widgets::Paragraph,
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -258,107 +261,37 @@ fn management_clipped_line(text: &str, hidden: usize, width: u16) -> String {
         .collect::<String>();
     crate::components::truncate_to_terminal_width(&clipped, usize::from(width))
 }
-fn inner(area: Rect) -> Rect {
-    Rect::new(
-        area.x.saturating_add(1),
-        area.y.saturating_add(1),
-        area.width.saturating_sub(2),
-        area.height.saturating_sub(2),
-    )
-}
 fn pane_inner(area: Rect) -> Rect {
     Surface::new().titled("").inner(area)
 }
-fn management_choice_is_menu(form: &ManagementForm) -> bool {
-    matches!(form.identity.as_str(), "more-actions" | "config-menu")
-}
-fn management_choice_width(form: &ManagementForm, choice: &ManagementChoices) -> usize {
-    let decoration = if management_choice_is_menu(form) {
-        0
-    } else {
-        4
-    };
+fn management_choice_width(choice: &ManagementChoices) -> usize {
     choice
         .values
         .iter()
-        .map(|value| value.width().saturating_add(decoration))
+        .map(|value| value.width())
         .max()
         .unwrap_or(0)
 }
 fn choice_form(main: Rect, form: &ManagementForm, choice: &ManagementChoices) -> Rect {
-    let content_width = management_choice_width(form, choice)
+    let content_width = management_choice_width(choice)
         .saturating_add(1)
-        .max(form.title.width())
-        .max(i18n::tr!("management-form-close").width() + 2);
+        .max(form.title.width() + i18n::tr!("management-form-close").width() + 3);
     let width = content_width
         .saturating_add(6)
         .clamp(24, 88)
         .min(usize::from(
             main.width.saturating_sub(u16::from(main.width > 8) * 2),
         )) as u16;
-    let horizontal = management_choice_width(form, choice) > usize::from(width.saturating_sub(6));
+    let horizontal =
+        management_choice_width(choice) > usize::from(DialogLayout::content_width(width));
     let height = choice
         .values
         .len()
-        .saturating_add(6 + usize::from(horizontal))
+        .saturating_add(4 + usize::from(horizontal))
         .min(usize::from(
             main.height.saturating_sub(u16::from(main.height > 8) * 2),
         )) as u16;
-    Rect::new(
-        main.x + main.width.saturating_sub(width) / 2,
-        main.y + main.height.saturating_sub(height) / 2,
-        width,
-        height,
-    )
-}
-fn choice_form_inner(form: Rect) -> Rect {
-    let content = inner(form).intersection(form);
-    // Keep a blank row and two blank columns between menu items and the border.
-    // Small terminals spend these cells on reachable items instead.
-    let horizontal = if content.width >= 10 { 2 } else { 0 };
-    let vertical = u16::from(content.height >= 5);
-    Rect::new(
-        content.x + horizontal,
-        content.y + vertical,
-        content.width.saturating_sub(horizontal * 2),
-        content.height.saturating_sub(vertical * 2),
-    )
-}
-fn form_submit_text(form: &ManagementForm) -> String {
-    format!(
-        "F10 {}",
-        form.submit_label
-            .clone()
-            .unwrap_or_else(|| i18n::tr!("management-form-submit"))
-    )
-}
-fn content_form_inner(form: Rect, spacious: bool) -> Rect {
-    if form.height <= 5 {
-        return form;
-    }
-    let content = inner(form).intersection(form);
-    let horizontal = if content.width >= 38 {
-        2
-    } else {
-        u16::from(content.width >= 10)
-    };
-    let vertical = u16::from(spacious && content.height >= 5);
-    Rect::new(
-        content.x + horizontal,
-        content.y + vertical,
-        content.width.saturating_sub(horizontal * 2),
-        content.height.saturating_sub(vertical * 2),
-    )
-}
-fn form_cancel_text(form: &ManagementForm) -> String {
-    if let Some(label) = &form.cancel_label {
-        return format!("Esc {label}");
-    }
-    if form.dismiss_only {
-        i18n::tr!("management-form-close")
-    } else {
-        format!("Esc {}", i18n::tr!("management-form-cancel"))
-    }
+    crate::centered_rect(main, width, height)
 }
 fn field_lines(field: &ManagementFormField, width: u16) -> Vec<String> {
     if field.control == ManagementFormControl::Toggle {
@@ -471,40 +404,18 @@ pub fn management_permission_cells(
 pub fn management_permission_id(form: &ManagementForm, index: usize, cell: usize) -> String {
     format!("{}.cell.{cell}", management_field_id(form, index))
 }
-fn form_action_sizes(form: &ManagementForm, width: u16) -> (u16, u16, u16, u16, u16) {
-    if !form.buttons.is_empty() {
-        return (0, 0, 0, 0, form.action_bar().height(width));
-    }
-    let submit = if form.dismiss_only {
-        0
-    } else {
-        (form_submit_text(form).width() + 2).min(usize::from(width)) as u16
-    };
-    let cancel = (form_cancel_text(form).width() + 2).min(usize::from(width)) as u16;
-    let submit_height = if submit == 0 {
-        0
-    } else {
-        management_wrapped_lines(&form_submit_text(form), submit)
-            .len()
-            .min(usize::from(u16::MAX)) as u16
-    };
-    let cancel_height = management_wrapped_lines(&form_cancel_text(form), cancel)
-        .len()
-        .min(usize::from(u16::MAX)) as u16;
-    let rows = if submit > 0 && submit.saturating_add(1).saturating_add(cancel) > width {
-        submit_height.saturating_add(cancel_height)
-    } else {
-        submit_height.max(cancel_height)
-    };
-    (submit, cancel, submit_height, cancel_height, rows)
-}
 fn form_columns(form: &ManagementForm) -> usize {
     form.columns.max(1).min(form.fields.len().max(1))
 }
 fn form_field_width(width: u16, columns: usize) -> u16 {
     width.saturating_sub(columns as u16) / columns as u16
 }
-fn content_form(main: Rect, form: &ManagementForm) -> Rect {
+fn content_form(
+    main: Rect,
+    form: &ManagementForm,
+    bar: &PageActionBar,
+    close: Option<&str>,
+) -> Rect {
     let max_width = main.width.saturating_sub(u16::from(main.width > 40) * 2);
     let longest = form
         .message
@@ -526,23 +437,18 @@ fn content_form(main: Rect, form: &ManagementForm) -> Rect {
         .unwrap_or(0);
     let columns = form_columns(form);
     let longest = longest.saturating_mul(columns).saturating_add(columns - 1);
-    let actions = if !form.buttons.is_empty() {
-        form.actions()
-            .iter()
-            .map(|button| button.label().width() + 3)
-            .sum()
-    } else if form.dismiss_only {
-        form_cancel_text(form).width() + 2
-    } else {
-        form_submit_text(form).width() + form_cancel_text(form).width() + 5
-    };
+    let actions = bar
+        .actions
+        .iter()
+        .map(|button| button.label.width() + 3)
+        .sum();
     let width = longest
-        .max(form.title.width())
+        .max(form.title.width() + close.map_or(0, |label| label.width() + 3))
         .max(actions)
         .saturating_add(7)
         .clamp(32, 88)
         .min(usize::from(max_width)) as u16;
-    let content_width = content_form_inner(Rect::new(0, 0, width, 12), true).width;
+    let content_width = DialogLayout::content_width(width);
     let message = if form.message.is_empty() {
         0
     } else {
@@ -560,12 +466,12 @@ fn content_form(main: Rect, form: &ManagementForm) -> Rect {
         })
         .sum::<usize>()
         + form.fields.len().div_ceil(columns).saturating_sub(1);
-    let (_, _, _, _, footer) = form_action_sizes(form, content_width);
+    let footer = bar.height(content_width);
     let height = (message
         + fields
         + usize::from(message > 0 && fields > 0)
         + usize::from(footer)
-        + if main.height > 16 { 5 } else { 3 })
+        + if footer > 0 { 6 } else { 4 })
     .min(usize::from(
         main.height.saturating_sub(u16::from(main.height > 16) * 2),
     )) as u16;
@@ -638,6 +544,7 @@ pub struct ManagementLayout {
     pub content: Rect,
     pub output_text: Rect,
     pub form: Rect,
+    dialog: DialogLayout,
     pub message: Rect,
     pub fields_area: Rect,
     pub fields: Vec<(usize, Rect)>,
@@ -1170,15 +1077,55 @@ fn management_content_layout(
         }
     }
     let form_model = model.form.as_ref();
+    let buttons = form_model.map_or_else(Vec::new, ManagementForm::actions);
+    let cancel_index = buttons
+        .iter()
+        .position(|button| button.action == FormAction::Cancel);
+    let close_label = if form_model.is_some_and(|form| form.choice.is_some()) {
+        Some(i18n::tr!("management-form-close"))
+    } else {
+        cancel_index.map(|index| buttons[index].label())
+    };
+    let footer_indices = (0..buttons.len())
+        .filter(|index| Some(*index) != cancel_index)
+        .collect::<Vec<_>>();
+    let footer = PageActionBar::new("").with_actions(
+        footer_indices
+            .iter()
+            .map(|index| {
+                let button = &buttons[*index];
+                PageAction::new(button.id.as_str(), button.label()).disabled(button.disabled)
+            })
+            .collect(),
+    );
     let form = form_model
         .map(|form| {
             form.choice.as_ref().map_or_else(
-                || content_form(form_area, form),
+                || content_form(form_area, form, &footer, close_label.as_deref()),
                 |choice| choice_form(form_area, form, choice),
             )
         })
         .unwrap_or_default();
-    let form_inner = content_form_inner(form, main.height > 16);
+    let body_minimum = if form_model.is_some_and(|form| !form.fields.is_empty()) {
+        2
+    } else {
+        1
+    };
+    let is_choice = form_model.is_some_and(|form| form.choice.is_some());
+    let footer_height = if is_choice {
+        0
+    } else {
+        footer
+            .height(DialogLayout::content_width(form.width))
+            .min(form.height.saturating_sub(1 + body_minimum))
+    };
+    let dialog = DialogLayout::with_min_body(
+        form,
+        footer_height,
+        close_label.as_deref(),
+        if is_choice { 2 } else { body_minimum },
+    );
+    let form_inner = dialog.body;
     let message_len = form_model.map_or(0, |form| {
         if form.message.is_empty() {
             0
@@ -1187,12 +1134,7 @@ fn management_content_layout(
         }
     });
     let has_fields = form_model.is_some_and(|form| !form.fields.is_empty());
-    let (submit_width, cancel_width, submit_height, cancel_height, footer_height) =
-        form_model.map_or((0, 0, 0, 0, 0), |f| form_action_sizes(f, form_inner.width));
-    let footer_height = footer_height.min(form_inner.height);
-    let available = form_inner
-        .height
-        .saturating_sub(footer_height + u16::from(form_inner.height > footer_height));
+    let available = form_inner.height;
     let field_min = form_model
         .and_then(|f| {
             f.fields
@@ -1285,51 +1227,32 @@ fn management_content_layout(
             })
         })
         .collect();
-    let mut submit = Rect::new(
-        if submit_width.saturating_add(cancel_width).saturating_add(1) > form_inner.width {
-            form_inner.right().saturating_sub(submit_width)
-        } else {
-            form_inner
-                .right()
-                .saturating_sub(submit_width + cancel_width + u16::from(submit_width > 0))
-                .max(form_inner.x)
-        },
-        form_inner.bottom().saturating_sub(footer_height),
-        submit_width,
-        submit_height.min(footer_height),
-    );
-    let mut cancel = Rect::new(
-        form_inner.right().saturating_sub(cancel_width),
-        form_inner
-            .bottom()
-            .saturating_sub(cancel_height.min(footer_height))
-            .max(form_inner.y),
-        cancel_width,
-        cancel_height.min(footer_height),
-    );
-    let form_buttons = form_model.map_or_else(Vec::new, |form| {
-        if !form.buttons.is_empty() {
-            let buttons = form
-                .action_bar()
-                .layout(form_inner)
-                .actions
+    let mut form_buttons = Vec::new();
+    if let Some(form_model) = form_model.filter(|_| !is_choice) {
+        let selected = form_model
+            .selected
+            .checked_sub(form_model.fields.len())
+            .and_then(|index| footer_indices.iter().position(|item| *item == index));
+        form_buttons.extend(
+            dialog
+                .action_areas(&footer, selected)
                 .into_iter()
-                .map(|button| (button.index, button.area))
-                .collect::<Vec<_>>();
-            for (index, area) in &buttons {
-                match form.buttons[*index].action {
-                    crate::components::FormAction::Submit => submit = *area,
-                    crate::components::FormAction::Cancel => cancel = *area,
-                    _ => {}
-                }
-            }
-            buttons
-        } else if form.dismiss_only {
-            vec![(0, cancel)]
-        } else {
-            vec![(0, submit), (1, cancel)]
+                .map(|(index, area)| (footer_indices[index], area)),
+        );
+        if let Some(index) = cancel_index {
+            form_buttons.push((index, dialog.close));
         }
-    });
+        form_buttons.sort_unstable_by_key(|(index, _)| *index);
+    }
+    let submit = form_buttons
+        .iter()
+        .find(|(index, _)| buttons[*index].action == FormAction::Submit)
+        .map_or(Rect::default(), |(_, area)| *area);
+    let cancel = if cancel_index.is_some() {
+        dialog.close
+    } else {
+        Rect::default()
+    };
     if let Some(form_model) = form_model {
         add_text_bar(
             &mut scrollbars,
@@ -1354,11 +1277,9 @@ fn management_content_layout(
     let mut choice_cancel = Rect::default();
     if let Some(choice) = form_model.and_then(|form| form.choice.as_ref()) {
         choice_panel = Some(form);
-        let choice_inner = choice_form_inner(form);
-        let content_width = management_choice_width(form_model.unwrap(), choice);
-        let footer_height = u16::from(choice_inner.height > 0);
-        let gap = u16::from(choice_inner.height > 3);
-        let available = choice_inner.height.saturating_sub(footer_height + gap);
+        let choice_inner = dialog.body;
+        let content_width = management_choice_width(choice);
+        let available = choice_inner.height;
         let mut vertical = choice.values.len() > usize::from(available);
         let mut horizontal =
             content_width > usize::from(choice_inner.width.saturating_sub(u16::from(vertical)));
@@ -1368,9 +1289,9 @@ fn management_content_layout(
             content_width > usize::from(choice_inner.width.saturating_sub(u16::from(vertical)));
         let row_height = available.saturating_sub(u16::from(horizontal));
         let rows = Rect::new(
-            choice_inner.x,
+            form.x,
             choice_inner.y,
-            choice_inner.width.saturating_sub(u16::from(vertical)),
+            form.width.saturating_sub(u16::from(vertical)),
             row_height,
         );
         let count = usize::from(rows.height);
@@ -1385,20 +1306,11 @@ fn management_content_layout(
                 )
             })
             .collect();
-        choice_cancel = Rect::new(
-            choice_inner.right().saturating_sub(
-                (i18n::tr!("management-form-close").width() + 2)
-                    .min(usize::from(choice_inner.width)) as u16,
-            ),
-            choice_inner.bottom().saturating_sub(footer_height),
-            (i18n::tr!("management-form-close").width() + 2).min(usize::from(choice_inner.width))
-                as u16,
-            footer_height,
-        );
+        choice_cancel = dialog.close;
         if let Some(bar) = management_scrollbar(
             ManagementScrollTarget::Choices,
             Rect::new(
-                choice_inner.right().saturating_sub(1),
+                form.right().saturating_sub(1).max(form.x),
                 rows.y,
                 u16::from(vertical),
                 rows.height,
@@ -1413,13 +1325,13 @@ fn management_content_layout(
         if let Some(bar) = management_scrollbar(
             ManagementScrollTarget::ChoiceColumns,
             Rect::new(
-                rows.x,
+                choice_inner.x,
                 rows.bottom(),
-                rows.width,
+                choice_inner.width.saturating_sub(u16::from(vertical)),
                 u16::from(horizontal && available > 0),
             ),
             content_width,
-            usize::from(rows.width),
+            usize::from(choice_inner.width.saturating_sub(u16::from(vertical))),
             choice.columns,
             true,
         ) {
@@ -1452,6 +1364,7 @@ fn management_content_layout(
         content,
         output_text,
         form,
+        dialog,
         message,
         fields_area,
         fields,
@@ -1659,7 +1572,6 @@ pub fn render_management_content(
     let context = &content_context;
     let theme = context.compatibility_theme();
     let layout = management_layout(main, model);
-    let selected = theme.body_style().bg(context.theme.accent_soft);
     let list_focused = !model.filtering
         && !model.actions_focused
         && model.form.is_none()
@@ -1761,7 +1673,15 @@ pub fn render_management_content(
         Surface::new()
             .focused(details_focused)
             .titled(i18n::tr!("management-touch-details"))
+            .raised(true)
             .render_frame(frame, layout.details, context);
+        let details_style = theme.body_style().bg(context.theme.raised);
+        Surface::new()
+            .raised(true)
+            .render_frame(frame, layout.actions_panel, context);
+        Surface::new()
+            .raised(true)
+            .render_frame(frame, layout.detail_actions_panel, context);
         let table_line = |cells: &[String]| {
             cells
                 .iter()
@@ -1789,7 +1709,7 @@ pub fn render_management_content(
         };
         let mut lines = vec![Line::styled(
             table_line(&model.columns),
-            theme.title_style(),
+            theme.title_style().bg(context.theme.surface),
         )];
         if crate::automation::enabled() {
             let _table = crate::automation::scope(
@@ -1848,18 +1768,30 @@ pub fn render_management_content(
             .skip(model.scroll)
             .take(layout.list_capacity)
         {
-            let mut style = if model
-                .selected_rows
-                .as_ref()
-                .map_or(index == model.selected, |rows| rows.contains(&index))
-            {
-                selected
-            } else {
-                theme.body_style()
+            let row_area = Rect::new(
+                layout.list_rows.x,
+                layout.list_rows.y + (index - model.scroll) as u16,
+                layout.list_rows.width,
+                1,
+            );
+            let state = crate::components::ComponentState {
+                selected: model
+                    .selected_rows
+                    .as_ref()
+                    .map_or(index == model.selected, |rows| rows.contains(&index)),
+                focused: index == model.selected && list_focused,
+                hovered: context
+                    .buttons
+                    .as_ref()
+                    .and_then(|buttons| buttons.hover_position)
+                    .is_some_and(|(x, y)| crate::components::contains_point(row_area, x, y)),
+                ..Default::default()
             };
-            if index == model.selected && list_focused && theme.keyboard_focus_visible() {
-                style = style.add_modifier(Modifier::UNDERLINED);
-            }
+            let style = crate::components::row_style(state, &theme, context.theme.surface);
+            frame.buffer_mut().set_style(
+                row_area,
+                Style::default().bg(style.bg.unwrap_or(context.theme.surface)),
+            );
             lines.push(Line::styled(table_line(row), style));
         }
         let area = Rect::new(
@@ -1873,18 +1805,29 @@ pub fn render_management_content(
             area.intersection(main),
         );
         if model.rows.is_empty() {
-            let message = if model.loading {
-                format!(
-                    "{} {}",
-                    crate::components::BusyIndicator::from_motion(context.motion).symbol(),
-                    i18n::tr!("management-loading")
-                )
-            } else if model.empty_message.is_empty() {
-                i18n::tr!("management-empty")
+            if model.loading {
+                let area = layout.list_rows;
+                frame.render_widget(
+                    Paragraph::new(crate::BusyIndicator::from_motion(context.motion).label(
+                        &i18n::tr!("management-loading"),
+                        area.width,
+                        context,
+                    )),
+                    area,
+                );
             } else {
-                model.empty_message.clone()
-            };
-            render_text(frame, layout.list_rows, &message, 0, context);
+                let message = if model.empty_message.is_empty() {
+                    i18n::tr!("management-empty")
+                } else {
+                    model.empty_message.clone()
+                };
+                frame.render_widget(
+                    Paragraph::new(message)
+                        .style(Style::default().fg(context.theme.muted))
+                        .wrap(ratatui::widgets::Wrap { trim: true }),
+                    layout.list_rows,
+                );
+            }
         }
         for (index, area) in &layout.headers {
             let label = model.sort.map_or_else(
@@ -1907,6 +1850,7 @@ pub fn render_management_content(
                 management_header_id(model, *index),
                 crate::table_sort::table_header_text(&label, area.width),
             )
+            .with_background(context.theme.surface)
             .with_bracketed_label(false)
             .render_borderless_frame(frame, *area, &theme);
         }
@@ -1947,7 +1891,7 @@ pub fn render_management_content(
                         })
                         .collect::<Vec<_>>(),
                 )
-                .style(theme.body_style()),
+                .style(details_style),
                 layout.details_text,
             );
         } else {
@@ -1985,7 +1929,7 @@ pub fn render_management_content(
                         })
                         .collect::<Vec<_>>(),
                 )
-                .style(theme.body_style()),
+                .style(details_style),
                 layout.details_text,
             );
         }
@@ -2079,69 +2023,66 @@ pub fn render_management_overlay(
         return;
     };
     let layout = management_layout(main, model);
-    let theme = context.compatibility_theme();
+    let theme = DialogLayout::body_theme(context);
     let _scope = crate::automation::scope(
         &format!("management.form.{}", form.identity),
         "dialog",
         &form.title,
         layout.form,
     );
-    frame.render_widget(Clear, layout.form);
-    Surface::new()
-        .bordered(form.choice.is_some() || layout.form.height > 5)
-        .raised(true)
-        .titled(
-            if form
-                .choice
-                .as_ref()
-                .is_some_and(|choice| !choice.search.is_empty())
-            {
-                format!("{} · {}", form.title, form.choice.as_ref().unwrap().search)
-            } else {
-                form.title.clone()
-            },
-        )
-        .render_frame(frame, layout.form, context);
+    let title = form
+        .choice
+        .as_ref()
+        .filter(|choice| !choice.search.is_empty())
+        .map_or_else(
+            || form.title.clone(),
+            |choice| format!("{} · {}", form.title, choice.search),
+        );
+    layout.dialog.render_frame(frame, &title, context);
     if let Some(choice) = &form.choice {
+        let inset = layout.dialog.body.x - layout.form.x;
+        let left = " ".repeat(usize::from(inset));
+        let width = layout.dialog.body.width.saturating_sub(u16::from(
+            layout
+                .scrollbars
+                .iter()
+                .any(|bar| bar.target == ManagementScrollTarget::Choices),
+        ));
         for (index, area) in &layout.choice_rows {
             let value = &choice.values[*index];
-            let is_menu = management_choice_is_menu(form);
-            let text = if is_menu {
-                value.clone()
+            let selected = *index == choice.selected;
+            let text = management_clipped_line(value, choice.columns, width);
+            let text = if selected && inset > 0 {
+                format!("▌{}{text}", " ".repeat(usize::from(inset - 1)))
             } else {
-                format!(
-                    "{} {value}",
-                    if *index == choice.selected {
-                        "●"
-                    } else {
-                        "○"
-                    }
-                )
+                format!("{left}{text}")
             };
-            let mut columns = 0;
-            let text = text
-                .chars()
-                .skip_while(|c| {
-                    if columns < choice.columns {
-                        columns += c.width().unwrap_or(0);
-                        true
-                    } else {
-                        false
-                    }
-                })
-                .collect::<String>();
+            let disabled = choice.disabled.get(*index).copied().unwrap_or(false);
             let mut button = Button::new(management_choice_id(form, *index), text)
-                .with_current(!is_menu && *index == choice.selected);
-            button.bracketed_label = !is_menu;
-            button.set_disabled(choice.disabled.get(*index).copied().unwrap_or(false));
-            button.state.selected = *index == choice.selected;
+                .with_bracketed_label(false)
+                .with_capture_name(value)
+                .with_capture_role("listitem")
+                .with_capture_selected(selected)
+                .with_background(if selected && !disabled {
+                    context.theme.selected_row_background()
+                } else {
+                    context.theme.surface
+                });
+            button.set_disabled(disabled);
+            button.set_focused(selected);
             button.render_borderless_frame(frame, *area, &theme);
         }
         Button::new(
             management_form_control_id(form, "choice.cancel"),
             i18n::tr!("management-form-close"),
         )
-        .render_borderless_frame(frame, layout.choice_cancel, &theme);
+        .with_bracketed_label(false)
+        .with_background(context.theme.surface)
+        .render_borderless_frame(
+            frame,
+            layout.choice_cancel,
+            &DialogLayout::close_theme(context),
+        );
         for bar in &layout.scrollbars {
             if matches!(
                 bar.target,
@@ -2152,12 +2093,23 @@ pub fn render_management_overlay(
         }
         return;
     }
-    render_text(
-        frame,
-        text_area(layout.message),
-        &form.message,
-        usize::from(form.message_scroll),
-        context,
+    let message = text_area(layout.message);
+    let message_lines = management_wrapped_lines(&form.message, message.width);
+    let offset = usize::from(form.message_scroll).min(
+        message_lines
+            .len()
+            .saturating_sub(usize::from(message.height)),
+    );
+    frame.render_widget(
+        Paragraph::new(
+            message_lines
+                .into_iter()
+                .skip(offset)
+                .map(Line::from)
+                .collect::<Vec<_>>(),
+        )
+        .style(Style::default().fg(context.theme.muted)),
+        message,
     );
     for (index, area) in &layout.fields {
         let field = &form.fields[*index];
@@ -2227,6 +2179,7 @@ pub fn render_management_overlay(
                             format!("{}.{}", management_field_id(form, *index), suffix),
                             label,
                         )
+                        .with_background(context.theme.surface)
                         .with_bracketed_label(area.width >= 3);
                         button.set_disabled(field.disabled);
                         button.render_borderless_frame(frame, area, &theme);
@@ -2254,6 +2207,7 @@ pub fn render_management_overlay(
                     _ => "[-]",
                 };
                 let mut button = Button::new(management_permission_id(form, *index, cell), value)
+                    .with_background(context.theme.surface)
                     .with_capture_role("checkbox")
                     .with_capture_selected(field.value.as_bytes().get(cell) == Some(&b'1'));
                 button.bracketed_label = false;
@@ -2267,6 +2221,7 @@ pub fn render_management_overlay(
             management_field_id(form, *index),
             lines.into_iter().skip(skip).collect::<Vec<_>>().join("\n"),
         )
+        .with_background(context.theme.surface)
         .with_current(form.selected == *index)
         .with_capture_name(&field.label)
         .with_sensitive(field.secret)
@@ -2288,16 +2243,34 @@ pub fn render_management_overlay(
         button.render_borderless_frame(frame, *area, &theme);
     }
     let actions = form.actions();
+    let footer_theme = DialogLayout::footer_theme(context);
+    let close_theme = DialogLayout::close_theme(context);
     for (index, area) in &layout.form_buttons {
         let action = &actions[*index];
+        let is_close = action.action == FormAction::Cancel;
+        let theme = if is_close {
+            &close_theme
+        } else {
+            &footer_theme
+        };
+        let label_width = area.width.saturating_sub(u16::from(area.width > 4) * 2);
         let mut button = Button::new(
             management_form_control_id(form, &action.id),
-            management_wrapped_lines(&action.label(), area.width).join("\n"),
+            management_wrapped_lines(&action.label(), label_width).join("\n"),
         )
+        .with_background(if is_close {
+            theme.background
+        } else {
+            context.theme.control_background()
+        })
+        .with_label_alignment(ratatui::layout::HorizontalAlignment::Center)
         .with_bracketed_label(false);
+        if action.action == FormAction::Submit {
+            button = button.with_emphasis(ButtonEmphasis::Primary);
+        }
         button.set_disabled(action.disabled);
         button.set_focused(form.selected == form.fields.len() + index);
-        button.render_borderless_frame(frame, *area, &theme);
+        button.render_borderless_frame(frame, *area, theme);
     }
     for bar in &layout.scrollbars {
         if matches!(

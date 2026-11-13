@@ -448,10 +448,7 @@ pub fn page_help_notification(
         NotificationTone::Info,
         help.title.clone(),
         message,
-        vec![NotificationActionViewModel::new(
-            "close",
-            help.close_label.clone(),
-        )],
+        vec![NotificationActionViewModel::new("close", help.close_label.clone()).cancel(true)],
     );
     model.stacked_actions = true;
     model.actions[0].selected = true;

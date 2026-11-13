@@ -1,7 +1,11 @@
-use crate::{CommandLineTerminalSnapshot, RenderContext, components::Button};
+use crate::{
+    CommandLineTerminalSnapshot, RenderContext,
+    components::{Button, ButtonEmphasis, DialogLayout},
+};
 use ratatui::{
     Frame,
-    layout::{Constraint, Flex, Layout, Margin, Rect},
+    layout::{Constraint, Flex, Layout, Rect},
+    style::{Modifier, Style},
     widgets::Paragraph,
 };
 use std::sync::Arc;
@@ -66,24 +70,17 @@ pub fn auto_admin_max_scroll(bounds: Rect, model: &AutoAdminViewModel) -> u16 {
         .min(u16::MAX as usize) as u16
 }
 
-fn authorization_layout(main: Rect, model: &AutoAdminViewModel) -> (AutoAdminLayout, Rect) {
+fn authorization_layout(
+    main: Rect,
+    model: &AutoAdminViewModel,
+) -> (AutoAdminLayout, Rect, DialogLayout) {
     let stopping = model.stop == AutoAdminStopState::Warning;
     let width = main
         .width
         .saturating_sub(u16::from(main.width >= 50) * 4)
         .min(100);
-    // Compact decoration leaves several live output rows when a keyboard is open.
-    let roomy = main.height >= 20 && width >= 40;
-    let padding = Margin::new(if width >= 50 { 3 } else { 1 }, 1);
-    let badge_width = if width >= 70 && !stopping { 18 } else { 0 };
-    let content_width = width.saturating_sub(padding.horizontal * 2 + badge_width);
-    let warning_height = if stopping {
-        0
-    } else if roomy {
-        3
-    } else {
-        1
-    };
+    let content_width = DialogLayout::content_width(width);
+    let warning_height = u16::from(model.confirming && main.height >= 14);
     let stacked_warning = stopping && content_width < 36;
     let action_height = if stacked_warning {
         2
@@ -128,13 +125,13 @@ fn authorization_layout(main: Rect, model: &AutoAdminViewModel) -> (AutoAdminLay
     } else {
         20
     };
-    let gap = u16::from(roomy);
+    let gap = u16::from(main.height >= 20 && width >= 40);
     let max_height = if main.height > 20 {
         main.height.saturating_sub(main.height / 5)
     } else {
         main.height
     };
-    let height = (padding.vertical * 2
+    let height = (7
         + warning_height
         + description_height
         + terminal_height
@@ -150,34 +147,28 @@ fn authorization_layout(main: Rect, model: &AutoAdminViewModel) -> (AutoAdminLay
         width,
         height,
     );
-    let mut inner = dialog.inner(padding);
-    inner.x += badge_width;
-    inner.width = inner.width.saturating_sub(badge_width);
-    // Reserve actions and at least one description row before the banner on
-    // very short terminals. All consumers use this same content rectangle.
-    let warning_height = warning_height.min(inner.height.saturating_sub(action_height + 1));
+    let chrome = DialogLayout::new(dialog, action_height, None);
+    let mut inner = chrome.body;
+    let warning_height = warning_height.min(inner.height.saturating_sub(1));
     let warning = Rect::new(inner.x, inner.y, inner.width, warning_height);
     inner.y += warning_height;
     inner.height = inner.height.saturating_sub(warning_height);
-    let button_height = inner.height.min(action_height);
     let hint_height = hint_height.min(inner.height.saturating_sub(3 + gap * 2));
-    let status_height = status_height.min(
-        inner
-            .height
-            .saturating_sub(button_height + hint_height + 1 + gap * 2),
-    );
+    let status_height = status_height.min(inner.height.saturating_sub(hint_height + 1 + gap * 2));
     let body_height = inner
         .height
-        .saturating_sub(button_height + hint_height + status_height + gap * 2);
+        .saturating_sub(hint_height + status_height + gap);
     let description_height = description_height.min(body_height);
     let areas = Layout::vertical([
         Constraint::Length(description_height),
         Constraint::Length(gap),
-        Constraint::Length(body_height.saturating_sub(description_height)),
+        Constraint::Length(
+            body_height
+                .saturating_sub(description_height)
+                .min(terminal_height),
+        ),
         Constraint::Length(status_height),
         Constraint::Length(hint_height),
-        Constraint::Length(gap),
-        Constraint::Length(button_height),
     ])
     .split(inner);
     let count = if model.confirming || stopping { 2 } else { 1 };
@@ -187,11 +178,11 @@ fn authorization_layout(main: Rect, model: &AutoAdminViewModel) -> (AutoAdminLay
         Constraint::Length(button_width.min(34));
         count as usize
     ])
-    .flex(Flex::Center)
+    .flex(Flex::End)
     .spacing(button_gap)
     .split(Rect {
-        height: areas[6].height.min(1),
-        ..areas[6]
+        height: chrome.footer.height.min(1),
+        ..chrome.footer
     });
     let mut buttons = std::array::from_fn(|i| button_areas.get(i).copied().unwrap_or_default());
     if !model.confirming && !model.finished && !stopping {
@@ -205,14 +196,14 @@ fn authorization_layout(main: Rect, model: &AutoAdminViewModel) -> (AutoAdminLay
     if stacked_warning {
         let action_width = inner.width.min(24);
         let area = Rect::new(
-            inner.x + inner.width.saturating_sub(action_width) / 2,
-            areas[6].y,
+            inner.right().saturating_sub(action_width),
+            chrome.footer.y,
             action_width,
-            1.min(areas[6].height),
+            1.min(chrome.footer.height),
         );
         buttons[0] = area;
         buttons[1] = Rect {
-            y: area.y + u16::from(areas[6].height > 1),
+            y: area.y + u16::from(chrome.footer.height > 1),
             ..area
         };
     }
@@ -228,6 +219,7 @@ fn authorization_layout(main: Rect, model: &AutoAdminViewModel) -> (AutoAdminLay
             buttons,
         },
         warning,
+        chrome,
     )
 }
 
@@ -294,19 +286,18 @@ pub fn render_auto_admin_in(
     model: &AutoAdminViewModel,
     context: &RenderContext,
 ) {
-    let (layout, warning) = authorization_layout(main, model);
-    super::auto_admin_preview::render_auto_admin_frame_in_area(
-        frame,
-        main,
-        &layout,
-        warning,
-        if model.stop == AutoAdminStopState::Warning {
-            crate::AutoAdminPreviewStyle::Danger
-        } else {
-            crate::AutoAdminPreviewStyle::Authorization
-        },
-        Some(" AutoAdmin (AA) "),
-    );
+    let (layout, warning, chrome) = authorization_layout(main, model);
+    chrome.render_frame(frame, &i18n::tr!("aa-title"), context);
+    if !warning.is_empty() {
+        frame.render_widget(
+            Paragraph::new(i18n::tr!("aa-preview-warning")).style(
+                Style::default()
+                    .fg(context.theme.warning)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            warning,
+        );
+    }
     render_auto_admin_contents(frame, &layout, model, context, None);
 }
 
@@ -319,14 +310,22 @@ pub(super) fn render_auto_admin_contents(
 ) {
     let _scope = crate::automation::scope("aa", "dialog", "AutoAdmin", layout.dialog);
     frame.render_widget(
-        wrapped_paragraph(&description(model), layout.description.width).scroll((
-            if model.confirming || model.stop == AutoAdminStopState::Warning {
-                model.scroll
-            } else {
-                0
-            },
-            0,
-        )),
+        wrapped_paragraph(&description(model), layout.description.width)
+            .style(
+                Style::default().fg(if model.stop == AutoAdminStopState::Warning {
+                    context.theme.danger
+                } else {
+                    context.theme.text
+                }),
+            )
+            .scroll((
+                if model.confirming || model.stop == AutoAdminStopState::Warning {
+                    model.scroll
+                } else {
+                    0
+                },
+                0,
+            )),
         layout.description,
     );
     if !model.confirming && model.stop != AutoAdminStopState::Warning {
@@ -350,7 +349,8 @@ pub(super) fn render_auto_admin_contents(
         }
     }
     frame.render_widget(
-        wrapped_paragraph(&model.status, layout.status.width),
+        wrapped_paragraph(&model.status, layout.status.width)
+            .style(Style::default().fg(context.theme.text)),
         layout.status,
     );
     let hint = hint_override
@@ -367,11 +367,15 @@ pub(super) fn render_auto_admin_contents(
         input.render_borderless_frame_with_prefix(
             frame,
             layout.input,
-            &context.compatibility_theme(),
+            &DialogLayout::body_theme(context),
             "> ",
         );
     } else {
-        frame.render_widget(wrapped_paragraph(&hint, layout.input.width), layout.input);
+        frame.render_widget(
+            wrapped_paragraph(&hint, layout.input.width)
+                .style(Style::default().fg(context.theme.muted)),
+            layout.input,
+        );
     }
     let labels = if model.stop == AutoAdminStopState::Warning {
         vec![
@@ -408,7 +412,7 @@ pub(super) fn render_auto_admin_contents(
         }
         labels
     };
-    let theme = context.compatibility_theme();
+    let theme = DialogLayout::footer_theme(context);
     let first = usize::from(
         !model.confirming && !model.finished && model.stop != AutoAdminStopState::Warning,
     );
@@ -417,12 +421,15 @@ pub(super) fn render_auto_admin_contents(
         .zip(layout.buttons.into_iter().skip(first))
     {
         let mut button = Button::new(id, label);
+        if id == "aa.kill" {
+            button = button.with_emphasis(ButtonEmphasis::Danger);
+        }
         button.set_disabled(!match id {
             "aa.kill" => model.can_kill,
             "aa.stop" => model.stop == AutoAdminStopState::None,
             _ => true,
         });
         button.set_focused(focused);
-        button.render_borderless_frame(frame, area, &theme);
+        button.render_inline_frame(frame, area, &theme);
     }
 }

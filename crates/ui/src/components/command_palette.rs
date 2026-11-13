@@ -1,13 +1,14 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::widgets::{Borders, Clear, Widget};
+use ratatui::style::Style;
+use ratatui::widgets::{Paragraph, Widget};
 
-use crate::TundraTheme;
+use crate::{RenderContext, TundraTheme};
 
 use super::{
-    ComponentEvent, ComponentId, ComponentState, InputEvent, Key, List, ListItem, MouseButton,
-    MouseKind, TextInput, contains_point, inner_area,
+    Button, ComponentEvent, ComponentId, ComponentState, DialogLayout, InputEvent, Key, List,
+    ListItem, MouseButton, MouseKind, TextInput, contains_point,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,16 +59,52 @@ pub struct CommandPalette {
     pub open: bool,
     query_input: TextInput,
     results: List,
+    close_button: Button,
+    pressed: Option<(ComponentId, Rect)>,
 }
 
 impl CommandPalette {
-    pub fn render_with_context(
-        &self,
-        area: Rect,
-        buffer: &mut Buffer,
-        context: &crate::RenderContext,
-    ) {
-        self.render(area, buffer, &context.compatibility_theme());
+    pub fn render_with_context(&self, area: Rect, buffer: &mut Buffer, context: &RenderContext) {
+        if !self.open {
+            return;
+        }
+        let title = i18n::tr!("ui-components-command-palette");
+        let _scope = crate::automation::scope(self.id.as_str(), "dialog", &title, area);
+        let layout = self.layout(area);
+        let theme = DialogLayout::body_theme(context);
+        layout.render(buffer, &title, context);
+        self.close_button
+            .clone()
+            .with_background(context.theme.surface)
+            .render_borderless(layout.close, buffer, &DialogLayout::close_theme(context));
+
+        let mut input = self.query_input.clone();
+        input.set_focused(self.state.focused);
+        input.render_borderless_with_prefix(Self::query_area(layout), buffer, &theme, "⌕ ");
+
+        let mut results = self
+            .results_for_render()
+            .with_background(context.theme.surface);
+        if let Some((id, _)) = &self.pressed {
+            results.set_hovered(results.items.iter().position(|item| &item.id == id));
+        }
+        let results_area = Self::results_area(layout);
+        if results.items.is_empty() {
+            let message = i18n::tr!("management-empty");
+            Paragraph::new(message)
+                .style(Style::default().fg(context.theme.muted))
+                .render(
+                    Rect::new(
+                        layout.body.x,
+                        results_area.y,
+                        layout.body.width,
+                        results_area.height,
+                    ),
+                    buffer,
+                );
+        } else {
+            results.render_borderless(results_area, buffer, &theme);
+        }
     }
 
     pub fn new(id: impl Into<ComponentId>, commands: Vec<CommandPaletteCommand>) -> Self {
@@ -78,12 +115,15 @@ impl CommandPalette {
         let mut results = Self::make_results(&id, &commands, "");
         results.set_focused(false);
         Self {
+            close_button: Button::new(format!("{}.close", id.as_str()), Key::Escape.label())
+                .with_bracketed_label(false),
             id,
             commands,
             state: ComponentState::default(),
             open: false,
             query_input,
             results,
+            pressed: None,
         }
     }
 
@@ -102,6 +142,9 @@ impl CommandPalette {
         self.results.set_focused(open);
         if !open {
             self.results.set_hovered(None);
+            self.close_button.set_focused(false);
+            self.close_button.state.hovered = false;
+            self.pressed = None;
         } else {
             self.sync_results(false);
         }
@@ -141,6 +184,11 @@ impl CommandPalette {
         }
 
         self.sync_results(false);
+        let layout = self.layout(area);
+        if !matches!(event, InputEvent::Mouse(_)) {
+            self.pressed = None;
+            self.close_button.set_focused(false);
+        }
         match event {
             InputEvent::Key(key) if !key.is_press_like() => ComponentEvent::None,
             InputEvent::FocusGained => {
@@ -159,7 +207,9 @@ impl CommandPalette {
             }
             InputEvent::Key(key) if key.key == Key::Enter => self.activate_selected(),
             InputEvent::Key(key)
-                if matches!(key.key, Key::Up | Key::Down | Key::Tab | Key::BackTab) =>
+                if matches!(key.key, Key::Up | Key::Down | Key::Tab | Key::BackTab)
+                    || key.modifiers.is_control_only()
+                        && matches!(key.key, Key::Home | Key::End) =>
             {
                 let list_key = match key.key {
                     Key::Tab => Key::Down,
@@ -168,14 +218,14 @@ impl CommandPalette {
                 };
                 let event = self.results.handle_event_borderless(
                     InputEvent::key_with_modifiers(list_key, key.modifiers),
-                    Self::results_area(area),
+                    Self::results_area(layout),
                 );
                 self.translate_results_event(event)
             }
-            InputEvent::Key(key) => {
+            event @ (InputEvent::Key(_) | InputEvent::Paste(_)) => {
                 let event = self
                     .query_input
-                    .handle_event_borderless(InputEvent::Key(key), Self::query_edit_area(area));
+                    .handle_event_borderless(event, Self::query_edit_area(layout));
                 if matches!(event, ComponentEvent::Changed(_)) {
                     self.sync_results(true);
                     ComponentEvent::Changed(self.id.clone())
@@ -184,7 +234,8 @@ impl CommandPalette {
                 }
             }
             InputEvent::Mouse(mouse) => {
-                let inside = contains_point(area, mouse.column(), mouse.row());
+                let point = (mouse.column(), mouse.row());
+                let inside = contains_point(area, point.0, point.1);
                 if !inside
                     && matches!(
                         mouse.kind,
@@ -195,19 +246,65 @@ impl CommandPalette {
                     return ComponentEvent::Dismissed(self.id.clone());
                 }
 
-                let input_event = self
-                    .query_input
-                    .handle_event_borderless(InputEvent::Mouse(mouse), Self::query_edit_area(area));
+                if matches!(mouse.kind, MouseKind::Down(_)) {
+                    self.close_button.set_focused(false);
+                } else if mouse.kind == MouseKind::Move
+                    && !contains_point(layout.close, point.0, point.1)
+                {
+                    self.close_button.state.active = false;
+                }
+                if matches!(
+                    self.close_button
+                        .handle_event(InputEvent::Mouse(mouse), layout.close),
+                    ComponentEvent::Activated(_)
+                ) {
+                    self.close();
+                    return ComponentEvent::Dismissed(self.id.clone());
+                }
+                let results_area = Self::results_area(layout);
+                let row = self
+                    .results
+                    .borderless_item_index_at(results_area, point.0, point.1)
+                    .and_then(|index| self.results.items.get(index))
+                    .filter(|item| !item.disabled)
+                    .map(|item| {
+                        (
+                            item.id.clone(),
+                            Rect::new(results_area.x, point.1, results_area.width, 1),
+                        )
+                    });
+                match mouse.kind {
+                    MouseKind::Down(MouseButton::Left) => {
+                        self.pressed = row;
+                        if self.pressed.is_some() {
+                            return ComponentEvent::Changed(self.id.clone());
+                        }
+                    }
+                    MouseKind::Drag(MouseButton::Left) | MouseKind::Move => {
+                        if self.pressed != row {
+                            self.pressed = None;
+                        }
+                    }
+                    MouseKind::Up(MouseButton::Left) => {
+                        if let Some(pressed) = self.pressed.take()
+                            && row.as_ref() == Some(&pressed)
+                        {
+                            self.close();
+                            return ComponentEvent::Activated(pressed.0);
+                        }
+                    }
+                    _ => self.pressed = None,
+                }
+                let input_event = self.query_input.handle_event_borderless(
+                    InputEvent::Mouse(mouse),
+                    Self::query_edit_area(layout),
+                );
                 let results_event = self
                     .results
-                    .handle_event_borderless(InputEvent::Mouse(mouse), Self::results_area(area));
-                let activates = matches!(
-                    mouse.kind,
-                    MouseKind::Down(MouseButton::Left)
-                        | MouseKind::Click(MouseButton::Left)
-                        | MouseKind::DoubleClick(MouseButton::Left)
-                );
-                if activates && matches!(results_event, ComponentEvent::Selected(_, _)) {
+                    .handle_event_borderless(InputEvent::Mouse(mouse), results_area);
+                if mouse.kind == MouseKind::Click(MouseButton::Left)
+                    && matches!(results_event, ComponentEvent::Selected(_, _))
+                {
                     return self.activate_selected();
                 }
                 if let ComponentEvent::Activated(id) = results_event {
@@ -233,38 +330,12 @@ impl CommandPalette {
     }
 
     pub fn render(&self, area: Rect, buffer: &mut Buffer, theme: &TundraTheme) {
-        if !self.open {
-            return;
-        }
-        let _scope = crate::automation::scope(self.id.as_str(), "dialog", "", area);
-
-        Clear.render(area, buffer);
-        self.block(theme).render(area, buffer);
-
-        let mut input = self.query_input.clone();
-        input.set_focused(self.state.focused);
-        input.render_borderless_with_prefix(Self::query_area(area), buffer, theme, "> ");
-
-        self.results_for_render()
-            .render_borderless(Self::results_area(area), buffer, theme);
+        self.render_with_context(area, buffer, &DialogLayout::surface_theme(theme));
     }
 
     /// Renders the command palette through a Ratatui [`Frame`].
     pub fn render_frame(&self, frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
-        if !self.open {
-            return;
-        }
-        let _scope = crate::automation::scope(self.id.as_str(), "dialog", "", area);
-
-        frame.render_widget(Clear, area);
-        frame.render_widget(self.block(theme), area);
-
-        let mut input = self.query_input.clone();
-        input.set_focused(self.state.focused);
-        input.render_borderless_frame_with_prefix(frame, Self::query_area(area), theme, "> ");
-
-        self.results_for_render()
-            .render_borderless_frame(frame, Self::results_area(area), theme);
+        self.render(area, frame.buffer_mut(), theme);
     }
 
     fn visible_indices(&self) -> Vec<usize> {
@@ -369,16 +440,20 @@ impl CommandPalette {
                 }
             })
             .collect();
-        List::new(format!("{}.results", id.as_str()), items)
+        List::new(format!("{}.results", id.as_str()), items).with_highlight_symbol(Some("▌   "))
     }
 
-    fn query_area(area: Rect) -> Rect {
-        let inner = inner_area(area);
-        Rect::new(inner.x, inner.y, inner.width, inner.height.min(1))
+    fn layout(&self, area: Rect) -> DialogLayout {
+        DialogLayout::with_min_body(area, 0, Some(&self.close_button.label), 2)
     }
 
-    fn query_edit_area(area: Rect) -> Rect {
-        let query = Self::query_area(area);
+    fn query_area(layout: DialogLayout) -> Rect {
+        let body = layout.body;
+        Rect::new(body.x, body.y, body.width, body.height.min(1))
+    }
+
+    fn query_edit_area(layout: DialogLayout) -> Rect {
+        let query = Self::query_area(layout);
         Rect::new(
             query.x.saturating_add(2),
             query.y,
@@ -387,21 +462,14 @@ impl CommandPalette {
         )
     }
 
-    fn results_area(area: Rect) -> Rect {
-        let inner = inner_area(area);
+    fn results_area(layout: DialogLayout) -> Rect {
+        let body = layout.body;
+        let offset = body.height.min(1) + u16::from(body.height >= 3);
         Rect::new(
-            inner.x,
-            inner.y.saturating_add(2),
-            inner.width,
-            inner.height.saturating_sub(2),
+            layout.area.x,
+            body.y + offset,
+            layout.area.width,
+            body.height - offset,
         )
-    }
-
-    fn block(&self, theme: &TundraTheme) -> ratatui::widgets::Block<'static> {
-        theme
-            .block()
-            .title(i18n::tr!("ui-components-command-palette"))
-            .borders(Borders::ALL)
-            .style(theme.body_style())
     }
 }

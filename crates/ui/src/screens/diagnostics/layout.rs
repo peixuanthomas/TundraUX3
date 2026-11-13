@@ -1,13 +1,12 @@
 use ratatui::layout::Rect;
 
 use super::model::{DiagnosticsRepairDialogViewModel, DiagnosticsTab, DiagnosticsViewModel};
-use crate::components::{Scrollbar, ScrollbarOrientation};
-use crate::screens::shell::{centered_rect, inset_rect, line_in_rect, rect_contains, usize_to_u16};
+use crate::components::{DialogLayout, Scrollbar, ScrollbarOrientation};
+use crate::screens::shell::{centered_rect, line_in_rect, rect_contains, usize_to_u16};
 
 const DIAGNOSTICS_LIST_MIN_WIDTH: u16 = 28;
 const DIAGNOSTICS_LIST_MAX_WIDTH: u16 = 44;
 const DIAGNOSTICS_REPAIR_DIALOG_WIDTH: u16 = 68;
-const DIAGNOSTICS_REPAIR_DIALOG_MAX_HEIGHT: u16 = 13;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DiagnosticsTabLayout {
     pub tab: DiagnosticsTab,
@@ -38,6 +37,7 @@ pub struct DiagnosticsRepairDialogLayout {
     pub cancel: Rect,
     pub visible_start: usize,
     pub visible_capacity: usize,
+    pub(super) chrome: DialogLayout,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -418,26 +418,33 @@ pub fn diagnostics_repair_dialog_layout(
     main: Rect,
     model: &DiagnosticsRepairDialogViewModel,
 ) -> DiagnosticsRepairDialogLayout {
-    let desired_height = usize_to_u16(model.items.len().min(6))
-        .saturating_add(6)
-        .min(DIAGNOSTICS_REPAIR_DIALOG_MAX_HEIGHT);
-    let dialog = centered_rect(
-        main,
-        main.width.min(DIAGNOSTICS_REPAIR_DIALOG_WIDTH),
-        main.height.min(desired_height),
-    );
-    let inner = inset_rect(dialog, 1);
-    let inner_bottom = inner.y.saturating_add(inner.height);
-    let prompt_height = inner.height.min(2);
+    let width = main.width.min(DIAGNOSTICS_REPAIR_DIALOG_WIDTH);
+    let widths = [
+        i18n::tr!("ui-diagnostics-cancel-button"),
+        i18n::tr!("ui-diagnostics-restart-button"),
+        i18n::tr!("ui-diagnostics-confirm-repair-button"),
+    ]
+    .map(|label| usize_to_u16(crate::components::terminal_width(&label)).saturating_add(2));
+    let footer_width = DialogLayout::content_width(width);
+    let action_rows = crate::right_aligned_actions(Rect::new(0, 0, footer_width, 3), &widths)
+        .iter()
+        .map(|area| area.bottom())
+        .max()
+        .unwrap_or(1);
+    let desired_height =
+        usize_to_u16(model.items.len().clamp(1, 6)).saturating_add(action_rows + 9);
+    let dialog = centered_rect(main, width, main.height.min(desired_height));
+    let chrome = DialogLayout::new(dialog, action_rows, None);
+    let inner = chrome.body;
+    let prompt_height = inner.height.saturating_sub(1).min(2);
     let prompt = Rect::new(inner.x, inner.y, inner.width, prompt_height);
-    let button_y = inner_bottom.saturating_sub(1);
     let help = Rect::default();
     let items_y = prompt.bottom();
     let items_area = Rect::new(
         inner.x,
         items_y,
         inner.width,
-        button_y.saturating_sub(items_y),
+        inner.bottom().saturating_sub(items_y),
     );
     let visible_capacity = usize::from(items_area.height);
     let visible_start = diagnostics_visible_start(
@@ -460,53 +467,7 @@ pub fn diagnostics_repair_dialog_layout(
             ),
         })
         .collect();
-    let button_gap = u16::from(inner.width >= 5).saturating_mul(2);
-    let buttons_width = inner.width.saturating_sub(button_gap.saturating_mul(2));
-    let desired = [
-        i18n::tr!("ui-diagnostics-confirm-repair-button"),
-        i18n::tr!("ui-diagnostics-restart-button"),
-        i18n::tr!("ui-diagnostics-cancel-button"),
-    ]
-    .map(|label| {
-        usize_to_u16(
-            crate::components::Button::new("diagnostics.repair", label).rendered_label_width(),
-        )
-    });
-    let desired_width = desired.iter().copied().fold(0_u16, u16::saturating_add);
-    let extra = buttons_width.saturating_sub(desired_width) / 3;
-    let confirm_width = if desired_width <= buttons_width {
-        desired[0].saturating_add(extra)
-    } else {
-        buttons_width / 3
-    };
-    let restart_width = if desired_width <= buttons_width {
-        desired[1].saturating_add(extra)
-    } else {
-        buttons_width.saturating_sub(confirm_width) / 2
-    };
-    let cancel_width = buttons_width
-        .saturating_sub(confirm_width)
-        .saturating_sub(restart_width);
-    let button_height = u16::from(inner.height > 0);
-    let confirm = Rect::new(inner.x, button_y, confirm_width, button_height);
-    let restart = Rect::new(
-        inner
-            .x
-            .saturating_add(confirm_width)
-            .saturating_add(button_gap),
-        button_y,
-        restart_width,
-        button_height,
-    );
-    let cancel = Rect::new(
-        restart
-            .x
-            .saturating_add(restart_width)
-            .saturating_add(button_gap),
-        button_y,
-        cancel_width,
-        button_height,
-    );
+    let actions = crate::right_aligned_actions(chrome.footer, &widths);
 
     DiagnosticsRepairDialogLayout {
         dialog,
@@ -514,10 +475,21 @@ pub fn diagnostics_repair_dialog_layout(
         items_area,
         rows,
         help,
-        confirm,
-        restart,
-        cancel,
+        confirm: actions[2],
+        restart: actions[1],
+        cancel: actions[0],
         visible_start,
         visible_capacity,
+        chrome,
     }
+}
+
+pub(crate) fn diagnostics_detail_inner(panel: Rect) -> Rect {
+    let inset = u16::from(panel.width >= 12) * 2;
+    Rect::new(
+        panel.x + inset,
+        panel.y + u16::from(panel.height > 0),
+        panel.width.saturating_sub(inset * 2),
+        panel.height.saturating_sub(1),
+    )
 }

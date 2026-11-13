@@ -85,7 +85,7 @@ fn button_keyboard_and_mouse_activate_the_same_component() {
 #[test]
 fn literal_button_labels_preserve_text_width_and_shared_interaction_styles() {
     let area = Rect::new(0, 0, 16, 3);
-    let theme = TundraTheme::default().with_accent_color(Color::Rgb(100, 140, 180));
+    let theme = TundraTheme::default().with_accent_color(Color::Rgb(100, 180, 230));
     assert_eq!(Button::new("key", "Q").rendered_label_width(), 1);
     assert_eq!(
         Button::new("key", "Q")
@@ -412,14 +412,13 @@ fn narrow_dialog_wraps_body_and_keeps_both_actions_visible() {
     let area = Rect::new(0, 0, 22, 8);
     let actions = dialog.action_areas(area);
     assert_eq!(actions.len(), 2);
-    assert!(actions[0].1.y < actions[1].1.y);
+    assert_ne!(actions[0].1.y, actions[1].1.y);
+    assert!(actions[0].1.intersection(actions[1].1).is_empty());
     let mut buffer = Buffer::empty(area);
     dialog.render(area, &mut buffer, &TundraTheme::default());
-    let second_body_line = (1..area.right() - 1)
-        .map(|x| buffer[(x, 2)].symbol())
-        .collect::<String>();
-    assert!(!second_body_line.trim().is_empty());
-    let cancel = actions[1].1;
+    let screen = buffer_text(&buffer);
+    assert!(screen.contains("confirmation"));
+    let cancel = actions.iter().find(|(index, _)| *index == 1).unwrap().1;
     assert_eq!(
         dialog.handle_event(
             InputEvent::mouse(MouseEvent::click(cancel.x, cancel.y, MouseButton::Left)),
@@ -439,17 +438,18 @@ fn dialog_actions_reuse_button_press_and_release_semantics() {
     );
     let area = Rect::new(0, 0, 20, 5);
     dialog.open();
+    let button = dialog.action_areas(area)[0].1;
 
     assert_eq!(
         dialog.handle_event(
-            InputEvent::mouse(MouseEvent::down(2, 3, MouseButton::Left)),
+            InputEvent::mouse(MouseEvent::down(button.x, button.y, MouseButton::Left)),
             area,
         ),
         ComponentEvent::Changed(ComponentId::new("confirm"))
     );
     assert_eq!(
         dialog.handle_event(
-            InputEvent::mouse(MouseEvent::up(2, 3, MouseButton::Left)),
+            InputEvent::mouse(MouseEvent::up(button.x, button.y, MouseButton::Left)),
             area,
         ),
         ComponentEvent::Activated(ComponentId::new("ok"))
@@ -469,10 +469,24 @@ fn dialog_action_hit_testing_uses_terminal_width_for_wide_labels() {
     );
     let area = Rect::new(0, 0, 24, 5);
     dialog.open();
+    let confirm = dialog
+        .action_areas(area)
+        .iter()
+        .find(|(index, _)| *index == 0)
+        .unwrap()
+        .1;
+    assert_eq!(confirm.width, 6);
+    let mut buffer = Buffer::empty(area);
+    dialog.render(area, &mut buffer, &TundraTheme::default());
+    assert!((confirm.x..confirm.right()).any(|x| buffer[(x, confirm.y)].symbol() == "确"));
 
     assert_eq!(
         dialog.handle_event(
-            InputEvent::mouse(MouseEvent::click(6, 3, MouseButton::Left)),
+            InputEvent::mouse(MouseEvent::click(
+                confirm.right() - 1,
+                confirm.y,
+                MouseButton::Left
+            )),
             area,
         ),
         ComponentEvent::Activated(ComponentId::new("confirm-action"))
@@ -721,10 +735,7 @@ fn dialog_cancels_button_capture_after_outside_release_or_drag() {
 
 #[test]
 fn context_menu_single_click_activates_even_the_already_selected_item() {
-    for kind in [
-        ui::MouseEventKind::Down(MouseButton::Left),
-        ui::MouseEventKind::Click(MouseButton::Left),
-    ] {
+    for raw in [false, true] {
         for index in [0, 1] {
             let mut menu = ContextMenu::new(
                 "menu",
@@ -734,10 +745,25 @@ fn context_menu_single_click_activates_even_the_already_selected_item() {
                 ],
             );
             menu.open();
-            let event = menu.handle_event(
-                InputEvent::mouse(MouseEvent::new(2, 2 + index, kind)),
-                Rect::new(1, 1, 20, 4),
-            );
+            let area = Rect::new(1, 1, 20, 4);
+            let (x, y) = (area.right() - 1, 2 + index);
+            let event = if raw {
+                let press = menu.handle_event(
+                    InputEvent::mouse(MouseEvent::down(x, y, MouseButton::Left)),
+                    area,
+                );
+                assert_eq!(press, ComponentEvent::Changed(ComponentId::new("menu")));
+                assert!(menu.open);
+                menu.handle_event(
+                    InputEvent::mouse(MouseEvent::up(x, y, MouseButton::Left)),
+                    area,
+                )
+            } else {
+                menu.handle_event(
+                    InputEvent::mouse(MouseEvent::click(x, y, MouseButton::Left)),
+                    area,
+                )
+            };
             assert_eq!(
                 event,
                 ComponentEvent::Activated(ComponentId::new(if index == 0 {
@@ -749,6 +775,42 @@ fn context_menu_single_click_activates_even_the_already_selected_item() {
             assert!(!menu.open);
         }
     }
+}
+
+#[test]
+fn context_menu_scrolls_long_lists_and_cancels_a_dragged_row_press() {
+    let area = Rect::new(1, 1, 32, 7);
+    let mut menu = ContextMenu::new(
+        "more",
+        (0..30)
+            .map(|i| ContextMenuItem::new(format!("item-{i}"), format!("项目 {i}")))
+            .collect(),
+    );
+    menu.open();
+    assert_eq!(
+        menu.handle_event(InputEvent::key(Key::End), area),
+        ComponentEvent::Selected(ComponentId::new("more"), 29)
+    );
+    let x = area.right() - 1;
+    let y = area.bottom() - 3;
+    let press = || InputEvent::mouse(MouseEvent::down(x, y, MouseButton::Left));
+    let release = || InputEvent::mouse(MouseEvent::up(x, y, MouseButton::Left));
+    menu.handle_event(press(), area);
+    menu.handle_event(
+        InputEvent::mouse(MouseEvent::new(
+            x,
+            y - 1,
+            ui::MouseEventKind::Drag(MouseButton::Left),
+        )),
+        area,
+    );
+    assert_eq!(menu.handle_event(release(), area), ComponentEvent::Consumed);
+    assert!(menu.open);
+    menu.handle_event(press(), area);
+    assert_eq!(
+        menu.handle_event(release(), area),
+        ComponentEvent::Activated(ComponentId::new("item-28"))
+    );
 }
 
 #[test]
@@ -878,7 +940,7 @@ fn every_button_variant_uses_the_global_accent_for_keyboard_hover_and_press() {
     let area = Rect::new(0, 0, 16, 3);
     for capability in [RenderCapabilities::default(), RenderCapabilities::ansi()] {
         let theme = RenderContext::from_theme(
-            &TundraTheme::default().with_accent_color(Color::Rgb(100, 140, 180)),
+            &TundraTheme::default().with_accent_color(Color::Rgb(100, 180, 230)),
             Default::default(),
             capability,
         )
@@ -920,7 +982,12 @@ fn every_button_variant_uses_the_global_accent_for_keyboard_hover_and_press() {
                         .iter()
                         .find(|cell| cell.symbol() == "S")
                         .unwrap();
-                    assert_eq!(label.fg, expected);
+                    if capability == RenderCapabilities::default() {
+                        assert_eq!(label.fg, expected);
+                    } else {
+                        assert_ne!(label.fg, label.bg);
+                        assert_eq!(label.modifier.contains(Modifier::UNDERLINED), keyboard);
+                    }
                 }
                 if variant != 1 {
                     let border = if keyboard || hover {

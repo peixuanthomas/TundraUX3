@@ -173,11 +173,11 @@ impl PageActionBar {
         let layout = self.layout(area);
         let theme = context.compatibility_theme();
         frame.render_widget(Clear, layout.area);
-        frame.render_widget(Paragraph::new("").style(theme.body_style()), layout.area);
+        frame.render_widget(Paragraph::new("").style(theme.raised_style()), layout.area);
         for (status, row) in self.status.iter().zip(&layout.status) {
             let style = Style::default()
                 .fg(tone_color(status.tone, &theme))
-                .bg(theme.background);
+                .bg(context.theme.raised);
             frame.render_widget(Paragraph::new(status.text.clone()).style(style), *row);
         }
         for action_layout in &layout.actions {
@@ -194,7 +194,11 @@ impl PageActionBar {
             .with_bracketed_label(false)
             .with_emphasis(action.emphasis)
             .with_latched(action.latched)
-            .with_focus_fill(Some(context.theme.accent_soft));
+            .with_background(if action.enabled {
+                context.theme.control_background()
+            } else {
+                context.theme.raised
+            });
             button.set_disabled(!action.enabled);
             button.state.selected = self.selected.as_ref() == Some(&action.id);
             button.render_borderless_frame(frame, action_layout.area, &theme);
@@ -248,7 +252,8 @@ impl PageActionBar {
         } else {
             action.label.clone()
         };
-        crate::management_wrapped_lines(&text, width)
+        let content_width = if width > 4 { width - 2 } else { width };
+        crate::management_wrapped_lines(&text, content_width)
     }
 
     fn row_height(&self, row: &[usize], width: u16) -> u16 {
@@ -261,7 +266,9 @@ impl PageActionBar {
     fn action_width(&self, index: usize) -> u16 {
         let button = Button::new("measure", self.actions[index].label.as_str())
             .with_bracketed_label(self.actions[index].bracketed_label);
-        u16::try_from(button.rendered_label_width()).unwrap_or(u16::MAX)
+        u16::try_from(button.rendered_label_width())
+            .unwrap_or(u16::MAX)
+            .saturating_add(2)
     }
 }
 

@@ -1,11 +1,13 @@
 use super::*;
-use crate::components::{Button, ButtonEmphasis, Scrollbar, Surface};
+use crate::components::{
+    Button, ButtonEmphasis, DialogLayout, Scrollbar, SidebarWorkspaceLayout, Surface,
+};
 use crate::{RenderContext, render_editor_overlay};
 use ratatui::{
     Frame,
     style::{Modifier, Style},
     text::Line,
-    widgets::{Clear, Paragraph},
+    widgets::Paragraph,
 };
 
 pub fn render_script_contextual(
@@ -36,23 +38,10 @@ pub fn render_script_contextual_with_terminal_images(
 ) -> ScriptLayout {
     let layout = script_layout(area, model);
     let theme = context.compatibility_theme();
-    frame.render_widget(Clear, area);
-    if model
-        .detail_expansion
-        .is_some_and(|amount| amount > 0 && amount < 1_000)
-    {
-        editor_images.clear();
-        output_images.clear();
-        Surface::new()
-            .bordered(false)
-            .render_frame(frame, layout.editor_area, context);
-        for (_, rect) in &layout.panes {
-            Surface::new()
-                .bordered(false)
-                .render_frame(frame, *rect, context);
-        }
-        return layout;
-    }
+    let pane_theme = DialogLayout::footer_theme(context);
+    Surface::new()
+        .background(context.theme.canvas)
+        .render_frame(frame, area, context);
     crate::render_editor_contextual_with_terminal_images(
         frame,
         layout.editor_area,
@@ -63,8 +52,8 @@ pub fn render_script_contextual_with_terminal_images(
     );
     for (pane, rect) in &layout.panes {
         Surface::new()
-            .bordered(false)
-            .titled(pane.title())
+            .raised(true)
+            .titled(format!("  {}", pane.title()))
             .focused(model.focus == *pane)
             .render_frame(frame, *rect, context);
     }
@@ -82,7 +71,7 @@ pub fn render_script_contextual_with_terminal_images(
         } else {
             output_images.clear();
             frame.render_widget(
-                Paragraph::new(i18n::tr!("script-no-output")).style(theme.muted_style()),
+                Paragraph::new(i18n::tr!("script-no-output")).style(pane_theme.muted_style()),
                 layout.output_area,
             );
         }
@@ -152,21 +141,22 @@ pub fn render_script_contextual_with_terminal_images(
         if let Some(text) = text {
             let text = crate::terminal_safe_text(&text).into_owned();
             if *pane == ScriptPane::Expression {
-                frame.render_widget(Paragraph::new(text).style(theme.body_style()), *rect);
+                frame.render_widget(Paragraph::new(text), *rect);
             } else {
                 let mut button = Button::new(format!("script.row.{pane:?}.{index}"), text)
                     .with_bracketed_label(false)
-                    .with_centered_label(false)
-                    .with_current(selected);
+                    .with_centered_label(false);
                 button.state.focused = selected && model.focus == *pane;
-                button.render_borderless_frame(frame, *rect, &theme);
+                SidebarWorkspaceLayout::render_workspace_row(
+                    frame, &button, *rect, selected, 0, context,
+                );
             }
         }
     }
     for (pane, rect) in &layout.tabs {
         Button::new(format!("script.tab.{pane:?}"), pane.title())
             .with_current(model.detail == *pane)
-            .render_borderless_frame(frame, *rect, &theme);
+            .render_inline_frame(frame, *rect, &theme);
     }
     for (pane, scrollbar) in &layout.scrollbars {
         let (offset, count, capacity) = match pane {
@@ -231,7 +221,7 @@ pub fn render_script_contextual_with_terminal_images(
             }
             _ => ButtonEmphasis::Normal,
         };
-        button.render_borderless_frame(frame, *rect, &theme);
+        button.render_inline_frame(frame, *rect, &pane_theme);
     }
     if !layout.expression_input.is_empty() {
         let mut input = model
@@ -241,7 +231,12 @@ pub fn render_script_contextual_with_terminal_images(
             .with_placeholder(i18n::tr!("script-expression-placeholder"));
         input.set_focused(model.focus == ScriptPane::Expression && model.selected_action.is_none());
         input.state.disabled = model.state.status != ScriptStatus::Paused;
-        input.render_borderless_frame_with_prefix(frame, layout.expression_input, &theme, "> ");
+        input.render_borderless_frame_with_prefix(
+            frame,
+            layout.expression_input,
+            &DialogLayout::body_theme(context),
+            "> ",
+        );
     }
     let mut status = i18n::tr!(match model.state.status {
         ScriptStatus::Idle => "script-status-idle",

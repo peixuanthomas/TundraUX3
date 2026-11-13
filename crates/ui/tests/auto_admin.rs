@@ -256,7 +256,7 @@ fn stop_controls_fit_and_the_warning_explains_damage_in_both_languages() {
             );
             assert_eq!(
                 buffer[(layout.buttons[1].x, layout.buttons[1].y)].fg,
-                theme.foreground
+                theme.tokens().danger
             );
         }
     }

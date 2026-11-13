@@ -179,3 +179,77 @@ fn home_icon_buttons_share_full_tile_geometry_with_pointer_targets() {
     assert_eq!(layout.items[1].area.x - layout.items[0].area.right(), 1);
     assert_eq!(layout.items[4].area.y - layout.items[0].area.bottom(), 1);
 }
+
+#[test]
+fn home_tiles_stand_out_from_the_static_account_summary() {
+    let asset_root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
+    for language in ["en-US", "zh-CN"] {
+        let snapshot = i18n::LanguageSnapshot::load(&asset_root, language, 1)
+            .unwrap()
+            .snapshot;
+        let _language = i18n::enter_snapshot(Arc::new(snapshot));
+        for (width, height) in [(108, 20), (120, 36), (180, 50)] {
+            for capabilities in [
+                ui::RenderCapabilities::default(),
+                ui::RenderCapabilities::ansi(),
+            ] {
+                let home = model(16).with_account_logout("用户 e\u{301} 目录", false);
+                let theme = ui::TundraTheme::default_dark();
+                let mut context =
+                    ui::RenderContext::from_theme(&theme, Default::default(), capabilities);
+                let buttons = ui::components::ButtonFrame::new(None, None, &theme);
+                context.buttons = Some(buttons.clone());
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                let main =
+                    ui::ShellFrameLayout::new(Rect::new(0, 0, width, height), None, &context).main;
+                let layout = ui::home_layout(main, &home);
+                terminal
+                    .draw(|frame| ui::render_home_content(frame, main, &home, &context, None))
+                    .unwrap();
+                let buffer = terminal.backend().buffer();
+                let normal = layout.items[1].area;
+                let current = layout.items[0].area;
+                let account = (layout.content.x, layout.content.y - 1);
+                let top = layout.content.y - 2 - main.y;
+                let bottom = main.bottom() - layout.items.last().unwrap().area.bottom() - 1;
+                if height >= 36 {
+                    assert!(top.abs_diff(bottom) <= 1);
+                } else {
+                    assert_eq!(top, 0);
+                }
+                let logout = ui::home_logout_area(main, &home);
+                assert_eq!(logout.y, account.1);
+                assert_eq!(
+                    buttons
+                        .regions()
+                        .into_iter()
+                        .find(|region| region.id.as_str() == "home.logout")
+                        .unwrap()
+                        .area,
+                    logout
+                );
+                assert_eq!(
+                    ui::home_edit_area(main, &home).unwrap().y,
+                    main.bottom() - 1
+                );
+                assert_eq!(buffer[account].bg, context.theme.canvas);
+                assert_eq!(buffer[(normal.x, normal.y)].bg, context.theme.surface);
+                assert_eq!(
+                    buffer[(current.x, current.y)].bg,
+                    context.theme.selected_row_background(),
+                );
+                assert!(
+                    buttons
+                        .regions()
+                        .iter()
+                        .all(|region| !region.area.contains(account.into()))
+                );
+                assert_eq!(
+                    layout.entry_at((normal.right() - 1, normal.bottom() - 1)),
+                    Some(1)
+                );
+            }
+        }
+    }
+}

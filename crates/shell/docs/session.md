@@ -80,7 +80,9 @@ Before exit or logout, save editor recovery records, stop tasks for the current 
 
 `session/overlays.rs` brings together page dialogs, menus, notifications, exit confirmations, and AA. Input, hit testing, focus, and animations read the same layer description.
 
-`ShellOverlayManager` saves the focus from before each layer opens and restores focus to the layer below when it closes. Dialog changes clear old press and drag records; Toast only displays messages. Background AA requests appear automatically and take over input without changing the logical state of other pages.
+`ShellOverlayManager` saves focus when a dialog opens and restores it when that dialog closes. Dialog changes clear old press and drag records. Background AA requests appear automatically and take over input while preserving the logical state of other pages.
+
+A floating Toast leaves keyboard focus with the current page. The compositor blocks pointer input in the painted Toast rectangle, consumes releases from blocked presses even if the Toast has disappeared, and marks covered automation click points unavailable.
 
 ## Frame compositing
 
@@ -92,9 +94,10 @@ Compositing order:
 
 1. Page content;
 2. Page overlays;
-3. Shell title bar, status bar, and Toast;
+3. Shell title bar and status bar;
 4. Shell modal dialogs;
-5. Animations and effects for the current frame.
+5. Animations and effects for the current frame;
+6. Floating Toast and the on-screen keyboard.
 
 The top-right Back button and Esc use the same return rules. Command Line asks whether to terminate a running process before returning, or returns directly when no process is running; its child terminal still receives physical Esc and Ctrl+Shift+X.
 

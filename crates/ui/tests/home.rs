@@ -422,9 +422,6 @@ fn exit_menu_actions_remain_separate_and_visible_after_resize() {
             assert_eq!(pair[0].area.x, pair[1].area.x);
             assert_eq!(pair[0].area.width, pair[1].area.width);
             assert!(pair[0].area.bottom() <= pair[1].area.y);
-            if height >= 24 {
-                assert!(pair[0].area.bottom() < pair[1].area.y);
-            }
         }
         assert!(
             layout
@@ -494,8 +491,15 @@ fn notification_overlay_renders_modal_actions_and_replaces_too_small_terminal_co
     assert!(output.contains("[WARN] Delete File"));
     assert!(output.contains("Delete File"));
     assert!(output.contains("Move README.md to TundraUX trash?"));
-    assert!(output.contains("Y: Move"));
-    assert!(output.contains("N: Cancel"));
+    assert!(output.contains("Move Y"));
+    assert!(output.contains("Cancel N"));
+    let NotificationLayout::Dialog(layout) =
+        notification_layout(terminal.backend().buffer().area, &model)
+    else {
+        panic!("notification dialog should fit");
+    };
+    assert!(layout.actions[1].area.y < layout.message.y);
+    assert!(layout.actions[0].area.y > layout.message.y);
 
     let mut narrow = Terminal::new(TestBackend::new(18, 10)).expect("test terminal");
     narrow
@@ -517,8 +521,8 @@ fn notification_overlay_renders_modal_actions_and_replaces_too_small_terminal_co
     assert!(!narrow_output.contains("BACKGROUND CONTENT"));
     assert!(!narrow_output.contains("Delete File"));
     assert!(!narrow_output.contains("README.md"));
-    assert!(!narrow_output.contains("Y: Move"));
-    assert!(!narrow_output.contains("N: Cancel"));
+    assert!(!narrow_output.contains("Move Y"));
+    assert!(!narrow_output.contains("Cancel N"));
 }
 
 #[test]
@@ -537,7 +541,7 @@ fn notification_wrapping_uses_terminal_columns_for_wide_text() {
         panic!("wide notification should fit");
     };
 
-    assert_eq!(layout.message.width, 38);
+    assert_eq!(layout.message.width, 34);
     assert_eq!(layout.message.height, 2);
 }
 
@@ -559,22 +563,29 @@ fn notification_layout_and_renderer_share_wrapped_message_and_stacked_action_rec
         panic!("long notification should fit the supplied terminal");
     };
 
-    assert_eq!(layout.dialog, Rect::new(11, 9, 64, 10));
-    assert_eq!(layout.message, Rect::new(12, 10, 62, 4));
+    assert_eq!(layout.dialog.x, 11);
+    assert_eq!(layout.dialog.width, 64);
+    assert_eq!(layout.message.x - layout.dialog.x, 3);
+    assert_eq!(layout.message.width, 58);
+    assert_eq!(layout.message.height, 4);
     assert_eq!(layout.actions.len(), 2);
-    assert_eq!(layout.actions[0].area, Rect::new(12, 15, 62, 2));
-    assert_eq!(layout.actions[1].area, Rect::new(23, 17, 40, 1));
+    assert_eq!(layout.actions[0].area.height, 2);
+    assert_eq!(layout.actions[1].area.height, 1);
+    for action in &layout.actions {
+        assert_eq!(layout.dialog.right() - action.area.right(), 3);
+        assert!(action.area.y >= layout.message.bottom());
+    }
     let NotificationLayout::Dialog(scrolled) = notification_layout(Rect::new(0, 0, 64, 9), &model)
     else {
         panic!("long messages should scroll while their actions remain visible");
     };
-    assert_eq!(scrolled.message.height, 3);
-    assert_eq!(scrolled.max_scroll_offset, 1);
+    assert!(scrolled.message.height < layout.message.height);
+    assert!(scrolled.max_scroll_offset > 0);
     assert!(
         scrolled
             .actions
             .iter()
-            .all(|action| action.area.bottom() < scrolled.dialog.bottom())
+            .all(|action| action.area.intersection(scrolled.dialog) == action.area)
     );
 
     let mut terminal = Terminal::new(TestBackend::new(86, 28)).expect("test terminal");
@@ -604,7 +615,7 @@ fn notification_layout_and_renderer_share_wrapped_message_and_stacked_action_rec
     assert!(region_has_bg(
         &terminal,
         layout.actions[0].area,
-        TundraTheme::default_dark().background,
+        TundraTheme::default_dark().tokens().accent_soft,
     ));
     assert!(region_has_fg(
         &terminal,

@@ -152,6 +152,7 @@ aa-policy-automatic = 一律放行
 aa-policy-manual = 手动批准（默认）
 aa-policy-deny = 一律禁止
 aa-policy-help = AA 管理程序内发起的系统操作。“一律放行”只跳过 AA 确认；系统密码、命令中的问题仍需亲自输入。任务归属当前页面时，F12 或右上角返回按钮打开关闭选项：继续后台运行、取消任务并关闭或留在页面。后台任务需要输入时会重新显示 AA。F12 也可查看最近的操作。
+aa-title = AutoAdmin (AA)
 aa-request = 确认执行以下操作？
 aa-running = 正在执行；此处显示输出并接收输入。
 aa-blocked = AutoAdmin 已设为一律禁止，或无法读取设置；操作未启动。

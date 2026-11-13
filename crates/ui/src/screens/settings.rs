@@ -10,12 +10,13 @@ pub use slider::SettingsSliderLayout;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, HorizontalAlignment, Layout, Rect};
-use ratatui::widgets::{Clear, Paragraph, Wrap};
+use ratatui::style::Style;
+use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::components::{
-    Button, ComponentTone, DataTable, List as ComponentList, ListItem as ComponentListItem,
-    Scrollbar, SidebarWorkspaceLayout, Surface, TextInput, UpdateActivity, terminal_width,
-    truncate_to_terminal_width, visible_scrolled_rect,
+    Button, ButtonEmphasis, ComponentTone, DataTable, DialogLayout, List as ComponentList,
+    ListItem as ComponentListItem, Scrollbar, SidebarWorkspaceLayout, Surface, TextInput,
+    UpdateActivity, terminal_width, truncate_to_terminal_width, visible_scrolled_rect,
 };
 use crate::{RenderContext, TimezoneMapWidget, TundraTheme};
 
@@ -483,7 +484,7 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         .iter()
         .position(|category| *category == model.selected_category)
         .unwrap_or(0);
-    let inner = area;
+    let inner = inset(area, u16::from(area.width >= 96) * 2, 0);
     let system_height = inner.height.min(1);
     let navigation_height = inner
         .height
@@ -495,13 +496,12 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
     );
     let (category_area, operating_system) = if workspace.vertical {
         workspace.content.height = inner.height;
-        let width = workspace.content.x.saturating_sub(inner.x);
         (
-            Rect::new(inner.x, inner.y, width, navigation_height),
+            workspace.navigation_area,
             Rect::new(
                 inner.x,
                 inner.bottom().saturating_sub(system_height),
-                width.saturating_sub(1),
+                workspace.navigation_area.width,
                 system_height,
             ),
         )
@@ -539,7 +539,7 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
                 1,
                 detail_area.height,
             );
-            detail_area.width = detail_area.width.saturating_sub(1);
+            detail_area.width = detail_area.width.saturating_sub(2);
             content_height = settings_content_height(detail_area.width, model);
             track
         });
@@ -569,6 +569,11 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
             category_area.height,
         )
     });
+    if category_scrollbar.is_some() {
+        for row in &mut workspace.navigation {
+            row.width = row.width.saturating_sub(2);
+        }
+    }
     let category_cards = SettingsCategory::ALL
         .into_iter()
         .zip(&workspace.navigation)
@@ -623,14 +628,15 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         );
         picker_list = Some(list);
         let visible_rows = usize::from(list.height);
+        let rows = picker_rows_area(list, picker.options.len());
         let start = picker.window_start.min(picker.options.len());
         let end = start.saturating_add(visible_rows).min(picker.options.len());
         picker_options.extend((start..end).map(|index| SettingsPickerOptionLayout {
             index,
             area: Rect::new(
-                list.x,
-                list.y.saturating_add((index - start) as u16),
-                list.width,
+                rows.x,
+                rows.y.saturating_add((index - start) as u16),
+                rows.width,
                 1,
             ),
         }));
@@ -642,37 +648,25 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         .and_then(|update| update.confirmation.as_ref());
     let update_confirmation = confirmation.map(|confirmation| {
         let width = area.width.min(72);
-        let lines =
-            crate::management_wrapped_lines(&confirmation.body, width.saturating_sub(4)).len();
+        let lines = crate::management_wrapped_lines(
+            &confirmation.body,
+            DialogLayout::content_width(width).max(1),
+        )
+        .len();
         centered(
             area,
             width,
-            (lines.saturating_add(6).min(usize::from(area.height))) as u16,
+            (lines.saturating_add(8).min(usize::from(area.height))) as u16,
         )
     });
     let (update_confirm_button, update_cancel_button) = confirmation
         .zip(update_confirmation)
         .map(|(confirmation, dialog)| {
-            let confirm_width = u16::try_from(terminal_width(&confirmation.confirm_label))
-                .unwrap_or(u16::MAX)
-                .saturating_add(2);
-            let [_, cancel, _, confirm, _] = Layout::horizontal([
-                Constraint::Fill(1),
-                Constraint::Length(
-                    u16::try_from(terminal_width(&i18n::tr!("ui-settings-touch-cancel")))
-                        .unwrap_or(u16::MAX)
-                        .saturating_add(2),
-                ),
-                Constraint::Length(2),
-                Constraint::Length(confirm_width),
-                Constraint::Fill(1),
-            ])
-            .areas(Rect::new(
-                dialog.x.saturating_add(2),
-                dialog.bottom().saturating_sub(3),
-                dialog.width.saturating_sub(4),
-                1,
-            ));
+            let [confirm, cancel] = settings_dialog_buttons(
+                dialog,
+                &confirmation.confirm_label,
+                &i18n::tr!("ui-settings-touch-cancel"),
+            );
             (Some(confirm), Some(cancel))
         })
         .unwrap_or_default();
@@ -685,7 +679,15 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
     let overlay_buttons = form_layout
         .as_ref()
         .map(|layout| [layout.submit, layout.cancel])
-        .or_else(|| active_editor.map(settings_overlay_buttons));
+        .or_else(|| {
+            active_editor.map(|dialog| {
+                settings_dialog_buttons(
+                    dialog,
+                    &i18n::tr!("ui-settings-touch-apply"),
+                    &i18n::tr!("ui-settings-touch-cancel"),
+                )
+            })
+        });
     SettingsLayout {
         applications,
         animation_editor: model
@@ -872,7 +874,19 @@ pub fn render_settings_content(
     context: &RenderContext,
 ) {
     let theme = &context.compatibility_theme();
-    Surface::new().render_frame(frame, layout.main, context);
+    Surface::new()
+        .background(context.theme.canvas)
+        .render_frame(frame, layout.main, context);
+    if layout.workspace.vertical {
+        Surface::new().raised(true).render_frame(
+            frame,
+            layout
+                .workspace
+                .navigation_area
+                .union(layout.operating_system),
+            context,
+        );
+    }
 
     let buttons = SettingsCategory::ALL
         .into_iter()
@@ -902,7 +916,7 @@ pub fn render_settings_content(
         .with_centered_label(true)
         .with_bracketed_label(false);
     button.set_focused(model.focus == SettingsFocus::OperatingSystem);
-    button.render_borderless_frame(frame, layout.operating_system, theme);
+    button.render_inline_frame(frame, layout.operating_system, theme);
     if let Some(track) = layout.category_scrollbar {
         Scrollbar::new(
             SettingsCategory::ALL.len(),
@@ -973,11 +987,12 @@ pub(crate) fn render_settings_overlay_top(
     if let (Some(apply), Some(cancel)) = (layout.overlay_apply, layout.overlay_cancel)
         && model.form_dialog().is_none()
     {
-        let theme = &context.compatibility_theme();
+        let theme = &DialogLayout::footer_theme(context);
         let mut apply_button = Button::new(
             "settings.overlay.apply",
             i18n::tr!("ui-settings-touch-apply"),
-        );
+        )
+        .with_emphasis(ButtonEmphasis::Primary);
         apply_button.set_focused(
             model
                 .number_editor
@@ -1016,13 +1031,11 @@ fn render_cards(
     let mut y = i32::from(detail_area.y) - i32::from(scroll_offset);
     for (card_index, card) in model.cards.iter().enumerate() {
         let height = settings_card_height(card);
-        Surface::new().titled(&card.title).render_scrolled_frame(
-            frame,
-            detail_area,
-            y,
-            height,
-            context,
-        );
+        Surface::new().render_scrolled_frame(frame, detail_area, y, height, context);
+        Surface::new()
+            .titled(format!("  {}", card.title))
+            .raised(true)
+            .render_scrolled_frame(frame, detail_area, y, 1, context);
         let rows_height = height.saturating_sub(1);
         let Some((visible_rows, skipped_rows)) = visible_scrolled_rect(
             detail_area.x,
@@ -1147,7 +1160,7 @@ fn render_cards(
                 ),
                 item,
                 model.focus == SettingsFocus::Content && item.field == model.selected_field,
-                theme,
+                context,
             );
         }
         y += i32::from(height) + 1;
@@ -1271,32 +1284,20 @@ fn render_update_confirmation(
     let Some(dialog) = layout.update_confirmation else {
         return;
     };
-    let theme = &context.compatibility_theme();
-    frame.render_widget(Clear, dialog);
-    Surface::new()
-        .titled(format!(" {} ", confirmation.title))
-        .bordered(true)
-        .raised(true)
-        .render_frame(frame, dialog, context);
+    let theme = &DialogLayout::footer_theme(context);
+    let chrome = DialogLayout::with_min_body(dialog, 1, None, 3);
+    chrome.render_frame(frame, &confirmation.title, context);
     frame.render_widget(
-        Paragraph::new(confirmation.body.clone())
-            .style(theme.body_style())
-            .alignment(HorizontalAlignment::Center)
-            .wrap(Wrap { trim: true }),
-        Rect::new(
-            dialog.x.saturating_add(2),
-            dialog.y.saturating_add(2),
-            dialog.width.saturating_sub(4),
-            dialog.height.saturating_sub(6),
-        ),
+        Paragraph::new(confirmation.body.clone()).wrap(Wrap { trim: true }),
+        chrome.body,
     );
     if let Some(area) = layout.update_confirm_button {
         let mut button = Button::new("settings.update.confirm", &confirmation.confirm_label)
             .with_bracketed_label(false)
             .with_centered_label(true)
-            .with_emphasis(crate::components::ButtonEmphasis::Primary);
+            .with_emphasis(ButtonEmphasis::Primary);
         button.state.selected = confirmation.confirm_selected;
-        button.render_borderless_frame(frame, area, theme);
+        button.render_inline_frame(frame, area, theme);
     }
     if let Some(area) = layout.update_cancel_button {
         let mut button = Button::new(
@@ -1306,7 +1307,7 @@ fn render_update_confirmation(
         .with_bracketed_label(false)
         .with_centered_label(true);
         button.state.selected = !confirmation.confirm_selected;
-        button.render_borderless_frame(frame, area, theme);
+        button.render_inline_frame(frame, area, theme);
     }
 }
 
@@ -1334,16 +1335,18 @@ fn render_settings_footer(
         .collect::<Vec<_>>()
         .join("  |  ");
     let area = Rect::new(detail.x, detail.bottom().saturating_sub(1), detail.width, 1);
-    crate::components::PageActionBar::new("settings")
-        .with_status(vec![crate::components::PageActionStatus {
-            text,
-            tone: if selected.is_some_and(|item| item.unavailable_reason.is_some()) {
-                crate::components::ComponentTone::Warning
-            } else {
-                crate::components::ComponentTone::Muted
-            },
-        }])
-        .render(frame, area, context);
+    if !text.is_empty() {
+        crate::components::PageActionBar::new("settings")
+            .with_status(vec![crate::components::PageActionStatus {
+                text,
+                tone: if selected.is_some_and(|item| item.unavailable_reason.is_some()) {
+                    crate::components::ComponentTone::Warning
+                } else {
+                    crate::components::ComponentTone::Muted
+                },
+            }])
+            .render(frame, area, context);
+    }
 }
 
 fn render_picker(
@@ -1352,19 +1355,15 @@ fn render_picker(
     picker: &SettingsPickerViewModel,
     context: &RenderContext,
 ) {
-    let theme = &context.compatibility_theme();
+    let theme = &DialogLayout::body_theme(context);
     let dialog = settings_picker_dialog(area, picker);
-    frame.render_widget(Clear, dialog);
-    Surface::new()
-        .titled(format!(" {} ", picker.title))
-        .bordered(true)
-        .raised(true)
-        .render_frame(frame, dialog, context);
+    let chrome = picker_chrome(dialog, picker.searchable);
+    chrome.render_frame(frame, &picker.title, context);
     let query_area = Rect::new(
-        dialog.x.saturating_add(2),
-        dialog.y.saturating_add(1),
-        dialog.width.saturating_sub(4),
-        1,
+        chrome.body.x,
+        chrome.body.y,
+        chrome.body.width,
+        chrome.body.height.min(1),
     );
     if picker.searchable {
         picker
@@ -1383,6 +1382,7 @@ fn render_picker(
         picker.kind == SettingsPickerKind::Timezone,
         picker.searchable,
     );
+    let rows = picker_rows_area(list, picker.options.len());
     let visible = usize::from(list.height);
     let start = picker.window_start.min(picker.options.len());
     let items = picker
@@ -1399,7 +1399,7 @@ fn render_picker(
                 format!("settings.picker.{index}"),
                 truncate(
                     &format!("{}{detail}", option.label),
-                    usize::from(list.width.saturating_sub(2)),
+                    usize::from(rows.width.saturating_sub(2)),
                 ),
             )
             .disabled(!option.enabled)
@@ -1410,17 +1410,27 @@ fn render_picker(
             })
         })
         .collect::<Vec<_>>();
-    let mut component_list =
-        ComponentList::new("settings.picker", items).with_viewport_start(start);
+    let mut component_list = ComponentList::new("settings.picker", items)
+        .with_background(context.theme.surface)
+        .with_viewport_start(start);
     component_list.set_focused(true);
     component_list.set_selected(Some(picker.selected_index));
-    component_list.render_borderless_frame(frame, list, theme);
+    component_list.render_borderless_frame(frame, rows, theme);
     if picker.options.len() > visible && list.width > 0 && list.height > 0 {
-        Scrollbar::new(picker.options.len(), visible, start).render_frame(frame, list, context);
+        Scrollbar::new(picker.options.len(), visible, start).render_frame(
+            frame,
+            Rect::new(list.right() - 1, list.y, 1, list.height),
+            context,
+        );
     }
 
     if picker.kind == SettingsPickerKind::Timezone && dialog.width >= 70 {
-        let map = picker_map_area(dialog);
+        let map = Rect::new(
+            list.right() + 2,
+            list.y,
+            chrome.body.right().saturating_sub(list.right() + 2),
+            list.height,
+        );
         if let Some(option) = picker.options.get(picker.selected_index) {
             let mut widget = TimezoneMapWidget::themed(&[], theme)
                 .selected_timezone_id(option.timezone_id.as_deref());
@@ -1451,7 +1461,7 @@ fn render_settings_control(
     area: Rect,
     item: &SettingsItemViewModel,
     selected: bool,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     if area.width == 0
         || area.height == 0
@@ -1460,16 +1470,15 @@ fn render_settings_control(
         return;
     }
 
+    let theme = &context.compatibility_theme();
     if item.kind == SettingsControlKind::ReadOnly {
-        let style = if item.enabled {
-            if selected {
-                theme.title_style()
-            } else {
-                theme.body_style()
-            }
+        let style = Style::default().fg(if !item.enabled {
+            theme.disabled_style().fg.unwrap_or(context.theme.muted)
+        } else if selected {
+            context.theme.text
         } else {
-            theme.disabled_style()
-        };
+            context.theme.muted
+        });
         frame.render_widget(
             Paragraph::new(item.value.clone())
                 .alignment(HorizontalAlignment::Right)
@@ -1478,9 +1487,17 @@ fn render_settings_control(
         );
         return;
     }
+    let value = match item.kind {
+        SettingsControlKind::Cycle | SettingsControlKind::Picker | SettingsControlKind::Palette
+            if selected && item.enabled =>
+        {
+            format!("{} ↵", item.value)
+        }
+        _ => item.value.clone(),
+    };
     let mut button = Button::new(
         format!("settings.field.{:?}", item.field).to_ascii_lowercase(),
-        item.value.clone(),
+        value,
     )
     .with_bracketed_label(false)
     .with_capture_name(&item.label);
@@ -1528,22 +1545,28 @@ fn settings_card_height(card: &SettingsCardViewModel) -> u16 {
 }
 
 fn picker_list_area(dialog: Rect, timezone: bool, searchable: bool) -> Rect {
-    let content = inset(dialog, 2, 2);
+    let mut content = picker_chrome(dialog, searchable).body;
+    let search_rows = if searchable { content.height.min(2) } else { 0 };
+    content.y += search_rows;
+    content.height -= search_rows;
     if timezone && dialog.width >= 70 {
-        Rect::new(
-            content.x,
-            content.y.saturating_add(u16::from(searchable)),
-            content.width / 2,
-            content.height.saturating_sub(1 + u16::from(searchable)),
-        )
-    } else {
-        Rect::new(
-            content.x,
-            content.y.saturating_add(u16::from(searchable)),
-            content.width,
-            content.height.saturating_sub(1 + u16::from(searchable)),
-        )
+        content.width /= 2;
     }
+    content
+}
+
+fn picker_chrome(dialog: Rect, searchable: bool) -> DialogLayout {
+    DialogLayout::with_min_body(dialog, 1, None, 1 + u16::from(searchable) * 2)
+}
+
+fn picker_rows_area(list: Rect, option_count: usize) -> Rect {
+    Rect::new(
+        list.x,
+        list.y,
+        list.width
+            .saturating_sub(u16::from(option_count > usize::from(list.height)) * 2),
+        list.height,
+    )
 }
 
 fn settings_picker_dialog(area: Rect, picker: &SettingsPickerViewModel) -> Rect {
@@ -1564,46 +1587,38 @@ fn settings_picker_dialog(area: Rect, picker: &SettingsPickerViewModel) -> Rect 
                 + terminal_width(&i18n::tr!("ui-settings-touch-cancel"))
                 + 4,
         )
-        .saturating_add(4)
+        .saturating_add(6)
         .clamp(32, 78)
         .min(usize::from(area.width)) as u16;
     let height = picker
         .options
         .len()
         .max(1)
-        .saturating_add(5 + usize::from(picker.searchable))
+        .saturating_add(8 + usize::from(picker.searchable) * 2)
         .min(24)
         .min(usize::from(area.height)) as u16;
     centered(area, width, height)
 }
 
-fn picker_map_area(dialog: Rect) -> Rect {
-    let content = inset(dialog, 2, 2);
-    let left = content.width / 2;
-    Rect::new(
-        content.x.saturating_add(left).saturating_add(1),
-        content.y.saturating_add(1),
-        content.width.saturating_sub(left).saturating_sub(1),
-        content.height.saturating_sub(1),
-    )
-}
-
-fn settings_overlay_buttons(dialog: Rect) -> [Rect; 2] {
-    let row = Rect::new(
-        dialog.x + u16::from(dialog.width > 1),
-        dialog.bottom().saturating_sub(2),
-        dialog.width.saturating_sub(2),
-        u16::from(dialog.height > 2),
+fn settings_dialog_buttons(dialog: Rect, apply: &str, cancel: &str) -> [Rect; 2] {
+    let footer = DialogLayout::new(dialog, 1, None).footer;
+    let apply_width =
+        ((terminal_width(apply) as u16).saturating_add(2)).min(footer.width.div_ceil(2));
+    let cancel_width = ((terminal_width(cancel) as u16).saturating_add(2))
+        .min(footer.width.saturating_sub(apply_width + 1));
+    let apply = Rect::new(
+        footer.right() - apply_width,
+        footer.y,
+        apply_width,
+        footer.height,
     );
-    [
-        Rect::new(row.x, row.y, row.width / 2, row.height),
-        Rect::new(
-            row.x + row.width / 2,
-            row.y,
-            row.width - row.width / 2,
-            row.height,
-        ),
-    ]
+    let cancel = Rect::new(
+        apply.x.saturating_sub(cancel_width + 1).max(footer.x),
+        footer.y,
+        cancel_width,
+        footer.height,
+    );
+    [apply, cancel]
 }
 
 fn inset(area: Rect, horizontal: u16, vertical: u16) -> Rect {

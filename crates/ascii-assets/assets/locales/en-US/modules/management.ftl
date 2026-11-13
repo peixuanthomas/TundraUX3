@@ -152,6 +152,7 @@ aa-policy-automatic = Always allow
 aa-policy-manual = Ask every time (default)
 aa-policy-deny = Deny all
 aa-policy-help = AA approves built-in system operations. Always allow skips only AA confirmation; system passwords and command questions still require input. When a task belongs to the current page, F12 or the top-right Back button opens its close choices: keep running in the background, cancel the task and close, or stay. Background tasks reopen AA when they need input. F12 also reviews the last operation.
+aa-title = AutoAdmin (AA)
 aa-request = Run the following operation?
 aa-running = Running; this window shows output and accepts input.
 aa-blocked = AutoAdmin is set to deny, or its settings could not be read. No operation was started.

@@ -2,7 +2,8 @@ use super::document::*;
 use super::*;
 use crate::RenderContext;
 use crate::components::{
-    BigText, Button, List, ListItem, Scrollbar, ScrollbarOrientation, Surface, terminal_width,
+    BigText, Button, ButtonEmphasis, DialogLayout, List, ListItem, Scrollbar, ScrollbarOrientation,
+    Surface, terminal_width,
 };
 use ratatui::layout::HorizontalAlignment;
 
@@ -44,13 +45,15 @@ pub fn render_editor_contextual_with_terminal_images(
     let theme = &context.compatibility_theme();
     let layout = editor_layout(area, model);
     frame.render_widget(Clear, area);
-    Surface::new().render_frame(frame, area, context);
+    Surface::new()
+        .background(context.theme.canvas)
+        .render_frame(frame, area, context);
     if let Some(terminal) = &model.vim_terminal {
         let mut vim_toggle = Button::new("editor.vim-toggle", i18n::tr!("ui-editor-vim-enabled"))
             .with_bracketed_label(false)
             .with_rainbow_label(context.motion.now);
         vim_toggle.state.selected = true;
-        vim_toggle.render_borderless_frame(frame, layout.vim_toggle, theme);
+        vim_toggle.render_inline_frame(frame, layout.vim_toggle, theme);
         crate::screens::command_line::render_native_terminal_snapshot_with_images(
             frame,
             layout.canvas,
@@ -63,11 +66,11 @@ pub fn render_editor_contextual_with_terminal_images(
         return layout;
     }
     images.clear();
-    render_menu_bar(frame, &layout, model, theme, context);
+    render_menu_bar(frame, &layout, model, context);
     render_toolbar(frame, &layout, model, theme, context);
     render_search_bar(frame, &layout, model, theme);
     render_canvas(frame, &layout, model, theme, context);
-    render_status_bar(frame, &layout, model, theme);
+    render_status_bar(frame, &layout, model, context);
     layout
 }
 
@@ -136,13 +139,12 @@ pub fn render_editor_overlay(
     model: &EditorViewModel,
     context: &RenderContext,
 ) {
-    let theme = &context.compatibility_theme();
     if let Some(install) = &model.vim_install {
         super::vim_install::render(frame, layout.area, install, context);
         return;
     }
-    render_menu_popup(frame, &layout, model, theme, context);
-    render_quick_menu(frame, &layout, theme, context);
+    render_menu_popup(frame, layout, model, context);
+    render_quick_menu(frame, layout, context);
     if let (Some(settings_layout), Some(settings)) = (&layout.settings, &model.settings) {
         settings
             .dialog()
@@ -157,17 +159,16 @@ fn render_menu_bar(
     frame: &mut Frame<'_>,
     layout: &EditorLayout,
     model: &EditorViewModel,
-    theme: &TundraTheme,
     context: &RenderContext,
 ) {
     if layout.menu_bar.is_empty() {
         return;
     }
     Surface::new().render_frame(frame, layout.menu_bar, context);
+    let menu_theme = &DialogLayout::body_theme(context);
     for item in &layout.menus {
         let active = model.open_menu == Some(item.menu)
             || (model.focus == EditorFocus::MenuBar && model.selected_menu == item.menu);
-        let item_theme = theme.clone();
         render_editor_button(
             frame,
             item.area,
@@ -175,25 +176,16 @@ fn render_menu_bar(
             menu_bar_label(item.menu),
             active,
             false,
-            &item_theme,
+            menu_theme,
         );
     }
     for item in &layout.modes {
-        let active = item.mode == model.mode;
-        let mut item_theme = theme.clone();
-        if !active {
-            item_theme.background = theme.muted;
-            item_theme.foreground = theme.muted;
-        }
-        render_editor_button(
-            frame,
-            item.area,
+        Button::new(
             format!("editor.mode.{:?}", item.mode),
             format!(" {} ", mode_label(item.mode)),
-            active,
-            false,
-            &item_theme,
-        );
+        )
+        .with_current(item.mode == model.mode)
+        .render_inline_frame(frame, item.area, menu_theme);
     }
     let start = layout
         .menus
@@ -218,7 +210,7 @@ fn render_menu_bar(
     frame.render_widget(
         Paragraph::new(terminal_safe_text(&title).into_owned())
             .alignment(HorizontalAlignment::Right)
-            .style(theme.body_style()),
+            .style(menu_theme.muted_style()),
         Rect::new(
             start,
             layout.menu_bar.y,
@@ -232,14 +224,13 @@ fn render_menu_bar(
     if model.vim_mode.is_some() {
         vim_toggle = vim_toggle.with_rainbow_label(context.motion.now);
     }
-    vim_toggle.render_borderless_frame(frame, layout.vim_toggle, theme);
+    vim_toggle.render_inline_frame(frame, layout.vim_toggle, menu_theme);
 }
 
 fn render_menu_popup(
     frame: &mut Frame<'_>,
     layout: &EditorLayout,
     model: &EditorViewModel,
-    theme: &TundraTheme,
     context: &RenderContext,
 ) {
     let Some(area) = layout.menu_popup else {
@@ -247,7 +238,6 @@ fn render_menu_popup(
     };
     frame.render_widget(Clear, area);
     Surface::new()
-        .bordered(true)
         .raised(true)
         .render_frame(frame, area, context);
     let Some(first) = layout.menu_items.first() else {
@@ -270,14 +260,14 @@ fn render_menu_popup(
             .disabled(!item.enabled)
         })
         .collect();
-    let mut list = List::new("editor.menu.actions", items);
+    let mut list = List::new("editor.menu.actions", items).with_background(context.theme.raised);
     let first = model
         .selected_menu_action
         .saturating_add(1)
         .saturating_sub(layout.menu_items.len());
     list.set_selected(Some(model.selected_menu_action.saturating_sub(first)));
     list.set_focused(model.focus == EditorFocus::MenuBar);
-    list.render_borderless_frame(frame, list_area, theme);
+    list.render_borderless_with_context(list_area, frame.buffer_mut(), context);
     if let Some(track) = layout.menu_scrollbar
         && let Some(menu) = model.open_menu
     {
@@ -290,18 +280,12 @@ fn render_menu_popup(
     }
 }
 
-fn render_quick_menu(
-    frame: &mut Frame<'_>,
-    layout: &EditorLayout,
-    _theme: &TundraTheme,
-    context: &RenderContext,
-) {
+fn render_quick_menu(frame: &mut Frame<'_>, layout: &EditorLayout, context: &RenderContext) {
     let Some(area) = layout.quick_menu_popup else {
         return;
     };
     frame.render_widget(Clear, area);
     Surface::new()
-        .bordered(true)
         .raised(true)
         .render_frame(frame, area, context);
 
@@ -313,7 +297,8 @@ fn render_quick_menu(
         let mut button = Button::new(
             format!("editor.quick.{:?}", item.action),
             quick_action_label(item.action),
-        );
+        )
+        .with_background(context.theme.raised);
         button.state.selected = matches!(item.action, EditorQuickAction::Heading(_));
         button.set_disabled(!item.enabled);
         button.render_borderless_frame(frame, item.area, &item_theme);
@@ -330,20 +315,24 @@ fn render_toolbar(
     if layout.toolbar.is_empty() {
         return;
     }
-    Surface::new().render_frame(frame, layout.toolbar, context);
+    Surface::new()
+        .raised(true)
+        .render_frame(frame, layout.toolbar, context);
     for item in &layout.toolbar_items {
         let active = model.toolbar.is_active(item.action);
         let selected = model.selected_toolbar_action == Some(item.action)
             && model.focus == EditorFocus::Toolbar;
-        render_editor_button(
-            frame,
-            item.area,
+        let mut button = Button::new(
             format!("editor.toolbar.{:?}", item.action),
             toolbar_label(item.action),
-            active || selected,
-            !item.enabled,
-            theme,
-        );
+        )
+        .with_current(active);
+        if matches!(item.action, EditorToolbarAction::Save) {
+            button = button.with_emphasis(ButtonEmphasis::Primary);
+        }
+        button.set_focused(selected);
+        button.set_disabled(!item.enabled);
+        button.render_inline_frame(frame, item.area, theme);
     }
 }
 
@@ -359,7 +348,7 @@ fn render_editor_button(
     let mut button = Button::new(id, label).with_bracketed_label(false);
     button.state.selected = selected;
     button.set_disabled(disabled);
-    button.render_borderless_frame(frame, area, theme);
+    button.render_inline_frame(frame, area, theme);
 }
 
 fn render_canvas(
@@ -619,7 +608,7 @@ fn render_status_bar(
     frame: &mut Frame<'_>,
     layout: &EditorLayout,
     model: &EditorViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
     if layout.status_bar.is_empty() {
         return;
@@ -630,11 +619,11 @@ fn render_status_bar(
         effective_cursor(layout, model)
     }
     .unwrap_or_default();
-    let style = theme.tokens().filled_style(theme.muted);
+    let style = Style::default()
+        .fg(context.theme.muted)
+        .bg(context.theme.surface);
     frame.render_widget(Paragraph::new("").style(style), layout.status_bar);
-    let mut status_theme = theme.clone();
-    status_theme.background = theme.muted;
-    status_theme.foreground = style.fg.unwrap_or(theme.foreground);
+    let status_theme = DialogLayout::body_theme(context);
     for (index, item) in layout.status_items.iter().enumerate() {
         let label = model
             .status_actions

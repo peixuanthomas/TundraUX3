@@ -187,7 +187,7 @@ fn localized_home_logout_and_log_controls_use_terminal_cell_widths() {
             let area = home_logout_area(main, &home);
             assert_eq!(
                 usize::from(area.width),
-                i18n::tr!("ui-home-logout-button").width()
+                i18n::tr!("ui-home-logout-button").width() + 2
             );
             let mut model = LogsViewModel {
                 can_view_system: true,
@@ -235,11 +235,7 @@ fn localized_home_logout_and_log_controls_use_terminal_cell_widths() {
                         .iter()
                         .find(|control| control.target == target)
                         .unwrap();
-                    let padding = usize::from(matches!(
-                        target,
-                        ui::LogsHitTarget::Refresh | ui::LogsHitTarget::FilterLevel
-                    )) * 2;
-                    assert_eq!(usize::from(control.area.width), label.width() + padding);
+                    assert_eq!(usize::from(control.area.width), label.width() + 2);
                     let expected = ui::logs_control_enabled(&model, target).then_some(target);
                     assert_eq!(
                         logs_hit_test(main, &model, (control.area.x, control.area.y)),

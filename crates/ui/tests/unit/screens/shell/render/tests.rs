@@ -8,7 +8,12 @@ fn status_message_uses_shared_hover_pressed_and_keyboard_colors() {
         HomeDisplayMode, RenderContext, ShellChromeViewModel, ShellFrameLayout, StatusViewModel,
         TundraTheme,
     };
-    use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Color};
+    use ratatui::{
+        Terminal,
+        backend::TestBackend,
+        layout::Rect,
+        style::{Color, Modifier},
+    };
     let mut theme = TundraTheme::default_dark();
     theme.accent_color = Color::Rgb(30, 120, 200);
     let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
@@ -43,8 +48,8 @@ fn status_message_uses_shared_hover_pressed_and_keyboard_colors() {
         },
     };
     for (hovered, pressed, keyboard, focused, expected) in [
-        (true, false, false, false, theme.accent_color),
-        (true, true, false, false, theme.button_pressed_color()),
+        (true, false, false, false, Color::White),
+        (true, true, false, false, Color::White),
         (false, false, true, true, theme.accent_color),
         (false, false, false, false, theme.foreground),
     ] {
@@ -65,7 +70,16 @@ fn status_message_uses_shared_hover_pressed_and_keyboard_colors() {
             })
             .unwrap();
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(message.x, message.y)].fg, expected);
+        let label = &buffer[(message.x, message.y)];
+        assert_eq!(label.fg, expected);
+        assert_eq!(label.modifier.contains(Modifier::UNDERLINED), focused);
+        if hovered {
+            let background_theme = TundraTheme {
+                background: label.bg,
+                ..theme.clone()
+            };
+            assert_eq!(background_theme.readable_text_color(label.fg), label.fg);
+        }
         assert!(buttons.regions().contains(&region));
         assert_ne!(layout.time_button.unwrap(), message);
     }

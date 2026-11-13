@@ -58,6 +58,18 @@ pub fn auth_viewport(area: Rect, minimum_height: u16, offset: u16) -> AuthViewpo
     }
 }
 
+pub(super) fn auth_workspace(area: Rect, max_width: u16) -> Rect {
+    let side = u16::from(area.width >= 96) * 4;
+    let width = area.width.saturating_sub(side).min(max_width);
+    let top = u16::from(area.height >= 28);
+    Rect::new(
+        area.x + (area.width - width) / 2,
+        area.y + top,
+        width,
+        area.height.saturating_sub(top),
+    )
+}
+
 /// Paint the whole form into a bounded buffer, then copy only its visible rows.
 /// Button rectangles are translated with the same offset as the pixels.
 pub(super) fn render_auth_viewport(
@@ -106,6 +118,9 @@ fn render_auth_viewport_inner(
             &context.compatibility_theme(),
         );
         result.keyboard_focus_visible = buttons.keyboard_focus_visible;
+        result.hover_position = buttons
+            .hover_position
+            .and_then(|point| viewport.content_point(point));
         result
     });
     let mut terminal = Terminal::new(TestBackend::new(
@@ -167,9 +182,11 @@ pub(super) fn render_auth_screen(
     lines: Vec<Line<'static>>,
     context: &RenderContext,
 ) {
-    let surface = Surface::new().titled(title).bordered(false);
+    let surface = Surface::new()
+        .titled(title)
+        .background(context.theme.canvas);
     let inner = auth_content_area(main);
-    surface.render_frame(frame, main, &context);
+    surface.render_frame(frame, main, context);
     frame.render_widget(
         Paragraph::new(lines)
             .alignment(HorizontalAlignment::Left)

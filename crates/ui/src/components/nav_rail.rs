@@ -1,13 +1,16 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{HorizontalAlignment, Rect};
+use ratatui::style::Modifier;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
 use crate::RenderContext;
 
 use super::{
     ComponentEvent, ComponentId, ComponentState, InputEvent, Key, MouseButton, MouseKind, Surface,
-    contains_point, interactive_style,
+    contains_point,
+    foundation::{row_marker, row_style},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +50,7 @@ pub struct NavRail {
     pub selected: Option<usize>,
     pub state: ComponentState,
     pub title: Option<String>,
+    hovered: Option<usize>,
 }
 
 impl NavRail {
@@ -58,6 +62,7 @@ impl NavRail {
             selected,
             state: ComponentState::default(),
             title: None,
+            hovered: None,
         }
     }
 
@@ -74,7 +79,17 @@ impl NavRail {
             }
             InputEvent::FocusLost => {
                 self.state.focused = false;
+                self.hovered = None;
                 ComponentEvent::Consumed
+            }
+            InputEvent::Mouse(mouse) if mouse.kind == MouseKind::Move => {
+                let next = self.index_at(area, mouse.column(), mouse.row());
+                if self.hovered == next {
+                    ComponentEvent::None
+                } else {
+                    self.hovered = next;
+                    ComponentEvent::Changed(self.id.clone())
+                }
             }
             InputEvent::Key(key) if key.is_press_like() && self.state.focused => match key.key {
                 Key::Up => self.select_step(-1),
@@ -97,6 +112,7 @@ impl NavRail {
                 match index.and_then(|index| self.items.get(index).map(|item| (index, item))) {
                     Some((index, item)) if !item.disabled => {
                         self.state.focused = true;
+                        self.hovered = None;
                         self.selected = Some(index);
                         ComponentEvent::Selected(self.id.clone(), index)
                     }
@@ -131,38 +147,38 @@ impl NavRail {
             state.selected = selected;
             state.focused &= selected;
             state.disabled |= item.disabled;
+            let row_area = Rect::new(inner.x, inner.y + (index - start) as u16, inner.width, 1);
+            state.hovered |= if let Some(buttons) = &context.buttons {
+                buttons
+                    .hover_position
+                    .is_some_and(|(x, y)| contains_point(row_area, x, y))
+            } else {
+                self.hovered == Some(index)
+            };
             crate::automation::control(
                 item.id.as_str(),
                 "tab",
                 &item.label,
-                Rect::new(inner.x, inner.y + (index - start) as u16, inner.width, 1),
+                row_area,
                 state,
                 &["click"],
             );
-            let style = interactive_style(state, &theme);
-            let marker = if state.focused && theme.keyboard_focus_visible() {
-                ">"
-            } else {
-                " "
-            };
+            let style = row_style(state, &theme, context.theme.raised);
             let icon = item.icon.as_deref().unwrap_or("");
             let text = if icon.is_empty() {
-                format!("{marker} {}", item.label)
+                item.label.clone()
             } else {
-                format!("{marker} {icon} {}", item.label)
+                format!("{icon} {}", item.label)
             };
-            Paragraph::new(text)
+            let line = Line::from(vec![
+                row_marker(state, &theme),
+                Span::raw(" "),
+                Span::styled(text, style),
+            ]);
+            Paragraph::new(line)
                 .alignment(HorizontalAlignment::Left)
-                .style(style)
-                .render(
-                    Rect::new(
-                        inner.x,
-                        inner.y.saturating_add((index - start) as u16),
-                        inner.width,
-                        1,
-                    ),
-                    buffer,
-                );
+                .style(style.remove_modifier(Modifier::UNDERLINED))
+                .render(row_area, buffer);
         }
     }
 
@@ -185,7 +201,7 @@ impl NavRail {
     }
 
     fn surface(&self) -> Surface {
-        let mut surface = Surface::new();
+        let mut surface = Surface::new().raised(true);
         surface.title = self.title.clone();
         surface
     }
@@ -215,6 +231,7 @@ impl NavRail {
         ComponentEvent::Consumed
     }
     fn set_selected(&mut self, selected: Option<usize>) -> ComponentEvent {
+        self.hovered = None;
         let Some(selected) = selected else {
             return ComponentEvent::Consumed;
         };

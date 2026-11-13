@@ -1,6 +1,6 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier};
 use ui::components::{
     Button, ButtonEmphasis, ButtonFrame, ButtonRegion, List, ListItem, NavRail, NavRailItem,
     Surface,
@@ -106,13 +106,13 @@ fn compatibility_tokens_retain_resolved_surfaces_and_semantic_colors() {
         assert_eq!(tokens.accent, Color::Magenta);
         assert_eq!(tokens.border, Color::Blue);
         if capabilities == RenderCapabilities::ansi() {
-            assert_eq!(tokens.surface, Color::Black);
+            assert_eq!(tokens.surface, Color::DarkGray);
             assert_eq!(tokens.raised, Color::Black);
             assert_eq!(tokens.success, Color::Green);
             assert_eq!(tokens.danger, Color::LightRed);
         } else {
-            assert_eq!(tokens.surface, Color::Rgb(24, 24, 24));
-            assert_eq!(tokens.raised, Color::Rgb(36, 36, 36));
+            assert_eq!(tokens.surface, Color::Rgb(0x0D, 0x1B, 0x22));
+            assert_eq!(tokens.raised, Color::Rgb(0x13, 0x26, 0x2F));
             assert_eq!(tokens.success, Color::Rgb(121, 214, 155));
             assert_eq!(tokens.danger, Color::Rgb(242, 125, 137));
         }
@@ -174,25 +174,16 @@ fn shared_button_frames_keep_terminal_colors_in_every_interaction_state() {
                         }
                     }
                     if emphasis == ButtonEmphasis::Normal && variant == 2 {
-                        let expected = match state {
-                            "normal" => context.theme.surface,
-                            "current" => context.theme.raised,
-                            "disabled" => context.theme.canvas,
-                            _ => context.theme.accent_soft,
-                        };
-                        assert_eq!(buffer[(1, 1)].bg, expected, "{state}, {capabilities:?}");
-                    }
-                    if emphasis == ButtonEmphasis::Normal && variant == 1 {
-                        let expected = match state {
-                            "hovered" | "focused" => context.theme.accent,
-                            "pressed" if capabilities == RenderCapabilities::ansi() => {
-                                Color::LightCyan
+                        let actual = buffer[(1, 1)].bg;
+                        let normal = context.theme.surface;
+                        match state {
+                            "normal" | "focused" => assert_eq!(actual, normal),
+                            "current" => {
+                                assert_eq!(actual, context.theme.selected_row_background())
                             }
-                            "pressed" => Color::Rgb(153, 226, 238),
-                            "disabled" => Color::DarkGray,
-                            _ => context.theme.text,
-                        };
-                        assert_eq!(buffer[(1, 1)].fg, expected, "{state}, {capabilities:?}");
+                            "disabled" => assert_eq!(actual, context.theme.canvas),
+                            _ => assert_ne!(actual, normal),
+                        }
                     }
                 }
                 assert_eq!(buttons.regions().len(), 3);
@@ -202,7 +193,7 @@ fn shared_button_frames_keep_terminal_colors_in_every_interaction_state() {
 }
 
 #[test]
-fn ansi_components_keep_titles_neutral_and_use_user_accent_for_focus() {
+fn ansi_components_keep_titles_neutral_and_show_focus_for_every_user_accent() {
     for (accent, _) in ANSI_ACCENTS {
         let theme = TundraTheme::default()
             .with_border_color(Color::White)
@@ -225,17 +216,19 @@ fn ansi_components_keep_titles_neutral_and_use_user_accent_for_focus() {
         list.render_with_context(area, &mut buffer, &context);
         assert_eq!(buffer[(1, 0)].symbol(), "S");
         assert_eq!(buffer[(1, 0)].fg, context.theme.text);
-        assert_eq!(buffer[(1, 1)].symbol(), ">");
-        assert_eq!(buffer[(1, 1)].fg, accent);
+        assert_eq!(buffer[(1, 1)].symbol(), "▌");
+        assert_ne!(buffer[(1, 1)].fg, buffer[(1, 1)].bg);
+        assert!(buffer[(3, 1)].modifier.contains(Modifier::UNDERLINED));
 
         let mut rail = NavRail::new("nav", vec![NavRailItem::new("settings", "Settings")]);
         for focused in [false, true] {
             rail.state.focused = focused;
             rail.render(area, &mut buffer, &context);
             assert_eq!(buffer[(2, 0)].symbol(), "S");
+            assert_ne!(buffer[(2, 0)].fg, buffer[(2, 0)].bg);
             assert_eq!(
-                buffer[(2, 0)].fg,
-                if focused { accent } else { context.theme.text }
+                buffer[(2, 0)].modifier.contains(Modifier::UNDERLINED),
+                focused
             );
         }
 

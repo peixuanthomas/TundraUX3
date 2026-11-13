@@ -17,6 +17,7 @@ const HOME_ICON_HEIGHT: u16 = 4;
 const HOME_TILE_MAX_HEIGHT: u16 = 6;
 const HOME_TILE_MIN_HEIGHT: u16 = 2;
 const HOME_TILE_GAP: u16 = 1;
+const HOME_CONTENT_MAX_WIDTH: u16 = 112;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HomeItemLayout {
@@ -90,16 +91,24 @@ fn render_user_main(
 ) {
     let theme = &context.compatibility_theme();
     Surface::new()
-        .titled(i18n::tr!("ui-home-home"))
-        .bordered(false)
+        .background(context.theme.canvas)
         .render_frame(frame, area, context);
+    let workspace = home_workspace_area(area, home.entries().len());
+    Surface::new()
+        .background(context.theme.canvas)
+        .titled(i18n::tr!("ui-home-home"))
+        .render_frame(
+            frame,
+            Rect::new(workspace.x, workspace.y, workspace.width, 1).intersection(workspace),
+            context,
+        );
 
-    let content = home_content_area(area);
+    let content = home_content_area(workspace);
     if content.width == 0 || content.height == 0 {
         return;
     }
 
-    let summary = home_summary_area(area);
+    let summary = home_summary_area(workspace);
     let layout = home_layout(area, home);
     render_home_account_summary(frame, area, summary, home, theme);
 
@@ -112,17 +121,22 @@ fn render_user_main(
             .with_current(current)
             .with_surface_border(false);
         surface.set_focused(current && !home.logout_selected() && !home.edit_selected);
-        let icon_area = home_entry_icon_area(tile);
-        if icon_area.is_empty() {
-            surface
-                .with_centered_label(true)
-                .render_borderless_frame(frame, tile, theme);
-            continue;
-        }
         surface.render_surface_frame(frame, tile, theme);
         let label_style = surface.surface_style(tile, theme);
-        let style = label_style.remove_modifier(Modifier::UNDERLINED);
         let content_width = usize::from(tile.width);
+        let icon_area = home_entry_icon_area(tile);
+        if icon_area.is_empty() {
+            frame.render_widget(
+                Paragraph::new(centered_home_tile_text(
+                    &entry.label,
+                    content_width,
+                    label_style,
+                )),
+                Rect::new(tile.x, tile.y + (tile.height - 1) / 2, tile.width, 1),
+            );
+            continue;
+        }
+        let style = label_style.remove_modifier(Modifier::UNDERLINED);
         let rendered_graphic = icon_area.width > 0
             && icon_area.height > 0
             && icons
@@ -169,11 +183,20 @@ fn render_user_main(
         }
         let description_y = label_y.saturating_add(1);
         if description_y < inner.bottom() {
+            let description_style = if style.bg == Some(context.theme.surface)
+                || style.bg == Some(context.theme.raised)
+            {
+                style
+                    .fg(context.theme.muted)
+                    .remove_modifier(Modifier::BOLD)
+            } else {
+                style.remove_modifier(Modifier::BOLD)
+            };
             frame.render_widget(
                 Paragraph::new(centered_home_tile_text(
                     &entry.description,
                     content_width,
-                    style,
+                    description_style,
                 ))
                 .alignment(HorizontalAlignment::Left),
                 Rect::new(inner.x, description_y, inner.width, 1),
@@ -190,7 +213,7 @@ fn render_user_main(
     {
         render_grid_drop_indicator(frame, target.indicator(item.area), theme);
     }
-    home_action_bar(home).render(frame, home_footer_area(area), context);
+    home_action_bar(home).render(frame, home_footer_area(workspace), context);
 
     if let Some(area) = layout.scrollbar {
         Scrollbar::new(
@@ -227,15 +250,15 @@ fn render_home_account_summary(
             i18n::tr!("ui-home-current-user", user = user)
         }))
         .alignment(HorizontalAlignment::Left)
-        .style(theme.body_style())
+        .style(theme.muted_style())
         .wrap(Wrap { trim: true }),
         Rect::new(summary.x, summary.y, user_width, summary.height),
     );
     if logout.width > 0 {
         let mut button = Button::new("home.logout", i18n::tr!("ui-home-logout-button"))
             .with_emphasis(ButtonEmphasis::Danger);
-        button.state.selected = home.logout_selected();
-        button.render_borderless_frame(frame, logout, theme);
+        button.set_focused(home.logout_selected());
+        button.render_inline_frame(frame, logout, theme);
     }
 }
 
@@ -268,7 +291,8 @@ fn home_layout_for_entries(
     selected: usize,
     requested: usize,
 ) -> HomeLayout {
-    let mut grid = home_entry_grid_area(main);
+    let grid_area = home_entry_grid_area(home_workspace_area(main, entry_count));
+    let mut grid = grid_area;
     let mut columns = home_entry_column_count(grid.width, entry_count);
     // Prefer compact named actions to scrolling core tasks out of the first screen.
     let minimum_height = if entry_count.div_ceil(columns) as u16
@@ -289,7 +313,7 @@ fn home_layout_for_entries(
     let scrollbar =
         needs_scrollbar.then(|| Rect::new(grid.right().saturating_sub(1), grid.y, 1, grid.height));
     if needs_scrollbar {
-        grid.width = grid.width.saturating_sub(1);
+        grid.width = grid.width.saturating_sub(2);
         columns = home_entry_column_count(grid.width, entry_count);
         rows = entry_count.div_ceil(columns).min(max_rows).max(1);
     }
@@ -335,7 +359,7 @@ fn home_layout_for_entries(
             .collect()
     };
     HomeLayout {
-        content: home_entry_grid_area(main),
+        content: grid_area,
         items,
         scrollbar,
         visible_start: start,
@@ -375,27 +399,42 @@ pub fn home_entry_index_at(
 /// Homes without an authenticated account expose a zero-sized area so input
 /// routing cannot accidentally make Logout interactive.
 pub fn home_logout_area(main: Rect, home: &HomeViewModel) -> Rect {
-    let summary = home_summary_area(main);
+    let summary = home_summary_area(home_workspace_area(main, home.entries().len()));
     if !home.logout_visible() || summary.width == 0 || summary.height == 0 {
         return Rect::new(summary.x.saturating_add(summary.width), summary.y, 0, 0);
     }
 
-    let logout_label_width =
-        u16::try_from(terminal_width(&i18n::tr!("ui-home-logout-button"))).unwrap_or(u16::MAX);
-    const ACCOUNT_LOGOUT_GAP: u16 = 2;
-    let width = logout_label_width.min(summary.width);
-    let fallback = i18n::tr!("ui-home-unknown-user");
-    let user = home.current_user.as_deref().unwrap_or(&fallback);
-    let user_width = terminal_width(&i18n::tr!("ui-home-current-user", user = user));
-    let desired_offset = u16::try_from(user_width)
+    let width = u16::try_from(terminal_width(&i18n::tr!("ui-home-logout-button")))
         .unwrap_or(u16::MAX)
-        .saturating_add(ACCOUNT_LOGOUT_GAP);
-    let max_offset = summary.width.saturating_sub(width);
+        .saturating_add(2)
+        .min(summary.width);
+    Rect::new(summary.right() - width, summary.y, width, 1)
+}
+
+fn home_workspace_area(main: Rect, entry_count: usize) -> Rect {
+    let inset = if main.width >= 72 { 2 } else { 0 };
+    let width = main
+        .width
+        .saturating_sub(inset * 2)
+        .min(HOME_CONTENT_MAX_WIDTH);
+    let columns = home_entry_column_count(width, entry_count);
+    let rows = u16::try_from(entry_count.div_ceil(columns)).unwrap_or(u16::MAX);
+    let tile_height = rows
+        .saturating_mul(HOME_TILE_MAX_HEIGHT + HOME_TILE_GAP)
+        .saturating_sub(HOME_TILE_GAP);
+    let top = if main.height >= 28 {
+        main.height
+            .saturating_sub(2 + HOME_SUMMARY_HEIGHT)
+            .saturating_sub(tile_height)
+            / 2
+    } else {
+        0
+    };
     Rect::new(
-        summary.x.saturating_add(desired_offset.min(max_offset)),
-        summary.y,
+        main.x + (main.width - width) / 2,
+        main.y + top,
         width,
-        1,
+        main.height.saturating_sub(top),
     )
 }
 
@@ -488,7 +527,10 @@ fn home_footer_area(main: Rect) -> Rect {
 
 pub fn home_edit_area(main: Rect, home: &HomeViewModel) -> Option<Rect> {
     home_action_bar(home)
-        .layout(home_footer_area(main))
+        .layout(home_footer_area(home_workspace_area(
+            main,
+            home.entries().len(),
+        )))
         .actions
         .first()
         .map(|action| action.area)

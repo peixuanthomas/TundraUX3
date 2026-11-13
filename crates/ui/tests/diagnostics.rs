@@ -103,8 +103,10 @@ fn narrow_repair_dialog_keeps_all_action_keys_visible() {
     assert!(row_text(dialog.confirm).contains("Y Repair"));
     assert!(row_text(dialog.restart).contains("R Restart"));
     assert!(row_text(dialog.cancel).contains("Esc Cancel"));
-    assert!(dialog.confirm.right() <= dialog.restart.x);
-    assert!(dialog.restart.right() <= dialog.cancel.x);
+    assert!(dialog.confirm.intersection(dialog.restart).is_empty());
+    assert!(dialog.restart.intersection(dialog.cancel).is_empty());
+    assert!(dialog.confirm.intersection(dialog.cancel).is_empty());
+    assert_eq!(dialog.confirm.right(), dialog.items_area.right());
 }
 
 #[test]

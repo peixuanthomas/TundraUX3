@@ -1,5 +1,5 @@
 use super::model::*;
-use crate::components::{Dialog, DialogAction, ScrollbarOrientation};
+use crate::components::{Dialog, DialogAction, DialogLayout, ScrollbarOrientation};
 use crate::screens::shell::{line_in_rect, rect_contains, usize_to_u16};
 use crate::{
     DiagnosticsContentLayout, DiagnosticsHitTarget, DiagnosticsRepairDialogLayout,
@@ -69,6 +69,8 @@ pub struct SystemStatusLayout {
     pub picker_items: Vec<SystemStatusRowLayout>,
     pub picker_viewport_start: usize,
     pub size_picker_items: Vec<SystemStatusRowLayout>,
+    pub(super) picker_chrome: Option<DialogLayout>,
+    pub(super) size_picker_chrome: Option<DialogLayout>,
     pub dialog_actions: Vec<SystemStatusRowLayout>,
     pub visible_row_start: u16,
     pub visible_row_end: u16,
@@ -374,6 +376,7 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         })
         .collect();
     let mut picker_viewport_start = 0;
+    let mut picker_chrome = None;
     let picker_items = model
         .dashboard
         .picker
@@ -382,9 +385,11 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
             let w = panel.width.min(42);
             let h = panel
                 .height
-                .min((p.items.len() as u16).saturating_add(2).max(5));
+                .min((p.items.len() as u16).saturating_add(5).max(7));
             let area = system_status_picker_area(panel, w, h, model.dashboard.picker_anchor);
-            let visible_height = area.height.saturating_sub(2) as usize;
+            let chrome = DialogLayout::new(area, 0, None);
+            picker_chrome = Some(chrome);
+            let visible_height = usize::from(chrome.body.height);
             picker_viewport_start =
                 crate::components::List::automatic_viewport_start(p.selected, visible_height);
             p.items
@@ -396,29 +401,37 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
                 .map(|(visible_index, (index, _))| SystemStatusRowLayout {
                     index,
                     area: Rect::new(
-                        area.x.saturating_add(1),
-                        area.y.saturating_add(1 + visible_index as u16),
-                        area.width.saturating_sub(2),
+                        chrome.body.x,
+                        chrome.body.y.saturating_add(visible_index as u16),
+                        chrome.body.width,
                         1,
                     ),
                 })
                 .collect()
         })
         .unwrap_or_default();
+    let mut size_picker_chrome = None;
     let size_picker_items = model
         .dashboard
         .size_picker
-        .map(|_| {
+        .map(|picker| {
             let w = panel.width.min(42);
-            let h = panel.height.min(5);
+            let h = panel.height.min(8);
             let area = system_status_picker_area(panel, w, h, model.dashboard.picker_anchor);
-            (0..3)
-                .map(|index| SystemStatusRowLayout {
+            let chrome = DialogLayout::new(area, 0, None);
+            size_picker_chrome = Some(chrome);
+            let capacity = usize::from(chrome.body.height);
+            let start =
+                crate::components::List::automatic_viewport_start(picker.selected, capacity);
+            (start..3)
+                .take(capacity)
+                .enumerate()
+                .map(|(row, index)| SystemStatusRowLayout {
                     index,
                     area: Rect::new(
-                        area.x.saturating_add(1),
-                        area.y.saturating_add(1 + index as u16),
-                        area.width.saturating_sub(2),
+                        chrome.body.x,
+                        chrome.body.y.saturating_add(row as u16),
+                        chrome.body.width,
                         1,
                     ),
                 })
@@ -502,6 +515,8 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         picker_items,
         picker_viewport_start,
         size_picker_items,
+        picker_chrome,
+        size_picker_chrome,
         dialog_actions,
         visible_row_start,
         visible_row_end,

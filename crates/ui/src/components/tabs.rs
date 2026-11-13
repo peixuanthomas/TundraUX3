@@ -1,14 +1,17 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::text::Line;
-use ratatui::widgets::{Borders, Tabs as RatatuiTabs, Widget};
+use ratatui::style::Modifier;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Borders, Widget};
 
 use crate::TundraTheme;
 
 use super::{
     ComponentEvent, ComponentId, ComponentState, InputEvent, Key, MouseButton, MouseKind,
-    contains_point, inner_area, item_style,
+    contains_point,
+    foundation::{row_marker, row_style},
+    inner_area, terminal_width, truncate_to_terminal_width,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,17 +115,23 @@ impl Tabs {
                 self.hovered = None;
                 ComponentEvent::Consumed
             }
-            InputEvent::Key(key) if self.state.focused => match key.key {
-                Key::Left | Key::Up => self.select_previous(),
-                Key::Right | Key::Down => self.select_next(),
-                Key::Home => self.select_first(),
-                Key::End => self.select_last(),
-                Key::Enter | Key::Space => self
-                    .selected_tab()
-                    .map(|tab| ComponentEvent::Activated(tab.id.clone()))
-                    .unwrap_or(ComponentEvent::Consumed),
-                _ => ComponentEvent::None,
-            },
+            InputEvent::Key(key) if self.state.focused => {
+                let result = match key.key {
+                    Key::Left | Key::Up => self.select_previous(),
+                    Key::Right | Key::Down => self.select_next(),
+                    Key::Home => self.select_first(),
+                    Key::End => self.select_last(),
+                    Key::Enter | Key::Space => self
+                        .selected_tab()
+                        .map(|tab| ComponentEvent::Activated(tab.id.clone()))
+                        .unwrap_or(ComponentEvent::Consumed),
+                    _ => ComponentEvent::None,
+                };
+                if result.is_consumed() {
+                    self.hovered = None;
+                }
+                result
+            }
             InputEvent::Mouse(mouse) => {
                 let index = self.index_at(area, mouse.column(), mouse.row(), bordered);
                 match mouse.kind {
@@ -145,26 +154,22 @@ impl Tabs {
     }
 
     pub fn render(&self, area: Rect, buffer: &mut Buffer, theme: &TundraTheme) {
-        self.capture(area, true);
-        self.ratatui_widget(theme, true).render(area, buffer);
+        self.render_in(area, buffer, theme, true);
     }
 
     /// Renders bordered tabs through a Ratatui [`Frame`].
     pub fn render_frame(&self, frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
-        self.capture(area, true);
-        frame.render_widget(self.ratatui_widget(theme, true), area);
+        self.render(area, frame.buffer_mut(), theme);
     }
 
-    /// Renders tabs using Ratatui's official `Tabs` widget without a surrounding block.
+    /// Renders tabs without a surrounding block.
     pub fn render_borderless(&self, area: Rect, buffer: &mut Buffer, theme: &TundraTheme) {
-        self.capture(area, false);
-        self.ratatui_widget(theme, false).render(area, buffer);
+        self.render_in(area, buffer, theme, false);
     }
 
     /// Renders borderless tabs through a Ratatui [`Frame`].
     pub fn render_borderless_frame(&self, frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
-        self.capture(area, false);
-        frame.render_widget(self.ratatui_widget(theme, false), area);
+        self.render_borderless(area, frame.buffer_mut(), theme);
     }
 
     fn select_from_pointer(&mut self, index: Option<usize>) -> ComponentEvent {
@@ -176,6 +181,7 @@ impl Tabs {
         }
 
         self.state.focused = true;
+        self.hovered = None;
         self.selected = Some(index);
         ComponentEvent::Selected(self.id.clone(), index)
     }
@@ -250,7 +256,7 @@ impl Tabs {
         self.tabs
             .iter()
             .map(|tab| {
-                let width = u16::try_from(Line::from(tab.label.as_str()).width())
+                let width = u16::try_from(terminal_width(&tab.label))
                     .unwrap_or(u16::MAX)
                     .saturating_add(2)
                     .min(inner.right().saturating_sub(tab_x));
@@ -267,35 +273,40 @@ impl Tabs {
             .position(|item| contains_point(*item, column, row))
     }
 
-    fn ratatui_widget<'a>(&'a self, theme: &TundraTheme, bordered: bool) -> RatatuiTabs<'a> {
-        let titles = self.tabs.iter().enumerate().map(|(index, tab)| {
-            Line::styled(
-                tab.label.as_str(),
-                item_style(
-                    self.state.focused && self.selected == Some(index),
-                    self.hovered == Some(index),
-                    self.selected == Some(index),
-                    tab.disabled,
-                    theme,
-                ),
-            )
-        });
-        let widget = RatatuiTabs::new(titles)
-            .select(self.selected)
-            .style(theme.body_style())
-            .highlight_style(item_style(self.state.focused, false, true, false, theme))
-            .divider("")
-            .padding(" ", " ");
-
+    fn render_in(&self, area: Rect, buffer: &mut Buffer, theme: &TundraTheme, bordered: bool) {
+        self.capture(area, bordered);
+        let mut block = theme.block().style(theme.body_style());
         if bordered {
-            widget.block(
-                theme
-                    .block()
-                    .borders(Borders::ALL)
-                    .style(theme.body_style()),
-            )
-        } else {
-            widget
+            block = block.borders(Borders::ALL);
+        }
+        block.render(area, buffer);
+        for (index, (tab, rect)) in self
+            .tabs
+            .iter()
+            .zip(self.item_areas(area, bordered))
+            .enumerate()
+        {
+            if rect.is_empty() {
+                continue;
+            }
+            let selected = self.selected == Some(index);
+            let state = ComponentState {
+                focused: self.state.focused && selected,
+                hovered: self.hovered == Some(index),
+                selected,
+                disabled: self.state.disabled || tab.disabled,
+                ..Default::default()
+            };
+            let style = row_style(state, theme, theme.tokens().raised);
+            let label =
+                truncate_to_terminal_width(&tab.label, usize::from(rect.width.saturating_sub(2)));
+            buffer.set_style(rect, style.remove_modifier(Modifier::UNDERLINED));
+            buffer.set_line(
+                rect.x,
+                rect.y,
+                &Line::from(vec![row_marker(state, theme), Span::styled(label, style)]),
+                rect.width,
+            );
         }
     }
 }

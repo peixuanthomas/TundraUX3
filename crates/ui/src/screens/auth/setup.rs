@@ -1,10 +1,12 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, HorizontalAlignment, Layout, Rect};
 use ratatui::text::Line;
-use ratatui::widgets::{Clear, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 
 use super::{SetupCustomColorTarget, SetupField, SetupStep, SetupViewModel};
-use crate::components::{Button, List, ListItem, Scrollbar, Surface, TextInput};
+use crate::components::{
+    Button, ButtonEmphasis, DialogLayout, List, ListItem, Scrollbar, Surface, TextInput,
+};
 use crate::screens::shell::centered_rect;
 use crate::timezone_map::{TimezoneMapWidget, boundary_id_for_timezone};
 use crate::{RenderContext, TundraTheme, setup_standard_color_options};
@@ -74,7 +76,8 @@ pub fn render_setup_content(
         |frame, area, context| render_setup_unscrolled(frame, area, model, context),
     );
     if model.defaults_available {
-        let mut button = Button::new("setup.defaults", i18n::tr!("ui-auth-use-defaults"));
+        let mut button = Button::new("setup.defaults", i18n::tr!("ui-auth-use-defaults"))
+            .with_emphasis(ButtonEmphasis::Primary);
         button.set_disabled(model.step == SetupStep::Admin && !model.can_submit);
         button.render_inline_frame(
             frame,
@@ -85,15 +88,19 @@ pub fn render_setup_content(
 }
 
 pub fn setup_defaults_area(main: Rect) -> Rect {
+    let inner = super::common::auth_workspace(main, 116);
+    let width = (crate::components::terminal_width(&i18n::tr!("ui-auth-use-defaults")) as u16 + 2)
+        .min(inner.width);
     Rect::new(
-        main.x,
+        inner.right().saturating_sub(width),
         main.bottom().saturating_sub(1),
-        main.width,
+        width,
         u16::from(main.height > 0),
     )
 }
 
-pub fn setup_viewport(mut main: Rect, model: &SetupViewModel) -> super::AuthViewport {
+pub fn setup_viewport(main: Rect, model: &SetupViewModel) -> super::AuthViewport {
+    let mut main = super::common::auth_workspace(main, 116);
     if model.defaults_available {
         main.height = main.height.saturating_sub(1);
     }
@@ -143,22 +150,16 @@ pub fn setup_timezone_scrollbar(main: Rect, model: &SetupViewModel) -> Option<Re
 }
 
 pub fn setup_custom_color_actions(main: Rect) -> [Rect; 2] {
-    let inner = setup_inner_area(setup_custom_color_dialog_area(main));
-    let row = Rect::new(
-        inner.x,
-        inner.bottom().saturating_sub(1),
-        inner.width,
-        u16::from(inner.height > 0),
-    );
-    [
-        Rect::new(row.x, row.y, row.width / 2, row.height),
-        Rect::new(
-            row.x + row.width / 2,
-            row.y,
-            row.width - row.width / 2,
-            row.height,
-        ),
+    let layout = DialogLayout::new(setup_custom_color_dialog_area(main), 1, None);
+    let widths = [
+        i18n::tr!("ui-auth-touch-cancel"),
+        i18n::tr!("ui-auth-touch-apply"),
     ]
+    .map(|label| {
+        (crate::components::terminal_width(&label) as u16 + 2).min(layout.footer.width / 2)
+    });
+    let actions = crate::right_aligned_actions(layout.footer, &widths);
+    [actions[1], actions[0]]
 }
 
 pub fn setup_color_viewport(main: Rect, model: &SetupViewModel) -> super::AuthViewport {
@@ -197,6 +198,7 @@ fn render_setup_unscrolled(
         previous.set_disabled(model.step == SetupStep::Language);
         previous.render_inline_frame(frame, back, theme);
         Button::new("setup.continue", i18n::tr!("regression-setup-next"))
+            .with_emphasis(ButtonEmphasis::Primary)
             .render_inline_frame(frame, next, theme);
     }
 }
@@ -700,7 +702,7 @@ fn render_setup_custom_color_dialog(
     model: &SetupViewModel,
     context: &RenderContext,
 ) {
-    let theme = &context.compatibility_theme();
+    let theme = &DialogLayout::body_theme(context);
     let dialog = setup_custom_color_dialog_area(area);
     if dialog.width == 0 || dialog.height == 0 {
         return;
@@ -711,15 +713,9 @@ fn render_setup_custom_color_dialog(
         None => return,
     };
 
-    frame.render_widget(Clear, dialog);
-    let dialog_surface = Surface::new()
-        .titled(target_label)
-        .bordered(true)
-        .raised(true)
-        .border_shape(model.border_shape);
-    dialog_surface.render_frame(frame, dialog, context);
-
-    let inner = setup_inner_area(dialog);
+    let chrome = DialogLayout::new(dialog, 1, None);
+    chrome.render_frame(frame, &target_label, context);
+    let inner = chrome.body;
     let instruction = Rect::new(inner.x, inner.y, inner.width, 1.min(inner.height));
     frame.render_widget(
         Paragraph::new(i18n::tr!("ui-auth-enter-rrggbb-or-a-supported-color-name"))
@@ -730,28 +726,17 @@ fn render_setup_custom_color_dialog(
 
     let input_area = setup_custom_color_input_area(area);
     if input_area.width > 0 && input_area.height > 0 {
-        let input_context = focused_context(context, true);
-        let input_surface = Surface::new()
-            .titled(i18n::tr!("ui-auth-color-code"))
-            .bordered(true)
-            .border_shape(model.border_shape);
-        let input_inner = input_surface.inner(input_area);
-        input_surface.render_frame(frame, input_area, &input_context);
-
         let mut input = model
             .custom_color_editing
             .input(
                 "setup.appearance.custom-color-input",
                 &model.custom_color_input,
             )
+            .with_capture_name(i18n::tr!("ui-auth-color-code"))
             .with_placeholder("#38BDF8")
             .with_cursor_symbol("_");
         input.set_focused(true);
-        input.render_borderless_frame(
-            frame,
-            Rect::new(input_inner.x, input_inner.y, input_inner.width, 1),
-            theme,
-        );
+        input.render_borderless_frame(frame, input_area, &DialogLayout::footer_theme(context));
     }
 
     let feedback = if let Some(error) = &model.custom_color_error {
@@ -774,28 +759,23 @@ fn render_setup_custom_color_dialog(
     };
     let feedback_area = Rect::new(
         inner.x,
-        inner.y.saturating_add(5),
+        inner.y.saturating_add(3),
         inner.width,
-        1.min(inner.height.saturating_sub(5)),
+        1.min(inner.height.saturating_sub(3)),
     );
     frame.render_widget(
         Paragraph::new(feedback).alignment(HorizontalAlignment::Left),
         feedback_area,
     );
 
-    let actions_area = Rect::new(
-        inner.x,
-        inner.y.saturating_add(6),
-        inner.width,
-        1.min(inner.height.saturating_sub(6)),
-    );
-    let _ = actions_area;
     let [apply, cancel] = setup_custom_color_actions(area);
-    let mut apply_button = Button::new("setup.color.apply", i18n::tr!("ui-auth-touch-apply"));
+    let footer = &DialogLayout::footer_theme(context);
+    let mut apply_button = Button::new("setup.color.apply", i18n::tr!("ui-auth-touch-apply"))
+        .with_emphasis(ButtonEmphasis::Primary);
     apply_button.set_disabled(!model.custom_color_valid || model.custom_color_conflicts_with_theme);
-    apply_button.render_inline_frame(frame, apply, theme);
+    apply_button.render_inline_frame(frame, apply, footer);
     Button::new("setup.color.cancel", i18n::tr!("ui-auth-touch-cancel"))
-        .render_inline_frame(frame, cancel, theme);
+        .render_inline_frame(frame, cancel, footer);
 }
 
 fn render_setup_surface(
@@ -805,6 +785,7 @@ fn render_setup_surface(
     border_shape: crate::BorderShape,
 ) {
     Surface::new()
+        .background(context.theme.canvas)
         .titled(i18n::tr!("ui-auth-first-run-setup"))
         .bordered(false)
         .border_shape(border_shape)
@@ -1171,17 +1152,17 @@ fn setup_appearance_error_area(main: Rect) -> Rect {
 }
 
 pub fn setup_custom_color_dialog_area(main: Rect) -> Rect {
-    centered_rect(main, main.width.min(58), main.height.min(10))
+    centered_rect(main, main.width.min(58), main.height.min(12))
 }
 
 pub fn setup_custom_color_input_area(main: Rect) -> Rect {
     let dialog = setup_custom_color_dialog_area(main);
-    let inner = setup_inner_area(dialog);
+    let inner = DialogLayout::new(dialog, 1, None).body;
     Rect::new(
         inner.x,
-        inner.y.saturating_add(2),
+        inner.y.saturating_add(1),
         inner.width,
-        3.min(inner.height.saturating_sub(2)),
+        1.min(inner.height.saturating_sub(1)),
     )
 }
 
@@ -1263,15 +1244,6 @@ fn setup_timezone_controls_area(main: Rect) -> Rect {
     } else {
         main
     }
-}
-
-fn setup_inner_area(area: Rect) -> Rect {
-    Rect::new(
-        area.x.saturating_add(1),
-        area.y.saturating_add(1),
-        area.width.saturating_sub(2),
-        area.height.saturating_sub(2),
-    )
 }
 
 fn setup_line_area(area: Rect, line: u16, desired_height: u16) -> Rect {

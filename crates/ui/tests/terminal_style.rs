@@ -30,16 +30,19 @@ fn text(buffer: &Buffer, area: Rect) -> String {
 }
 
 #[test]
-fn neutral_palette_keeps_user_accent_and_border_preferences() {
+fn glacier_night_palette_keeps_user_accent_and_border_preferences() {
     let theme = TundraTheme::default()
         .with_accent_color(Color::Magenta)
         .with_border_color(Color::Blue);
     let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
-    assert_eq!(context.theme.canvas, Color::Rgb(16, 16, 16));
-    assert_eq!(context.theme.surface, Color::Rgb(24, 24, 24));
-    assert_eq!(context.theme.raised, Color::Rgb(36, 36, 36));
-    assert_eq!(context.theme.text, Color::Rgb(230, 230, 230));
-    assert_eq!(context.theme.muted, Color::Rgb(153, 153, 153));
+    assert_eq!(context.theme.canvas, Color::Rgb(0x07, 0x11, 0x16));
+    assert_eq!(context.theme.surface, Color::Rgb(0x0D, 0x1B, 0x22));
+    assert_eq!(context.theme.raised, Color::Rgb(0x13, 0x26, 0x2F));
+    assert_eq!(context.theme.text, Color::Rgb(0xE6, 0xF1, 0xF4));
+    assert_eq!(context.theme.muted, Color::Rgb(0x8E, 0xA7, 0xB0));
+    let default = RenderContext::default();
+    assert_eq!(default.theme.border, Color::Rgb(0x29, 0x43, 0x4E));
+    assert_eq!(default.theme.accent, Color::Rgb(0x63, 0xD3, 0xE5));
     assert_eq!(context.theme.accent, Color::Magenta);
     assert_eq!(context.theme.border, Color::Blue);
     assert_eq!(theme.title_style().fg, Some(theme.foreground));
@@ -165,8 +168,14 @@ fn navigation_keeps_current_fill_when_keyboard_focus_hides() {
         context.buttons = Some(buttons);
         let mut buffer = Buffer::empty(area);
         rail.render(area, &mut buffer, &context);
-        assert_eq!(buffer[(0, 0)].bg, context.theme.raised);
-        assert_eq!(buffer[(0, 0)].symbol(), if keyboard { ">" } else { " " });
+        assert_eq!(buffer[(0, 0)].bg, context.theme.selected_row_background());
+        assert_eq!(buffer[(0, 0)].symbol(), "▌");
+        assert_eq!(buffer[(17, 0)].bg, buffer[(0, 0)].bg);
+        assert!(!buffer[(0, 0)].modifier.contains(Modifier::UNDERLINED));
+        assert_eq!(
+            buffer[(2, 0)].modifier.contains(Modifier::UNDERLINED),
+            keyboard
+        );
         assert_eq!(rail.selected, Some(0));
         assert!(rail.state.focused);
     }
@@ -199,11 +208,22 @@ fn sidebar_rows_are_compact_full_width_targets_with_separate_focus() {
     let buffer = terminal.backend().buffer();
     assert_eq!(
         buffer[(layout.navigation[0].x, layout.navigation[0].y)].bg,
-        context.theme.raised
+        context.theme.selected_row_background()
     );
     assert_eq!(
         buffer[(layout.navigation[1].x, layout.navigation[1].y)].symbol(),
-        ">"
+        "▌"
+    );
+    let focused = layout.navigation[1];
+    assert!(
+        buffer[(focused.x + 2, focused.y)]
+            .modifier
+            .contains(Modifier::UNDERLINED)
+    );
+    assert!(
+        !buffer[(focused.x, focused.y)]
+            .modifier
+            .contains(Modifier::UNDERLINED)
     );
 }
 
@@ -272,9 +292,14 @@ fn button_emphasis_and_success_stay_semantically_distinct() {
         Some(theme.tokens().success)
     );
     let mut danger = Button::new("delete", "Delete").with_emphasis(ButtonEmphasis::Danger);
-    danger.state.active = true;
     danger.render_borderless(area, &mut buffer, &theme);
     assert_eq!(buffer[(0, 0)].fg, theme.error);
+    danger.state.active = true;
+    danger.render_borderless(area, &mut buffer, &theme);
+    let Color::Rgb(red, green, blue) = buffer[(0, 0)].fg else {
+        panic!("pressed danger must retain its red hue")
+    };
+    assert!(red > green && red > blue);
 }
 
 #[test]
@@ -296,7 +321,7 @@ fn busy_indicator_uses_one_cell_eighty_millisecond_frames_and_static_reduced_mot
         assert_eq!(
             BusyIndicator::from_motion(MotionFrame::reduced(Duration::from_millis(elapsed)))
                 .symbol(),
-            "○"
+            "⋯"
         );
     }
     let area = Rect::new(0, 0, 4, 2);
@@ -368,7 +393,7 @@ fn tea_preview_at_minimum_size_keeps_single_line_actions_and_input_boundary() {
 
 #[test]
 fn neutral_titles_do_not_remove_accent_from_the_active_text_field_or_cursor() {
-    let theme = TundraTheme::default().with_accent_color(Color::Magenta);
+    let theme = TundraTheme::default().with_accent_color(Color::LightMagenta);
     let area = Rect::new(0, 0, 12, 3);
     let mut input = ui::components::TextInput::new("name");
     input.set_value("value");
@@ -468,7 +493,7 @@ fn selected_status_rows_keep_semantic_colors_while_focus_and_input_mode_change()
             {
                 let cell = &buffer[(0, index as u16)];
                 assert_eq!(cell.fg, color);
-                assert_eq!(cell.bg, context.theme.raised);
+                assert_eq!(cell.bg, context.theme.selected_row_background());
                 assert_eq!(
                     cell.modifier.contains(Modifier::UNDERLINED),
                     keyboard && current == index
@@ -483,4 +508,99 @@ fn selected_status_rows_keep_semantic_colors_while_focus_and_input_mode_change()
     for y in 0..area.height {
         assert_eq!(buffer[(0, y)].fg, Color::DarkGray);
     }
+}
+
+#[test]
+fn ordinary_buttons_keep_a_visible_surface_and_stable_hit_area_across_input_states() {
+    use ui::{RenderCapabilities, components::ButtonRegion};
+    let area = Rect::new(4, 1, 12, 1);
+    let bounds = Rect::new(0, 0, 20, 3);
+    let region = ButtonRegion {
+        id: "save".into(),
+        area,
+        disabled: false,
+    };
+    let mut button = Button::new("save", "保 存");
+    button.set_focused(true);
+    for capabilities in [RenderCapabilities::default(), RenderCapabilities::ansi()] {
+        let context =
+            RenderContext::from_theme(&TundraTheme::default(), Default::default(), capabilities);
+        let theme = context.compatibility_theme();
+        let mut backgrounds = Vec::new();
+        for (focused, hovered, pressed) in [
+            (false, false, false),
+            (true, false, false),
+            (false, true, false),
+            (false, true, true),
+            (false, false, false),
+        ] {
+            let mut registry = ButtonFrame::new(
+                hovered.then(|| region.clone()),
+                pressed.then(|| region.clone()),
+                &theme,
+            );
+            registry.keyboard_focus_visible = focused;
+            let mut local = theme.clone();
+            local.buttons = Some(registry.clone());
+            let mut buffer = Buffer::empty(bounds);
+            Paragraph::new("Status")
+                .style(local.body_style())
+                .render(bounds, &mut buffer);
+            button.render_borderless(area, &mut buffer, &local);
+            let label = buffer
+                .content()
+                .iter()
+                .find(|cell| cell.symbol() == "保")
+                .unwrap();
+            let edge = &buffer[(area.right() - 1, area.y)];
+            backgrounds.push(edge.bg);
+            if !hovered {
+                assert_ne!(edge.bg, buffer[(0, 0)].bg);
+            }
+            assert_eq!(label.bg, edge.bg);
+            assert_eq!(label.modifier.contains(Modifier::UNDERLINED), focused);
+            assert!(!edge.modifier.contains(Modifier::UNDERLINED));
+            assert_eq!(registry.regions(), vec![region.clone()]);
+        }
+        let [normal, focused, hovered, pressed, released]: [Color; 5] =
+            backgrounds.try_into().unwrap();
+        assert_eq!(normal, focused);
+        assert_eq!(normal, released);
+        assert_ne!(normal, hovered);
+        assert_ne!(normal, pressed);
+        assert_ne!(hovered, pressed);
+    }
+}
+
+#[test]
+fn table_hover_changes_full_row_and_keeps_selected_record_and_hit_region() {
+    let area = Rect::new(1, 1, 16, 4);
+    let theme = TundraTheme::default();
+    let mut context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+    let mut table = DataTable::new("files", ["Name"], [["甲"], ["乙"], ["丙"]]);
+    table.state.focused = true;
+    let mut buttons = ButtonFrame::new(None, None, &theme);
+    buttons.keyboard_focus_visible = false;
+    buttons.hover_position = Some((area.right() - 1, area.y + 2));
+    context.buttons = Some(buttons.clone());
+    let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 6));
+    table.render(area, &mut buffer, &context);
+    let selected = &buffer[(area.right() - 1, area.y + 1)];
+    let hovered = &buffer[(area.right() - 1, area.y + 2)];
+    assert_eq!(selected.bg, context.theme.selected_row_background());
+    assert_eq!(hovered.bg, buffer[(area.x, area.y + 2)].bg);
+    assert_ne!(hovered.bg, selected.bg);
+    assert_ne!(hovered.bg, buffer[(area.right() - 1, area.y + 3)].bg);
+    assert_eq!(table.selected, Some(0));
+    assert_eq!(
+        table.handle_event(
+            InputEvent::mouse(ui::MouseEvent::down(
+                area.right() - 1,
+                area.y + 2,
+                MouseButton::Left
+            )),
+            area
+        ),
+        ComponentEvent::Selected("files".into(), 1)
+    );
 }

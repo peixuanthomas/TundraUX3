@@ -2,11 +2,11 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 
 use super::model::{NotificationActionViewModel, NotificationViewModel};
+use crate::components::DialogLayout;
 
 const NOTIFICATION_DIALOG_WIDTH: u16 = 64;
 const NOTIFICATION_DIALOG_MIN_WIDTH: u16 = 40;
-const NOTIFICATION_DIALOG_BORDER_CELLS: u16 = 2;
-const NOTIFICATION_ACTION_GAP: u16 = 4;
+const NOTIFICATION_ACTION_GAP: u16 = 2;
 
 pub fn notification_too_small_message() -> String {
     i18n::tr!("ui-notifications-terminal-is-too-small-to-render-this-notification")
@@ -30,6 +30,7 @@ pub struct NotificationDialogLayout {
     pub max_scroll_offset: usize,
     pub scrollbar: Option<Rect>,
     pub scroll_hint: Option<Rect>,
+    pub(crate) surface: DialogLayout,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,49 +40,57 @@ pub struct NotificationActionLayout {
 }
 
 pub fn notification_layout(area: Rect, model: &NotificationViewModel) -> NotificationLayout {
-    let required_width = notification_text_width(&super::model::notification_title(model))
-        .saturating_add(NOTIFICATION_DIALOG_BORDER_CELLS)
-        .clamp(3, NOTIFICATION_DIALOG_MIN_WIDTH);
-    let message_width = notification_text_width(&model.message);
-    let action_width = if model.stacked_actions {
-        model
-            .actions
-            .iter()
-            .map(|action| notification_text_width(&notification_action_text(action)))
-            .max()
-            .unwrap_or(0)
-    } else {
-        model
-            .actions
-            .iter()
-            .fold(0u16, |width, action| {
-                width.saturating_add(notification_text_width(&notification_action_text(action)))
-            })
-            .saturating_add(
-                (model.actions.len().saturating_sub(1) as u16)
-                    .saturating_mul(NOTIFICATION_ACTION_GAP),
-            )
-    };
-    let dialog_width = message_width
-        .max(action_width)
-        .saturating_add(NOTIFICATION_DIALOG_BORDER_CELLS)
-        .max(required_width)
-        .min(NOTIFICATION_DIALOG_WIDTH)
-        .min(area.width);
-    let inner_width = dialog_width.saturating_sub(NOTIFICATION_DIALOG_BORDER_CELLS);
-    let unscrolled_line_count = wrap_notification_text(&model.message, inner_width)
-        .len()
-        .max(1);
     let action_texts = model
         .actions
         .iter()
         .map(notification_action_text)
         .collect::<Vec<_>>();
-    let action_metrics = action_texts
+    let close = model
+        .actions
         .iter()
-        .map(|text| ActionMetric {
-            width: notification_text_width(text),
-            height: notification_wrapped_line_count(text, inner_width).max(1),
+        .position(|action| action.cancel || matches!(action.id.as_str(), "cancel" | "close"));
+    let close_text = close.map(|index| action_texts[index].as_str());
+    let footer_indices = (0..action_texts.len())
+        .filter(|index| Some(*index) != close)
+        .collect::<Vec<_>>();
+    let padding = DialogLayout::INSET * 2;
+    let required_width = notification_text_width(&super::model::notification_title(model))
+        .saturating_add(padding)
+        .clamp(3, NOTIFICATION_DIALOG_MIN_WIDTH);
+    let message_width = notification_text_width(&model.message);
+    let action_widths = footer_indices
+        .iter()
+        .map(|index| notification_text_width(&action_texts[*index]).saturating_add(2));
+    let action_width = if model.stacked_actions {
+        action_widths.max().unwrap_or(0)
+    } else {
+        action_widths
+            .fold(0u16, u16::saturating_add)
+            .saturating_add(
+                (footer_indices.len().saturating_sub(1) as u16)
+                    .saturating_mul(NOTIFICATION_ACTION_GAP),
+            )
+    };
+    let header_width = notification_text_width(&super::model::notification_title(model))
+        .saturating_add(
+            close_text.map_or(0, |label| notification_text_width(label).saturating_add(3)),
+        );
+    let dialog_width = message_width
+        .max(action_width)
+        .max(header_width)
+        .saturating_add(padding)
+        .max(required_width)
+        .min(NOTIFICATION_DIALOG_WIDTH)
+        .min(area.width);
+    let inner_width = DialogLayout::content_width(dialog_width);
+    let unscrolled_line_count = wrap_notification_text(&model.message, inner_width)
+        .len()
+        .max(1);
+    let action_metrics = footer_indices
+        .iter()
+        .map(|index| ActionMetric {
+            width: notification_text_width(&action_texts[*index]).saturating_add(2),
+            height: notification_wrapped_line_count(&action_texts[*index], inner_width).max(1),
         })
         .collect::<Vec<_>>();
     let horizontal_actions =
@@ -95,32 +104,28 @@ pub fn notification_layout(area: Rect, model: &NotificationViewModel) -> Notific
             .iter()
             .fold(0_u16, |height, metric| height.saturating_add(metric.height))
     };
-    let separator_height = u16::from(!action_metrics.is_empty());
-    // Only the title/borders, at least one message line, and all actions are mandatory.
-    // Message length must never hide the recovery actions behind TooSmall.
-    let required_height = NOTIFICATION_DIALOG_BORDER_CELLS
-        .saturating_add(1)
-        .saturating_add(separator_height)
-        .saturating_add(action_height);
+    // Reserve space for the title, a message line, and every action in compact windows.
+    let required_height = (if action_metrics.is_empty() {
+        3u16
+    } else {
+        4u16
+    })
+    .saturating_add(action_height);
     if area.width < required_width || area.height < required_height {
         return NotificationLayout::TooSmall {
             required_width,
             required_height,
         };
     }
-    let gaps = u16::try_from(action_metrics.len().saturating_sub(1)).unwrap_or(u16::MAX);
-    let full_height =
-        usize::from(required_height.saturating_sub(1)).saturating_add(unscrolled_line_count);
-    // Preserve spacious menu actions when the entire message fits without scrolling.
-    let action_gap = u16::from(
-        model.stacked_actions
-            && usize::from(area.height) >= full_height.saturating_add(usize::from(gaps)),
-    );
-    let fixed_height = required_height
-        .saturating_sub(1)
-        .saturating_add(action_gap.saturating_mul(gaps));
-    let message_capacity = area.height.saturating_sub(fixed_height);
-    let overflowing = unscrolled_line_count > usize::from(message_capacity);
+    let chrome_rows = if action_metrics.is_empty() { 4 } else { 6 };
+    let dialog_height = u16::try_from(unscrolled_line_count)
+        .unwrap_or(u16::MAX)
+        .saturating_add(action_height)
+        .saturating_add(chrome_rows)
+        .min(area.height);
+    let dialog = crate::centered_rect(area, dialog_width, dialog_height);
+    let surface = DialogLayout::new(dialog, action_height, close_text);
+    let overflowing = unscrolled_line_count > usize::from(surface.body.height);
     // Reserve the existing scrollbar's terminal column before wrapping the message.
     let message_width = inner_width.saturating_sub(u16::from(overflowing));
     let message_line_count = if overflowing {
@@ -132,44 +137,41 @@ pub fn notification_layout(area: Rect, model: &NotificationViewModel) -> Notific
     };
     let message_height = u16::try_from(message_line_count)
         .unwrap_or(u16::MAX)
-        .min(message_capacity);
+        .min(surface.body.height);
     let max_scroll_offset = message_line_count.saturating_sub(usize::from(message_height));
     let scroll_offset = model.scroll_offset.min(max_scroll_offset);
-    let dialog_height = fixed_height.saturating_add(message_height).min(area.height);
-    let dialog = centered_rect(area, dialog_width, dialog_height);
-    let inner = Rect::new(
-        dialog.x.saturating_add(1),
-        dialog.y.saturating_add(1),
-        dialog
-            .width
-            .saturating_sub(NOTIFICATION_DIALOG_BORDER_CELLS),
-        dialog
-            .height
-            .saturating_sub(NOTIFICATION_DIALOG_BORDER_CELLS),
+    let message = Rect::new(
+        surface.body.x,
+        surface.body.y,
+        message_width,
+        message_height,
     );
-    let message = Rect::new(inner.x, inner.y, message_width, message_height);
     let scrollbar = overflowing.then(|| {
         Rect::new(
-            inner.right().saturating_sub(1),
+            surface.body.right().saturating_sub(1),
             message.y,
             1,
             message.height,
         )
     });
-    let scroll_hint = (overflowing && separator_height > 0)
-        .then(|| Rect::new(inner.x, message.bottom(), inner.width, 1));
-    let action_y = message.y.saturating_add(message.height).saturating_add(1);
-    let actions = if horizontal_actions {
-        horizontal_action_layouts(inner, action_y, &action_metrics)
+    let scroll_hint =
+        (overflowing && !surface.footer.is_empty() && message.bottom() < surface.footer.y)
+            .then(|| Rect::new(surface.body.x, message.bottom(), surface.body.width, 1));
+    let mut actions = if horizontal_actions {
+        horizontal_action_layouts(surface.footer, &action_metrics)
     } else {
-        stacked_action_layouts(
-            inner,
-            action_y,
-            &action_metrics,
-            action_gap,
-            model.stacked_actions,
-        )
+        stacked_action_layouts(surface.footer, &action_metrics, model.stacked_actions)
     };
+    for action in &mut actions {
+        action.index = footer_indices[action.index];
+    }
+    if let Some(index) = close {
+        actions.push(NotificationActionLayout {
+            index,
+            area: surface.close,
+        });
+        actions.sort_unstable_by_key(|action| action.index);
+    }
 
     NotificationLayout::Dialog(NotificationDialogLayout {
         dialog,
@@ -180,12 +182,13 @@ pub fn notification_layout(area: Rect, model: &NotificationViewModel) -> Notific
         max_scroll_offset,
         scrollbar,
         scroll_hint,
+        surface,
     })
 }
 
 pub(crate) fn notification_action_text(action: &NotificationActionViewModel) -> String {
     match &action.shortcut {
-        Some(shortcut) => format!("{shortcut}: {}", action.label),
+        Some(shortcut) => format!("{} {shortcut}", action.label),
         None => action.label.clone(),
     }
 }
@@ -235,7 +238,6 @@ fn actions_fit_one_line(metrics: &[ActionMetric], inner_width: u16) -> bool {
 
 fn horizontal_action_layouts(
     inner: Rect,
-    y: u16,
     metrics: &[ActionMetric],
 ) -> Vec<NotificationActionLayout> {
     let labels_width = metrics
@@ -245,15 +247,13 @@ fn horizontal_action_layouts(
         .unwrap_or(u16::MAX)
         .saturating_mul(NOTIFICATION_ACTION_GAP);
     let total_width = labels_width.saturating_add(gaps);
-    let mut x = inner
-        .x
-        .saturating_add(inner.width.saturating_sub(total_width) / 2);
+    let mut x = inner.right().saturating_sub(total_width);
 
     metrics
         .iter()
         .enumerate()
         .map(|(index, metric)| {
-            let area = Rect::new(x, y, metric.width, 1);
+            let area = Rect::new(x, inner.y, metric.width, 1);
             x = x
                 .saturating_add(metric.width)
                 .saturating_add(NOTIFICATION_ACTION_GAP);
@@ -261,15 +261,12 @@ fn horizontal_action_layouts(
         })
         .collect()
 }
-
 fn stacked_action_layouts(
     inner: Rect,
-    y: u16,
     metrics: &[ActionMetric],
-    gap: u16,
     uniform_width: bool,
 ) -> Vec<NotificationActionLayout> {
-    let mut y = y;
+    let mut y = inner.y;
     let menu_width = metrics.iter().map(|metric| metric.width).max().unwrap_or(1);
     metrics
         .iter()
@@ -283,25 +280,17 @@ fn stacked_action_layouts(
             .min(inner.width)
             .max(1);
             let area = Rect::new(
-                inner
-                    .x
-                    .saturating_add(inner.width.saturating_sub(width) / 2),
+                if uniform_width {
+                    inner.x
+                } else {
+                    inner.right() - width
+                },
                 y,
                 width,
                 metric.height,
             );
-            y = y.saturating_add(metric.height).saturating_add(gap);
+            y = y.saturating_add(metric.height);
             NotificationActionLayout { index, area }
         })
         .collect()
-}
-
-fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
-    Rect::new(
-        area.x.saturating_add(area.width.saturating_sub(width) / 2),
-        area.y
-            .saturating_add(area.height.saturating_sub(height) / 2),
-        width,
-        height,
-    )
 }

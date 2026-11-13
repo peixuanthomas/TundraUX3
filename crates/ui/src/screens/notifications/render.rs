@@ -1,5 +1,6 @@
 use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
+use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Clear, Paragraph};
 
@@ -9,7 +10,7 @@ use super::layout::{
 use super::model::{
     NotificationLevel, NotificationTone, NotificationViewModel, notification_title,
 };
-use crate::components::{Button, Scrollbar, Surface};
+use crate::components::{Button, DialogLayout, Scrollbar};
 use crate::{RenderContext, TundraTheme};
 pub fn render_notification_overlay(
     frame: &mut Frame<'_>,
@@ -17,7 +18,7 @@ pub fn render_notification_overlay(
     model: &NotificationViewModel,
     theme: &TundraTheme,
 ) {
-    let context = RenderContext::from_theme(theme, Default::default(), Default::default());
+    let context = DialogLayout::surface_theme(theme);
     render_notification_overlay_context(frame, area, model, &context);
 }
 
@@ -40,25 +41,18 @@ pub(crate) fn render_notification_overlay_context(
         }
     };
 
-    frame.render_widget(Clear, layout.dialog);
-    let border = match model.tone {
-        NotificationTone::Info => context.theme.border,
+    let title_color = match model.tone {
+        NotificationTone::Info => context.theme.text,
         NotificationTone::Success => context.theme.success,
         NotificationTone::Warning => context.theme.warning,
         NotificationTone::Error | NotificationTone::Critical => context.theme.danger,
     };
-    let dialog_context = RenderContext {
-        theme: crate::ThemeTokens {
-            border,
-            ..context.theme
-        },
-        ..context.clone()
-    };
-    Surface::new()
-        .titled(notification_title(model))
-        .bordered(true)
-        .raised(true)
-        .render_frame(frame, layout.dialog, &dialog_context);
+    layout
+        .surface
+        .render_frame(frame, &notification_title(model), context);
+    frame
+        .buffer_mut()
+        .set_style(layout.surface.header, Style::default().fg(title_color));
 
     let message_lines = wrap_notification_text(&model.message, layout.message.width)
         .into_iter()
@@ -68,7 +62,7 @@ pub(crate) fn render_notification_overlay_context(
         .collect::<Vec<_>>();
     frame.render_widget(
         Paragraph::new(message_lines)
-            .style(theme.body_style())
+            .style(Style::default().fg(context.theme.muted))
             .alignment(if model.align_left {
                 HorizontalAlignment::Left
             } else {
@@ -89,20 +83,31 @@ pub(crate) fn render_notification_overlay_context(
         frame.render_widget(
             Paragraph::new(i18n::tr!("ui-notifications-scroll-help"))
                 .alignment(HorizontalAlignment::Center)
-                .style(theme.muted_style()),
+                .style(Style::default().fg(context.theme.muted)),
             area,
         );
     }
+    let footer_theme = DialogLayout::footer_theme(context);
+    let close_theme = DialogLayout::close_theme(context);
     for action_layout in layout.actions {
         let Some(action) = model.actions.get(action_layout.index) else {
             continue;
         };
         let action_text = notification_action_text(action);
         let label = wrap_notification_text(&action_text, action_layout.area.width).join("\n");
+        let theme = if action_layout.area == layout.surface.close {
+            &close_theme
+        } else {
+            &footer_theme
+        };
         let mut button = Button::new(
             format!("notification.{}.action.{}", model.id, action.id),
             label,
-        );
+        )
+        .with_bracketed_label(false)
+        .with_label_alignment(HorizontalAlignment::Center)
+        .with_background(theme.background)
+        .with_focus_fill(Some(context.theme.accent_soft));
         button.state.selected = action.selected;
         button.render_borderless_frame(frame, action_layout.area, theme);
     }

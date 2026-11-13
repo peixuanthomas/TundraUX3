@@ -137,6 +137,7 @@ Dependencies are based on official releases. The repository uses locally maintai
 
 - [crossterm patch](../third_party/crossterm/TUNDRA_PATCH.md): message boundaries, timeouts, input limits, and warnings.
 - [vt100 patch](../third_party/vt100/TUNDRA_PATCH.md): terminal scrollback and `CSI 3 J`.
+- [OpenCode UI reference](../third_party/opencode/README.md): loading-text sweep curves adapted under MIT; release archives include `LICENSE.opencode`.
 
 Project code uses [GPL-3.0-only](../LICENSE), and Weathr uses [GPL-3.0-or-later](../crates/weathr/LICENSE.weathr). See the respective documentation for licenses covering other resources and third-party code.
 

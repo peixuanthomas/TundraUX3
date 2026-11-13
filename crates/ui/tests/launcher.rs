@@ -608,6 +608,32 @@ fn launcher_search_is_always_visible_and_empty_results_do_not_offer_an_unrelated
 }
 
 #[test]
+fn overflowing_launcher_rows_do_not_overlap_the_scrollbar_hit_area() {
+    for mode in [LauncherViewMode::LargeIcons, LauncherViewMode::Details] {
+        let model = LauncherViewModel::new(
+            (0..30)
+                .map(|index| item(index, LauncherItemStatus::Ready))
+                .collect(),
+            Some(0),
+            mode,
+            true,
+        );
+        let layout = launcher_layout(Rect::new(3, 2, 108, 18), &model);
+        let track = layout.scrollbar.expect("overflowing Launcher");
+        for item in &layout.items {
+            assert_eq!(
+                layout.hit_test(item.area.right() - 1, item.area.y),
+                Some(LauncherHitTarget::Item(item.index))
+            );
+        }
+        assert_eq!(
+            layout.hit_test(track.x - 1, track.y),
+            Some(LauncherHitTarget::Scrollbar)
+        );
+    }
+}
+
+#[test]
 fn launcher_grid_uses_whole_tiles_and_keeps_one_cell_drop_gaps() {
     let model = LauncherViewModel::new(
         (0..10)
@@ -619,8 +645,14 @@ fn launcher_grid_uses_whole_tiles_and_keeps_one_cell_drop_gaps() {
     );
     let main = Rect::new(3, 2, 108, 26);
     let layout = launcher_layout(main, &model);
-    assert_eq!(layout.search.x, main.x);
-    assert_eq!(layout.search.width, main.width);
+    let refresh = layout
+        .toolbar_buttons
+        .iter()
+        .find(|button| button.action == LauncherToolbarAction::Refresh)
+        .unwrap();
+    assert_eq!(layout.search.x, layout.content.x);
+    assert_eq!(layout.search.y, refresh.area.y);
+    assert_eq!(layout.search.right() + 2, refresh.area.x);
     for item in &layout.items {
         assert_eq!(
             (item.icon_area.x, item.icon_area.y, item.icon_area.width),

@@ -1,5 +1,5 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, HorizontalAlignment, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Bar, BarChart, BarGroup, Paragraph, Sparkline};
@@ -60,12 +60,13 @@ impl<'a> MetricCard<'a> {
         let theme = &theme;
         match &self.model.state {
             SystemStatusWidgetState::Loading => {
-                EmptyState::new(format!(
-                    "{} {}",
-                    BusyIndicator::from_motion(context.motion).symbol(),
-                    i18n::tr!("ui-components-loading"),
-                ))
-                .render_frame(frame, inner, context);
+                BusyIndicator::from_motion(context.motion).render_labeled(
+                    frame,
+                    inner,
+                    &i18n::tr!("ui-components-loading"),
+                    HorizontalAlignment::Center,
+                    context,
+                );
                 return;
             }
             SystemStatusWidgetState::Unavailable { message } => {

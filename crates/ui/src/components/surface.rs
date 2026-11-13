@@ -1,7 +1,7 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, Widget};
 
 use crate::{RenderContext, TundraTheme};
@@ -14,6 +14,7 @@ pub struct Surface {
     pub title: Option<String>,
     pub bordered: bool,
     pub raised: bool,
+    pub background: Option<Color>,
     pub border_shape: Option<crate::BorderShape>,
 }
 
@@ -30,6 +31,7 @@ impl Surface {
             title: None,
             bordered: false,
             raised: false,
+            background: None,
             border_shape: None,
         }
     }
@@ -50,6 +52,11 @@ impl Surface {
 
     pub const fn raised(mut self, raised: bool) -> Self {
         self.raised = raised;
+        self
+    }
+
+    pub const fn background(mut self, background: Color) -> Self {
+        self.background = Some(background);
         self
     }
 
@@ -126,17 +133,27 @@ impl Surface {
         self.render(
             area,
             buffer,
-            &RenderContext::from_theme(theme, Default::default(), Default::default()),
+            &RenderContext::from_theme(
+                theme,
+                Default::default(),
+                crate::RenderCapabilities {
+                    color: theme.color_capability,
+                    ..Default::default()
+                },
+            ),
         );
     }
 
     fn block(&self, context: &RenderContext) -> Block<'_> {
         let tokens = context.theme;
-        let style = Style::default().fg(tokens.text).bg(if self.raised {
+        let background = self.background.unwrap_or(if self.raised {
             tokens.raised
         } else {
             tokens.surface
         });
+        let style = Style::default()
+            .fg(crate::theme::readable_foreground(tokens.text, background))
+            .bg(background);
         let mut block = Block::default().style(style);
         if self.bordered {
             // Colour the border glyphs without painting a band around the panel.
@@ -165,13 +182,17 @@ impl Surface {
                 );
         }
         if let Some(title) = &self.title {
+            let title_background = if self.bordered {
+                tokens.canvas
+            } else {
+                background
+            };
             let mut title_style = Style::default()
-                .fg(tokens.text)
-                .bg(if self.bordered {
-                    tokens.canvas
-                } else {
-                    style.bg.unwrap_or(tokens.surface)
-                })
+                .fg(crate::theme::readable_foreground(
+                    tokens.text,
+                    title_background,
+                ))
+                .bg(title_background)
                 .add_modifier(Modifier::BOLD);
             if self.focused
                 && context

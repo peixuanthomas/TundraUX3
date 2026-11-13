@@ -1,5 +1,8 @@
 use crate::{RenderContext, components::Button};
-use ratatui::{Frame, layout::Rect};
+use ratatui::{
+    Frame,
+    layout::{HorizontalAlignment, Rect},
+};
 use std::cmp::Ordering;
 
 pub fn table_header_areas(area: Rect, widths: &[u16]) -> Vec<(usize, Rect)> {
@@ -79,14 +82,14 @@ pub fn render_table_headers(
                 format!("{id}.sort.{column}"),
                 table_header_text(&label, area.width),
             )
-            .with_bracketed_label(false)
+            .with_background(context.theme.raised)
+            .with_label_alignment(HorizontalAlignment::Left)
             .render_borderless_frame(frame, *area, &theme);
         }
     }
 }
 
-// Pad the entire cell so Button's centered text stays aligned with the column
-// and replaces any header already drawn by the table underneath it.
+// Pad to replace any header already drawn by the table underneath it.
 pub(crate) fn table_header_text(label: &str, width: u16) -> String {
     use crate::components::{terminal_width, truncate_to_terminal_width};
     let width = usize::from(width);

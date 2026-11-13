@@ -3,8 +3,10 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 
 use super::model::*;
-use crate::components::{Scrollbar, ScrollbarOrientation, SidebarWorkspaceLayout, terminal_width};
-use crate::screens::shell::{centered_rect, inset_rect, line_in_rect, rect_contains, usize_to_u16};
+use crate::components::{
+    DialogLayout, Scrollbar, ScrollbarOrientation, SidebarWorkspaceLayout, terminal_width,
+};
+use crate::screens::shell::{centered_rect, line_in_rect, rect_contains, usize_to_u16};
 
 const EXPLORER_SIDEBAR_MIN_WIDTH: u16 = 96;
 const EXPLORER_DETAILED_MIN_WIDTH: u16 = 72;
@@ -250,6 +252,9 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
     };
     let panel = area;
     let mut inner = crate::components::Surface::new().titled("").inner(panel);
+    let side = u16::from(area.width >= EXPLORER_SIDEBAR_MIN_WIDTH) * 2;
+    inner.x += side;
+    inner.width -= side * 2;
     let (save_name_label, save_name, save_button, save_cancel) = if model.save_picker.is_some() {
         let height = 3.min(inner.height);
         inner.height = inner.height.saturating_sub(height);
@@ -435,7 +440,7 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
                         .saturating_add(usize_to_u16(offset).saturating_mul(location_height)),
                     sidebar
                         .width
-                        .saturating_sub(u16::from(quick_location_scrollbar.is_some())),
+                        .saturating_sub(u16::from(quick_location_scrollbar.is_some()) * 2),
                     location_height,
                 ),
             })
@@ -474,7 +479,9 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
             ),
         }
     });
-    let row_width = table_body.width.saturating_sub(u16::from(show_scrollbar));
+    let row_width = table_body
+        .width
+        .saturating_sub(u16::from(show_scrollbar) * 2);
     let rows = (visible_start..model.entries.len())
         .take(visible_capacity)
         .enumerate()
@@ -753,8 +760,9 @@ fn explorer_column_layouts(area: Rect, mode: ExplorerLayoutMode) -> Vec<Explorer
 }
 
 fn explorer_overlay_layout(area: Rect, model: &ExplorerViewModel) -> Option<ExplorerOverlayLayout> {
-    match model.overlay.as_ref() {
-        Some(ExplorerOverlayViewModel::ContextMenu(menu)) => {
+    let overlay = model.overlay.as_ref()?;
+    match overlay {
+        ExplorerOverlayViewModel::ContextMenu(menu) => {
             let content_width = menu
                 .items
                 .iter()
@@ -768,10 +776,10 @@ fn explorer_overlay_layout(area: Rect, model: &ExplorerViewModel) -> Option<Expl
                 .max()
                 .unwrap_or(12);
             let width = content_width
-                .saturating_add(4)
+                .saturating_add(8)
                 .clamp(16, area.width.max(16));
             let height = usize_to_u16(menu.items.len())
-                .saturating_add(2)
+                .saturating_add(5)
                 .min(area.height);
             let x = menu
                 .x
@@ -780,7 +788,7 @@ fn explorer_overlay_layout(area: Rect, model: &ExplorerViewModel) -> Option<Expl
                 .y
                 .min(area.y.saturating_add(area.height.saturating_sub(height)));
             let dialog = Rect::new(x, y, width.min(area.width), height);
-            let content = inset_rect(dialog, 1);
+            let content = explorer_overlay_chrome(dialog, overlay).body;
             let visible_count = usize::from(content.height);
             let first = menu
                 .selected_index
@@ -811,7 +819,7 @@ fn explorer_overlay_layout(area: Rect, model: &ExplorerViewModel) -> Option<Expl
                 controls,
             })
         }
-        Some(ExplorerOverlayViewModel::Name(dialog)) => {
+        ExplorerOverlayViewModel::Name(dialog) => {
             let form = dialog.form(model.overlay_selection);
             let layout = form.layout(area);
             Some(ExplorerOverlayLayout {
@@ -836,21 +844,28 @@ fn explorer_overlay_layout(area: Rect, model: &ExplorerViewModel) -> Option<Expl
                 ],
             })
         }
-        Some(ExplorerOverlayViewModel::Options(options)) => {
-            let desired_height = usize_to_u16(options.options.len()).saturating_add(4);
+        ExplorerOverlayViewModel::Options(options) => {
+            let desired_height = usize_to_u16(options.options.len()).saturating_add(8);
             let dialog = centered_rect(area, area.width.min(64), area.height.min(desired_height));
-            let content = inset_rect(dialog, 1);
-            let option_capacity = usize::from(content.height.saturating_sub(1));
+            let chrome = explorer_overlay_chrome(dialog, overlay);
+            let content = chrome.body;
+            let option_capacity = usize::from(content.height);
+            let start = model
+                .overlay_selection
+                .min(options.options.len().saturating_sub(1))
+                .saturating_sub(option_capacity.saturating_sub(1));
             let mut controls = options
                 .options
                 .iter()
                 .enumerate()
+                .skip(start)
                 .take(option_capacity)
-                .map(|(index, option)| ExplorerOverlayControlLayout {
+                .enumerate()
+                .map(|(row, (index, option))| ExplorerOverlayControlLayout {
                     control: ExplorerOverlayControl::Option(index),
                     area: Rect::new(
                         content.x,
-                        content.y.saturating_add(usize_to_u16(index)),
+                        content.y.saturating_add(usize_to_u16(row)),
                         content.width,
                         1,
                     ),
@@ -859,10 +874,10 @@ fn explorer_overlay_layout(area: Rect, model: &ExplorerViewModel) -> Option<Expl
                 .collect::<Vec<_>>();
             controls.push(ExplorerOverlayControlLayout {
                 control: ExplorerOverlayControl::OptionsClose,
-                area: line_in_rect(
-                    content,
-                    content.y.saturating_add(content.height.saturating_sub(1)),
-                ),
+                area: crate::right_aligned_actions(
+                    chrome.footer,
+                    &[usize_to_u16(terminal_width(&format!("Esc {}", options.close_label))) + 2],
+                )[0],
                 enabled: true,
             });
             Some(ExplorerOverlayLayout {
@@ -871,75 +886,115 @@ fn explorer_overlay_layout(area: Rect, model: &ExplorerViewModel) -> Option<Expl
                 controls,
             })
         }
-        Some(ExplorerOverlayViewModel::Conflict(conflict)) => {
-            let dialog = centered_rect(area, area.width.min(68), area.height.min(10));
-            let content = inset_rect(dialog, 1);
-            let choices_y = content
-                .y
-                .saturating_add(4.min(content.height.saturating_sub(1)));
-            let count = usize_to_u16(conflict.choices.len()).max(1);
-            let choice_width = content.width / count;
+        ExplorerOverlayViewModel::Conflict(conflict) => {
+            let width = area.width.min(76);
+            let desired_height = 10 + conflict_footer_rows(width, conflict);
+            let dialog = centered_rect(area, width, area.height.min(desired_height));
+            let chrome = explorer_overlay_chrome(dialog, overlay);
+            let action_height = chrome
+                .footer
+                .height
+                .saturating_sub(u16::from(conflict.allow_apply_to_remaining));
+            let action_area = Rect::new(
+                chrome.footer.x,
+                chrome.footer.y,
+                chrome.footer.width,
+                action_height,
+            );
+            let widths = conflict_choice_widths(conflict);
+            let action_rects = crate::right_aligned_actions(action_area, &widths);
             let mut controls = conflict
                 .choices
                 .iter()
-                .enumerate()
-                .map(|(index, choice)| ExplorerOverlayControlLayout {
+                .zip(action_rects)
+                .map(|(choice, area)| ExplorerOverlayControlLayout {
                     control: ExplorerOverlayControl::ConflictChoice(*choice),
-                    area: Rect::new(
-                        content
-                            .x
-                            .saturating_add(usize_to_u16(index).saturating_mul(choice_width)),
-                        choices_y,
-                        if index + 1 == conflict.choices.len() {
-                            content
-                                .width
-                                .saturating_sub(usize_to_u16(index).saturating_mul(choice_width))
-                        } else {
-                            choice_width
-                        },
-                        1,
-                    ),
+                    area,
                     enabled: true,
                 })
                 .collect::<Vec<_>>();
             if conflict.allow_apply_to_remaining {
                 controls.push(ExplorerOverlayControlLayout {
                     control: ExplorerOverlayControl::ApplyToRemaining,
-                    area: line_in_rect(content, choices_y.saturating_add(1)),
+                    area: line_in_rect(chrome.footer, action_area.bottom()),
                     enabled: true,
                 });
             }
             Some(ExplorerOverlayLayout {
                 area: dialog,
-                content,
+                content: chrome.body,
                 controls,
             })
         }
-        Some(ExplorerOverlayViewModel::Properties(_)) => {
-            let dialog = centered_rect(area, area.width.min(64), area.height.min(12));
-            let content = inset_rect(dialog, 1);
+        ExplorerOverlayViewModel::Properties(properties) => {
+            let height = usize_to_u16(properties.properties.len()).saturating_add(8);
+            let dialog = centered_rect(area, area.width.min(64), area.height.min(height));
+            let chrome = explorer_overlay_chrome(dialog, overlay);
+            let actions = crate::right_aligned_actions(
+                chrome.footer,
+                &[
+                    usize_to_u16(terminal_width(&format!("Esc {}", properties.close_label))) + 2,
+                    usize_to_u16(terminal_width(&i18n::tr!("permissions-edit"))) + 2,
+                ],
+            );
             Some(ExplorerOverlayLayout {
                 area: dialog,
-                content,
+                content: chrome.body,
                 controls: vec![
                     ExplorerOverlayControlLayout {
                         control: ExplorerOverlayControl::PropertiesPermissions,
-                        area: line_in_rect(content, content.bottom().saturating_sub(2)),
+                        area: actions[1],
                         enabled: true,
                     },
                     ExplorerOverlayControlLayout {
                         control: ExplorerOverlayControl::PropertiesClose,
-                        area: line_in_rect(
-                            content,
-                            content.y.saturating_add(content.height.saturating_sub(1)),
-                        ),
+                        area: actions[0],
                         enabled: true,
                     },
                 ],
             })
         }
-        None => None,
     }
+}
+
+pub(super) fn explorer_overlay_chrome(
+    area: Rect,
+    overlay: &ExplorerOverlayViewModel,
+) -> DialogLayout {
+    let rows = match overlay {
+        ExplorerOverlayViewModel::ContextMenu(_) | ExplorerOverlayViewModel::Name(_) => 0,
+        ExplorerOverlayViewModel::Conflict(conflict) => conflict_footer_rows(area.width, conflict),
+        ExplorerOverlayViewModel::Options(_) | ExplorerOverlayViewModel::Properties(_) => 1,
+    };
+    DialogLayout::new(area, rows, None)
+}
+
+fn conflict_footer_rows(width: u16, conflict: &ExplorerConflictViewModel) -> u16 {
+    let width = DialogLayout::content_width(width);
+    let actions = crate::right_aligned_actions(
+        Rect::new(0, 0, width, u16::MAX),
+        &conflict_choice_widths(conflict),
+    );
+    actions.iter().map(|area| area.bottom()).max().unwrap_or(0)
+        + u16::from(conflict.allow_apply_to_remaining)
+}
+
+fn conflict_choice_widths(conflict: &ExplorerConflictViewModel) -> Vec<u16> {
+    conflict
+        .choices
+        .iter()
+        .map(|choice| usize_to_u16(terminal_width(&conflict_choice_label(*choice))) + 2)
+        .collect()
+}
+
+pub(super) fn conflict_choice_label(choice: ExplorerConflictChoice) -> String {
+    let shortcut = match choice {
+        ExplorerConflictChoice::KeepBoth => "K",
+        ExplorerConflictChoice::Replace => "R",
+        ExplorerConflictChoice::Skip => "S",
+        ExplorerConflictChoice::Cancel => "Esc/N",
+    };
+    format!("{shortcut} {}", choice.label())
 }
 
 pub(super) fn explorer_page_action_buttons(

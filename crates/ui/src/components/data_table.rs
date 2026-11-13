@@ -9,7 +9,7 @@ use crate::RenderContext;
 
 use super::{
     ComponentEvent, ComponentId, ComponentState, ComponentTone, InputEvent, Key, MouseButton,
-    MouseKind, Surface, contains_point, interactive_style,
+    MouseKind, Surface, contains_point, foundation::row_style,
 };
 
 /// A lightweight, component-owned table suitable for selectable data rows.
@@ -157,7 +157,6 @@ impl DataTable {
         }
 
         let theme = context.compatibility_theme();
-        let row_tokens = theme.tokens();
         let capture = crate::automation::enabled();
         let header_height = u16::from(self.show_header);
         if self.show_header {
@@ -176,7 +175,7 @@ impl DataTable {
             .style(
                 Style::default()
                     .fg(tokens.text)
-                    .bg(tokens.surface)
+                    .bg(tokens.raised)
                     .add_modifier(Modifier::BOLD),
             )
             .render(Rect::new(inner.x, inner.y, inner.width, 1), buffer);
@@ -210,6 +209,22 @@ impl DataTable {
             state.selected = selected;
             state.focused &= self.selected == Some(index);
             state.focused |= self.capture_focused_row == Some(index);
+            if self.interactive
+                && let Some(buttons) = &context.buttons
+            {
+                state.hovered |= buttons.hover_position.is_some_and(|(x, y)| {
+                    contains_point(row_area, x, y)
+                        && buttons
+                            .hovered
+                            .as_ref()
+                            .is_none_or(|region| region.area == row_area)
+                });
+                state.active |= state.hovered
+                    && buttons
+                        .pressed
+                        .as_ref()
+                        .is_some_and(|region| region.area == row_area);
+            }
             crate::automation::control(
                 "select",
                 "listitem",
@@ -223,27 +238,23 @@ impl DataTable {
                 },
             );
             self.capture_cells("cell", "cell", row, row_area);
-            let mut style = interactive_style(state, &theme);
+            let mut style = row_style(state, &theme, tokens.surface);
             let tone = self.row_tones.get(index).copied().unwrap_or_default();
-            if !state.disabled && (tone != ComponentTone::Default || (!selected && !state.focused))
-            {
-                style = style.fg(tone.color(&row_tokens));
+            if !state.disabled && tone != ComponentTone::Default {
+                let foreground = tone.color(&tokens);
+                let foreground = if theme.color_capability == crate::ColorCapability::Ansi {
+                    crate::theme::readable_foreground(foreground, style.bg.unwrap())
+                } else {
+                    foreground
+                };
+                style = style.fg(foreground);
             }
-            Paragraph::new(join_row(row, inner.width, self.column_widths.as_deref()))
+            let label = join_row(row, inner.width, self.column_widths.as_deref());
+            let label = ratatui::text::Line::styled(label.trim_end(), style);
+            Paragraph::new(label)
                 .alignment(HorizontalAlignment::Left)
-                .style(style)
-                .render(
-                    Rect::new(
-                        inner.x,
-                        inner
-                            .y
-                            .saturating_add(header_height)
-                            .saturating_add((index - self.viewport_start) as u16),
-                        inner.width,
-                        1,
-                    ),
-                    buffer,
-                );
+                .style(style.remove_modifier(Modifier::UNDERLINED))
+                .render(row_area, buffer);
         }
     }
 

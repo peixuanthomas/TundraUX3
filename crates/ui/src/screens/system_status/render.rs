@@ -1,17 +1,17 @@
 use super::{layout::*, model::*};
 use crate::RenderContext;
 use crate::components::{
-    ComponentState, DataTable, Dialog, DialogAction, EmptyState, List, ListItem, MetricCard,
-    Scrollbar, Surface, tone_color,
+    BusyIndicator, ComponentState, DataTable, Dialog, DialogAction, EmptyState, List, ListItem,
+    MetricCard, Scrollbar, Surface, tone_color,
 };
 use crate::screens::diagnostics::{
     render_diagnostics_content, render_diagnostics_footer, render_diagnostics_repair_dialog,
 };
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::Style;
 use ratatui::text::Line;
-use ratatui::widgets::{Clear, Paragraph, Sparkline};
+use ratatui::widgets::{Paragraph, Sparkline};
 use unicode_width::UnicodeWidthStr;
 
 pub fn system_status_busy_visible(main: Rect, model: &SystemStatusViewModel) -> bool {
@@ -96,6 +96,7 @@ pub fn render_system_status_content(
 ) {
     let l = system_status_layout(main, model);
     Surface::new()
+        .background(context.theme.canvas)
         .titled(i18n::tr!("ui-system-status-system-status"))
         .bordered(false)
         .render_frame(frame, l.panel, context);
@@ -130,7 +131,9 @@ fn render_dashboard(
         Paragraph::new(format!("{left}{}{updated}", " ".repeat(gap))).style(theme.title_style()),
         l.header,
     );
-    Surface::new().render_frame(frame, l.content_panel, context);
+    Surface::new()
+        .background(context.theme.canvas)
+        .render_frame(frame, l.content_panel, context);
     if l.empty_canvas {
         EmptyState::new(i18n::tr!("ui-system-status-dashboard-needs-more-room"))
             .detail(i18n::tr!(
@@ -174,31 +177,26 @@ fn render_overlays(
     model: &SystemStatusViewModel,
     context: &RenderContext,
 ) {
-    if let Some(p) = model.dashboard.size_picker {
-        let w = l.panel.width.min(42);
-        let h = l.panel.height.min(5);
-        let area = system_status_picker_area(l.panel, w, h, model.dashboard.picker_anchor);
-        frame.render_widget(Clear, area);
+    if let (Some(p), Some(chrome)) = (model.dashboard.size_picker, l.size_picker_chrome) {
+        chrome.render_frame(frame, &i18n::tr!("ui-system-status-widget-size"), context);
         let items = ["2x2", "2x4", "4x4"]
             .into_iter()
             .enumerate()
             .map(|(index, label)| ListItem::new(format!("system-status.size.{index}"), label))
             .collect();
         let mut list = List::new("system-status.size-list", items)
-            .titled(i18n::tr!("ui-system-status-widget-size"));
+            .with_viewport_start(l.size_picker_items.first().map_or(0, |row| row.index));
         list.set_selected(Some(p.selected));
         list.set_focused(true);
-        list.render_frame(frame, area, &context.compatibility_theme());
+        list.render_borderless_with_context(chrome.body, frame.buffer_mut(), context);
         return;
     }
-    if let Some(p) = &model.dashboard.picker {
-        let w = l.panel.width.min(42);
-        let h = l
-            .panel
-            .height
-            .min((p.items.len() as u16).saturating_add(2).max(5));
-        let area = system_status_picker_area(l.panel, w, h, model.dashboard.picker_anchor);
-        frame.render_widget(Clear, area);
+    if let (Some(p), Some(chrome)) = (&model.dashboard.picker, l.picker_chrome) {
+        chrome.render_frame(
+            frame,
+            &i18n::tr!("ui-system-status-picker-title", title = p.title.clone()),
+            context,
+        );
         let items = p
             .items
             .iter()
@@ -208,15 +206,11 @@ fn render_overlays(
                     .disabled(!i.enabled)
             })
             .collect();
-        let mut list = List::new("system-status.add-list", items)
-            .with_viewport_start(l.picker_viewport_start)
-            .titled(i18n::tr!(
-                "ui-system-status-picker-title",
-                title = p.title.clone()
-            ));
+        let mut list =
+            List::new("system-status.add-list", items).with_viewport_start(l.picker_viewport_start);
         list.set_selected(Some(p.selected));
         list.set_focused(true);
-        list.render_frame(frame, area, &context.compatibility_theme())
+        list.render_borderless_with_context(chrome.body, frame.buffer_mut(), context)
     }
     if let Some(d) = &model.dashboard.dialog {
         let w = l.panel.width.min(48);
@@ -298,12 +292,13 @@ fn render_formatted_detail(
 ) {
     match &vm.state {
         SystemStatusWidgetState::Loading => {
-            EmptyState::new(format!(
-                "{} {}",
-                crate::components::BusyIndicator::from_motion(context.motion).symbol(),
-                i18n::tr!("ui-system-status-loading")
-            ))
-            .render_frame(frame, layout.canvas, context);
+            BusyIndicator::from_motion(context.motion).render_labeled(
+                frame,
+                layout.canvas,
+                &i18n::tr!("ui-system-status-loading"),
+                HorizontalAlignment::Center,
+                context,
+            );
             return;
         }
         SystemStatusWidgetState::Unavailable { message } => {
@@ -552,11 +547,16 @@ fn state_placeholder(
     context: &RenderContext,
 ) -> bool {
     let e = match state {
-        SystemStatusSectionState::Loading => Some(EmptyState::new(format!(
-            "{} {}",
-            crate::components::BusyIndicator::from_motion(context.motion).symbol(),
-            i18n::tr!("ui-system-status-loading")
-        ))),
+        SystemStatusSectionState::Loading => {
+            BusyIndicator::from_motion(context.motion).render_labeled(
+                frame,
+                area,
+                &i18n::tr!("ui-system-status-loading"),
+                HorizontalAlignment::Center,
+                context,
+            );
+            return true;
+        }
         SystemStatusSectionState::Unavailable { message } => {
             Some(EmptyState::new(i18n::tr!("ui-system-status-unavailable")).detail(message))
         }

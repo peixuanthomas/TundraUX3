@@ -287,7 +287,9 @@ pub fn render_command_line_content_with_images(
     picker: Option<&EditorImagePicker>,
 ) {
     let theme = &context.compatibility_theme();
-    Surface::new().render_frame(frame, main, context);
+    Surface::new()
+        .background(context.theme.canvas)
+        .render_frame(frame, main, context);
 
     let Some(terminal_area) = terminal_area else {
         images.clear();

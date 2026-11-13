@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 
 use super::layout::{
     DiagnosticsContentLayout, DiagnosticsLayout, DiagnosticsRepairDialogLayout, diagnostics_layout,
@@ -12,8 +12,8 @@ use super::model::{
     DiagnosticsStatus, DiagnosticsTab, DiagnosticsViewModel,
 };
 use crate::components::{
-    Button, ComponentTone, List, ListItem, PageAction, PageActionBar, PageActionStatus, Scrollbar,
-    Surface,
+    BusyIndicator, Button, ComponentTone, DialogLayout, List, ListItem, PageAction, PageActionBar,
+    PageActionStatus, Scrollbar, Surface,
 };
 use crate::screens::clock::render_clock_line;
 use crate::screens::shell::fit_cell;
@@ -38,6 +38,7 @@ pub fn render_diagnostics_page_content(
     let theme = &context.compatibility_theme();
     let layout = diagnostics_layout(main, model);
     Surface::new()
+        .background(context.theme.canvas)
         .titled(i18n::tr!("ui-diagnostics-system-status-diagnostics"))
         .bordered(false)
         .render_frame(frame, layout.panel, context);
@@ -55,6 +56,23 @@ pub(crate) fn render_diagnostics_header(
     context: &RenderContext,
 ) {
     let theme = &context.compatibility_theme();
+    if model.scanning && !model.restart_required {
+        let label = i18n::tr!(
+            "ui-diagnostics-last-scan",
+            state = i18n::tr!("ui-diagnostics-scanning-health-checks"),
+            scanned_at = model
+                .scanned_at
+                .clone()
+                .unwrap_or_else(|| i18n::tr!("ui-diagnostics-not-yet-scanned"))
+        );
+        frame.render_widget(
+            Paragraph::new(
+                BusyIndicator::from_motion(context.motion).label(&label, area.width, context),
+            ),
+            area,
+        );
+        return;
+    }
     let warning_count = model
         .checks
         .iter()
@@ -74,11 +92,6 @@ pub(crate) fn render_diagnostics_header(
         (
             i18n::tr!("ui-diagnostics-restart-required"),
             diagnostics_warning_style(theme),
-        )
-    } else if model.scanning {
-        (
-            i18n::tr!("ui-diagnostics-scanning-health-checks"),
-            Style::default().fg(crate::components::tone_color(ComponentTone::Warning, theme)),
         )
     } else if failure_count > 0 {
         (
@@ -117,9 +130,7 @@ pub(crate) fn render_diagnostics_header(
         .scanned_at
         .clone()
         .unwrap_or_else(|| i18n::tr!("ui-diagnostics-not-yet-scanned"));
-    let marker = if model.scanning {
-        crate::components::BusyIndicator::from_motion(context.motion).symbol()
-    } else if failure_count > 0 {
+    let marker = if failure_count > 0 {
         DiagnosticsStatus::Fail.marker()
     } else if model.restart_required || warning_count > 0 {
         DiagnosticsStatus::Warning.marker()
@@ -164,7 +175,7 @@ pub(crate) fn render_diagnostics_content_titled(
     frame: &mut Frame<'_>,
     layout: &DiagnosticsContentLayout,
     model: &DiagnosticsViewModel,
-    theme: &TundraTheme,
+    _theme: &TundraTheme,
     context: &RenderContext,
     title: &str,
     empty_content: Option<(String, String)>,
@@ -173,8 +184,10 @@ pub(crate) fn render_diagnostics_content_titled(
         .titled(title)
         .render_frame(frame, layout.list_panel, context);
     Surface::new()
-        .titled(i18n::tr!("ui-diagnostics-details"))
+        .titled(format!("  {}", i18n::tr!("ui-diagnostics-details")))
+        .raised(true)
         .render_frame(frame, layout.detail_panel, context);
+    let detail_theme = &DialogLayout::footer_theme(context);
     crate::render_table_headers(
         frame,
         &layout.headers,
@@ -187,32 +200,33 @@ pub(crate) fn render_diagnostics_content_titled(
         if let Some((list_message, detail_message)) = empty_content {
             frame.render_widget(
                 Paragraph::new(list_message)
-                    .style(theme.muted_style())
+                    .style(Style::default().fg(context.theme.muted))
                     .wrap(Wrap { trim: true }),
                 layout.list_rows_area,
             );
             frame.render_widget(
                 Paragraph::new(detail_message)
-                    .style(theme.muted_style())
+                    .style(detail_theme.muted_style())
                     .wrap(Wrap { trim: true }),
-                Surface::new().titled("").inner(layout.detail_panel),
+                super::layout::diagnostics_detail_inner(layout.detail_panel),
             );
             return;
         }
     }
-    render_diagnostics_rows(frame, layout, model, theme, context);
-    render_diagnostics_detail(frame, layout, model, theme);
+    render_diagnostics_rows(frame, layout, model, context);
+    render_diagnostics_detail(frame, layout, model, detail_theme, context);
 }
 
 fn render_diagnostics_tabs(
     frame: &mut Frame<'_>,
     layout: &DiagnosticsLayout,
-    _model: &DiagnosticsViewModel,
+    model: &DiagnosticsViewModel,
     context: &RenderContext,
 ) {
     for tab in &layout.tabs {
         Button::new(format!("diagnostics.tab.{:?}", tab.tab), tab.tab.label())
-            .render_borderless_frame(frame, tab.area, &context.compatibility_theme());
+            .with_current(model.tab == tab.tab)
+            .render_inline_frame(frame, tab.area, &context.compatibility_theme());
     }
 }
 
@@ -220,29 +234,32 @@ fn render_diagnostics_rows(
     frame: &mut Frame<'_>,
     layout: &DiagnosticsContentLayout,
     model: &DiagnosticsViewModel,
-    theme: &TundraTheme,
     context: &RenderContext,
 ) {
     if model.item_count() == 0 {
-        let text = if model.scanning && model.tab == DiagnosticsTab::Health {
-            format!(
-                "{} {}",
-                crate::components::BusyIndicator::from_motion(context.motion).symbol(),
-                i18n::tr!("ui-diagnostics-scanning-padded")
-            )
-        } else {
-            match model.tab {
-                DiagnosticsTab::Health => i18n::tr!("ui-diagnostics-no-checks-available-padded"),
-                DiagnosticsTab::Logs => {
-                    if model.can_view_details {
-                        i18n::tr!("ui-diagnostics-no-logs-found-padded")
-                    } else {
-                        i18n::tr!("ui-diagnostics-logs-are-restricted-to-administrators-padded")
-                    }
+        if model.scanning && model.tab == DiagnosticsTab::Health {
+            let area = layout.list_rows_area;
+            frame.render_widget(
+                Paragraph::new(BusyIndicator::from_motion(context.motion).label(
+                    &i18n::tr!("ui-diagnostics-scanning-padded"),
+                    area.width,
+                    context,
+                )),
+                area,
+            );
+            return;
+        }
+        let text = match model.tab {
+            DiagnosticsTab::Health => i18n::tr!("ui-diagnostics-no-checks-available-padded"),
+            DiagnosticsTab::Logs => {
+                if model.can_view_details {
+                    i18n::tr!("ui-diagnostics-no-logs-found-padded")
+                } else {
+                    i18n::tr!("ui-diagnostics-logs-are-restricted-to-administrators-padded")
                 }
-                DiagnosticsTab::Incidents => {
-                    i18n::tr!("ui-diagnostics-no-incidents-recorded-padded")
-                }
+            }
+            DiagnosticsTab::Incidents => {
+                i18n::tr!("ui-diagnostics-no-incidents-recorded-padded")
             }
         };
         render_clock_line(
@@ -254,7 +271,7 @@ fn render_diagnostics_rows(
                 u16::from(layout.list_rows_area.height > 0),
             ),
             text.to_string(),
-            theme.muted_style(),
+            Style::default().fg(context.theme.muted),
             HorizontalAlignment::Left,
         );
         return;
@@ -311,8 +328,9 @@ fn render_diagnostics_detail(
     layout: &DiagnosticsContentLayout,
     model: &DiagnosticsViewModel,
     theme: &TundraTheme,
+    context: &RenderContext,
 ) {
-    let inner = Surface::new().titled("").inner(layout.detail_panel);
+    let inner = super::layout::diagnostics_detail_inner(layout.detail_panel);
     if inner.width == 0 || inner.height == 0 {
         return;
     }
@@ -333,11 +351,10 @@ fn render_diagnostics_detail(
             .style(theme.body_style()),
         content,
     );
-    let context = crate::RenderContext::from_theme(theme, Default::default(), Default::default());
     Scrollbar::new(count, inner.height as usize, offset).render_frame(
         frame,
         Rect::new(inner.right().saturating_sub(1), inner.y, 1, inner.height),
-        &context,
+        context,
     );
 }
 
@@ -345,7 +362,7 @@ pub fn diagnostics_detail_scroll_metrics(
     panel: Rect,
     model: &DiagnosticsViewModel,
 ) -> (Rect, usize, usize) {
-    let inner = Surface::new().titled("").inner(panel);
+    let inner = super::layout::diagnostics_detail_inner(panel);
     let count = wrapped_detail_lines(
         model,
         &TundraTheme::default_dark(),
@@ -687,15 +704,14 @@ pub(crate) fn render_diagnostics_repair_dialog(
     frame: &mut Frame<'_>,
     layout: &DiagnosticsRepairDialogLayout,
     model: &DiagnosticsRepairDialogViewModel,
-    theme: &TundraTheme,
+    _theme: &TundraTheme,
     context: &RenderContext,
 ) {
-    frame.render_widget(Clear, layout.dialog);
-    Surface::new()
-        .titled(i18n::tr!("ui-diagnostics-repair-preview"))
-        .bordered(true)
-        .raised(true)
-        .render_frame(frame, layout.dialog, context);
+    layout
+        .chrome
+        .render_frame(frame, &i18n::tr!("ui-diagnostics-repair-preview"), context);
+    let theme = &DialogLayout::body_theme(context);
+    let footer = &DialogLayout::footer_theme(context);
     frame.render_widget(
         Paragraph::new(vec![
             Line::styled(
@@ -734,7 +750,7 @@ pub(crate) fn render_diagnostics_repair_dialog(
                 ListItem::new(
                     format!("diagnostics.repair.{index}"),
                     fit_cell(
-                        &format!(" {}. {}", index.saturating_add(1), item.label),
+                        &item.label,
                         usize::from(layout.items_area.width.saturating_sub(1)),
                     ),
                 )
@@ -752,10 +768,10 @@ pub(crate) fn render_diagnostics_repair_dialog(
         "diagnostics.repair-confirm",
         &i18n::tr!("ui-diagnostics-confirm-repair-button"),
         model.confirm_selected,
-        theme,
+        footer,
     );
 
-    let mut restart_theme = theme.clone();
+    let mut restart_theme = footer.clone();
     restart_theme.foreground = diagnostics_warning_style(theme)
         .fg
         .unwrap_or(theme.foreground);
@@ -764,7 +780,7 @@ pub(crate) fn render_diagnostics_repair_dialog(
         i18n::tr!("ui-diagnostics-restart-button"),
     );
     restart.set_focused(true);
-    restart.render_borderless_frame(frame, layout.restart, &restart_theme);
+    restart.render_inline_frame(frame, layout.restart, &restart_theme);
 
     render_diagnostics_button(
         frame,
@@ -772,7 +788,7 @@ pub(crate) fn render_diagnostics_repair_dialog(
         "diagnostics.repair-cancel",
         &i18n::tr!("ui-diagnostics-cancel-button"),
         !model.confirm_selected,
-        theme,
+        footer,
     );
 }
 
@@ -791,7 +807,7 @@ fn render_diagnostics_button(
     let mut button = Button::new(id, label);
     button.set_focused(focused);
     button.state.selected = focused;
-    button.render_borderless_frame(frame, area, theme);
+    button.render_inline_frame(frame, area, theme);
 }
 
 fn diagnostics_status_style(

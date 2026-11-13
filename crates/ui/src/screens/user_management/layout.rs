@@ -4,7 +4,8 @@ use super::model::{
     UserManagementAction, UserManagementActionViewModel, UserManagementField, UserManagementFocus,
     UserManagementFormViewModel, UserManagementViewModel,
 };
-use crate::screens::shell::{centered_rect, inset_rect, line_in_rect, rect_contains, usize_to_u16};
+use crate::components::DialogLayout;
+use crate::screens::shell::{centered_rect, line_in_rect, rect_contains, usize_to_u16};
 
 const USER_MANAGEMENT_DETAILED_MIN_WIDTH: u16 = 72;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,14 +143,19 @@ pub fn user_management_layout(main: Rect, model: &UserManagementViewModel) -> Us
         );
         let bar = user_management_action_bar(model);
         let action_height = bar.height(right.width).saturating_add(1).min(right.height);
+        let gap = u16::from(right.height > action_height + 2);
         layout.details = Rect::new(
             right.x,
             right.y,
             right.width,
-            right.height.saturating_sub(action_height),
+            right.height.saturating_sub(action_height + gap),
         );
-        layout.actions_panel =
-            Rect::new(right.x, layout.details.bottom(), right.width, action_height);
+        layout.actions_panel = Rect::new(
+            right.x,
+            layout.details.bottom() + gap,
+            right.width,
+            action_height,
+        );
         layout.actions_area = crate::components::Surface::new()
             .titled("")
             .inner(layout.actions_panel);
@@ -172,7 +178,7 @@ fn user_management_compact_layout(
     let panel = main;
     let inner = crate::components::Surface::new().titled("").inner(panel);
     let summary = line_in_rect(inner, inner.y);
-    let header = line_in_rect(inner, inner.y.saturating_add(1));
+    let mut header = line_in_rect(inner, inner.y.saturating_add(1));
     let inner_bottom = inner.y.saturating_add(inner.height);
 
     let help = Rect::new(inner.x, inner_bottom, 0, 0);
@@ -207,9 +213,12 @@ fn user_management_compact_layout(
     let rows_area = Rect::new(
         inner.x,
         rows_y,
-        inner.width.saturating_sub(u16::from(scrollbar.is_some())),
+        inner
+            .width
+            .saturating_sub(u16::from(scrollbar.is_some()) * 2),
         rows_height,
     );
+    header.width = rows_area.width;
     let visible_capacity = usize::from(rows_height);
     let visible_start = user_management_visible_start(model, visible_capacity);
     let rows = (visible_start..model.users.len())
@@ -359,20 +368,23 @@ fn apply_more_menu(layout: &mut UserManagementLayout, main: Rect, model: &UserMa
         .max()
         .unwrap_or(0)
         .min(main.width);
-    let area = centered_rect(main, width, (actions.len() as u16 + 4).min(main.height));
+    let area = centered_rect(main, width, (actions.len() as u16 + 5).min(main.height));
     layout.more_menu = Some(area);
-    let content = inset_rect(area, 1);
+    let content = DialogLayout::new(area, 0, None).body;
+    let selected = actions
+        .iter()
+        .position(|action| model.focus == UserManagementFocus::Action(action.action))
+        .unwrap_or(0);
+    let capacity = usize::from(content.height);
+    let start = selected.saturating_sub(capacity.saturating_sub(1));
     layout.actions = actions
         .iter()
+        .skip(start)
+        .take(capacity)
         .enumerate()
         .map(|(index, action)| UserManagementActionLayout {
             action: action.action,
-            area: Rect::new(
-                content.x + 1,
-                content.y + 1 + index as u16,
-                content.width.saturating_sub(2),
-                1,
-            ),
+            area: Rect::new(content.x, content.y + index as u16, content.width, 1),
             enabled: action.enabled,
         })
         .collect();

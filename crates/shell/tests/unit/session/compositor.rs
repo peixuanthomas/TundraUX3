@@ -701,6 +701,107 @@ fn status_details_keep_a_toast_visible_during_its_exit_animation() {
 }
 
 #[test]
+fn floating_toast_blocks_covered_buttons_until_its_exit_finishes() {
+    let platform = platform::mock::UnsupportedPlatform;
+    let mut state = session();
+    state.enter_screen(ShellScreen::Launcher);
+    let mut compositor = ScreenCompositor::default();
+    compositor.capture_enabled = true;
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let frame = |state: &ShellSession, millis| {
+        let mut prepared = home_frame(state, millis, false);
+        prepared.page = ScreenViewModel::Launcher(Box::new(state.to_launcher_view_model()));
+        prepared
+    };
+    let initial = frame(&state, 0);
+    draw(&mut compositor, &mut terminal, &mut state, &initial);
+    let id = "page/launcher.toolbar.Refresh";
+    let control = |compositor: &ScreenCompositor| {
+        compositor
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|node| node.id == id)
+            .unwrap()
+            .clone()
+    };
+    let refresh = control(&compositor);
+    let point = (
+        refresh.rect.x + refresh.rect.width / 2,
+        refresh.rect.y + refresh.rect.height / 2,
+    );
+    let now = Instant::now();
+    let down = || InputEvent::mouse_down(PointerButton::Left, point);
+    let up = || InputEvent::mouse_up(PointerButton::Left, point);
+    assert!(refresh.actionable);
+    let focus = state.focused_component();
+    compositor.prepare_input(&mut state, down(), &platform, now);
+    assert!(state.interaction.button_capture.is_some());
+
+    let mut shown = frame(&state, 10);
+    shown.chrome.status.toast = Some("Saved changes".into());
+    compositor.synchronize_toast(&shown.chrome, shown.context.motion);
+    draw(&mut compositor, &mut terminal, &mut state, &shown);
+    assert!(compositor.toast_area.unwrap().contains(point.into()));
+    assert!(!control(&compositor).actionable);
+    assert!(control(&compositor).actions.is_empty());
+    assert!(
+        compositor
+            .prepare_input(&mut state, up(), &platform, now)
+            .is_none()
+    );
+    assert!(state.interaction.button_capture.is_none());
+    assert!(
+        compositor
+            .prepare_input(&mut state, down(), &platform, now)
+            .is_none()
+    );
+    assert!(
+        compositor
+            .prepare_input(&mut state, up(), &platform, now)
+            .is_none()
+    );
+    assert!(
+        compositor
+            .prepare_input(&mut state, down(), &platform, now)
+            .is_none()
+    );
+    assert_eq!(state.focused_component(), focus);
+    assert!(
+        compositor
+            .prepare_input(&mut state, InputEvent::key(InputKey::Tab), &platform, now)
+            .is_some()
+    );
+
+    let leaving = frame(&state, 240);
+    compositor.synchronize_toast(&leaving.chrome, leaving.context.motion);
+    draw(&mut compositor, &mut terminal, &mut state, &leaving);
+    assert!(!control(&compositor).actionable);
+    let hidden = frame(&state, 500);
+    compositor.synchronize_toast(&hidden.chrome, hidden.context.motion);
+    draw(&mut compositor, &mut terminal, &mut state, &hidden);
+    assert!(compositor.toast_area.is_none());
+    assert!(control(&compositor).actionable);
+    assert!(
+        compositor
+            .prepare_input(&mut state, up(), &platform, now)
+            .is_none()
+    );
+    assert!(state.interaction.button_capture.is_none());
+
+    compositor.prepare_input(&mut state, down(), &platform, now);
+    let click = compositor
+        .prepare_input(&mut state, up(), &platform, now)
+        .unwrap();
+    assert!(matches!(
+        state.route_input_at(click, now).command,
+        ShellCommand::LauncherPointer(target, _) if target == point
+    ));
+}
+
+#[test]
 fn auto_admin_keeps_shell_title_and_status_visible_after_resize() {
     for (width, height) in [(180, 55), (80, 24), (120, 40)] {
         let mut state = session();
@@ -1058,7 +1159,14 @@ fn pointer_input_hides_home_focus_but_keeps_launcher_selection() {
                 .unwrap()
                 .area
         };
-        let point = (area.x, area.y);
+        let point = area
+            .positions()
+            .find(|position| {
+                terminal.backend().buffer()[*position]
+                    .modifier
+                    .contains(ratatui::style::Modifier::UNDERLINED)
+            })
+            .expect("selected label has keyboard focus");
         let focused_cell = terminal.backend().buffer()[point].clone();
         assert!(
             focused_cell
@@ -1079,7 +1187,7 @@ fn pointer_input_hides_home_focus_but_keeps_launcher_selection() {
             assert!(!state.interaction.keyboard_focus_visible());
             render(&mut state, &mut compositor, &mut terminal);
             let current_cell = &terminal.backend().buffer()[point];
-            assert_eq!(current_cell.bg, ui::ThemeTokens::default().raised);
+            assert_eq!(current_cell.bg, focused_cell.bg);
             assert!(
                 !current_cell
                     .modifier
@@ -2070,7 +2178,7 @@ fn visible_busy_state_requests_only_its_shared_interval_and_reduced_motion_is_st
         );
         assert_eq!(
             compositor.next_redraw_in(),
-            (!reduced).then_some(ui::BusyIndicator::FRAME_INTERVAL)
+            (!reduced).then_some(Duration::from_millis(50))
         );
         if let ScreenViewModel::Diagnostics(model) = &mut frame.page {
             model.scanning = false;
@@ -2078,6 +2186,38 @@ fn visible_busy_state_requests_only_its_shared_interval_and_reduced_motion_is_st
         assert!(!draw(&mut compositor, &mut terminal, &mut state, &frame));
         assert_eq!(compositor.next_redraw_in(), None);
     }
+}
+
+#[test]
+fn shell_modal_dims_the_page_while_the_first_frame_exposes_its_actions() {
+    let mut state = session();
+    let mut compositor = ScreenCompositor::default();
+    compositor.capture_enabled = true;
+    let mut terminal = Terminal::new(TestBackend::new(108, 20)).unwrap();
+    let frame = home_frame(&state, 0, true);
+    assert!(!draw(&mut compositor, &mut terminal, &mut state, &frame));
+    let point = (0, 3);
+    let background = terminal.backend().buffer()[point].bg;
+    state.help_open = true;
+    state.refresh_hit_map();
+    let mut frame = home_frame(&state, 0, true);
+    frame.help = Some(state.to_page_help_view_model());
+    assert!(!draw(&mut compositor, &mut terminal, &mut state, &frame));
+    assert_ne!(terminal.backend().buffer()[point].bg, background);
+    let snapshot = compositor.snapshot.as_ref().unwrap();
+    let close = snapshot
+        .nodes
+        .iter()
+        .find(|node| node.id.ends_with("/notification.page-help.action.close"))
+        .unwrap();
+    assert!(close.actionable);
+    assert!(
+        snapshot
+            .nodes
+            .iter()
+            .filter(|node| node.id.starts_with("page/"))
+            .all(|node| !node.actionable)
+    );
 }
 
 #[test]
