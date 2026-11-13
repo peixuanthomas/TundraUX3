@@ -573,6 +573,15 @@ pub fn render_explorer_overlay(
             .render_frame(frame, area, context);
         return;
     }
+    let mut overlay_context = context.clone();
+    if matches!(overlay, ExplorerOverlayViewModel::ContextMenu(_)) {
+        // ANSI controls and selected rows both use blue.
+        overlay_context.theme.surface = match context.capabilities.color {
+            crate::ColorCapability::TrueColor => context.theme.control_background(),
+            crate::ColorCapability::Ansi => context.theme.canvas,
+        };
+    }
+    let context = &overlay_context;
     let title = match overlay {
         ExplorerOverlayViewModel::ContextMenu(menu) => menu.title.clone(),
         ExplorerOverlayViewModel::Name(dialog) => dialog.title.clone(),

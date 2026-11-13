@@ -463,6 +463,84 @@ fn explorer_context_menu_is_modal_and_hit_testable() {
 }
 
 #[test]
+fn explorer_context_menu_background_stands_out_from_the_file_list() {
+    let mut model = sample_model();
+    let area = Rect::new(0, 0, 110, 28);
+    let table = explorer_layout(area, &model).table_body;
+    model.overlay = Some(ExplorerOverlayViewModel::ContextMenu(
+        ExplorerContextMenuViewModel {
+            x: table.x + 4,
+            y: table.y + 3,
+            title: "文件管理器".into(),
+            items: [
+                ("new-folder", "新建文件夹", true),
+                ("refresh", "刷新", true),
+                ("paste", "粘贴", false),
+            ]
+            .into_iter()
+            .map(|(id, label, enabled)| ExplorerContextMenuItemViewModel {
+                id: id.into(),
+                label: label.into(),
+                shortcut: None,
+                enabled,
+                dangerous: false,
+            })
+            .collect(),
+            selected_index: Some(0),
+        },
+    ));
+    let overlay = explorer_layout(area, &model).overlay.unwrap();
+    let panel = overlay.area;
+    let header = ui::components::DialogLayout::new(panel, 0, None).header;
+    let theme = TundraTheme::default();
+    let motion = ui::MotionFrame::default();
+    let opening = ui::schedule_motion(
+        Default::default(),
+        ui::MotionIdentity {
+            overlay: Some(ui::MotionOverlayIdentity {
+                kind: ui::MotionOverlayKind::Popover,
+                id: "explorer-context-menu",
+            }),
+            ..Default::default()
+        },
+        motion.now,
+        motion,
+    )
+    .transitions;
+
+    for capabilities in [
+        ui::RenderCapabilities::default(),
+        ui::RenderCapabilities::ansi(),
+    ] {
+        for transitions in [opening, Default::default()] {
+            let context = RenderContext::from_theme_with_transitions(
+                &theme,
+                motion,
+                transitions,
+                capabilities,
+            );
+            let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+            terminal
+                .draw(|frame| {
+                    ui::render_explorer_content(frame, area, &model, &context);
+                    ui::render_explorer_overlay(frame, area, &model, &context, &theme);
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let menu_bg = buffer[(panel.x, panel.y)].bg;
+            assert_ne!(menu_bg, buffer[(panel.x - 1, panel.y)].bg);
+            assert_eq!(buffer[(header.x, header.y)].bg, menu_bg);
+            assert_eq!(buffer[(panel.right() - 1, panel.bottom() - 1)].bg, menu_bg);
+            for control in &overlay.controls[1..] {
+                assert_eq!(buffer[(control.area.x + 2, control.area.y)].bg, menu_bg);
+            }
+            let selected = overlay.controls[0].area;
+            assert_ne!(buffer[(selected.x + 2, selected.y)].bg, menu_bg);
+        }
+    }
+}
+
+#[test]
 fn explorer_wide_context_labels_and_shortcuts_use_cell_width_hit_geometry() {
     let mut model = sample_model();
     model.overlay = Some(ExplorerOverlayViewModel::ContextMenu(
