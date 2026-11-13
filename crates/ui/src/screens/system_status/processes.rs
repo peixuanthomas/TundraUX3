@@ -233,27 +233,20 @@ fn render_meter(
         )
     });
     let label = format!("{} ", kind.label());
-    let value = available
-        .map(|metric| metric.primary.clone())
-        .unwrap_or_else(|| {
-            if matches!(
-                metric.map(|metric| &metric.state),
-                Some(SystemStatusWidgetState::Loading)
-            ) {
-                format!(
-                    "{} {}",
-                    crate::components::BusyIndicator::from_motion(context.motion).symbol(),
-                    i18n::tr!("ui-system-status-loading")
-                )
-            } else {
-                i18n::tr!("ui-system-status-unavailable")
-            }
-        });
     let bar_width = usize::from(area.width / 3).min(24);
     let mut spans = vec![Span::styled(
         label,
         Style::default().fg(color).add_modifier(Modifier::BOLD),
     )];
+    if metric.is_some_and(|metric| metric.state == SystemStatusWidgetState::Loading) {
+        spans.extend(
+            crate::BusyIndicator::from_motion(context.motion)
+                .label(&i18n::tr!("ui-system-status-loading"), context)
+                .spans,
+        );
+        frame.render_widget(Paragraph::new(Line::from(spans)), area);
+        return;
+    }
     if let Some(percent) = available.and_then(|metric| metric.progress_percent) {
         let filled = bar_width * usize::from(percent.min(100)) / 100;
         spans.push(Span::raw("["));
@@ -289,6 +282,9 @@ fn render_meter(
             Style::default().fg(context.theme.warning),
         ));
     }
+    let value = available
+        .map(|metric| metric.primary.clone())
+        .unwrap_or_else(|| i18n::tr!("ui-system-status-unavailable"));
     spans.push(Span::styled(
         terminal_safe_text(&value).into_owned(),
         Style::default().fg(color),

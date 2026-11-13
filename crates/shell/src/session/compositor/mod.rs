@@ -326,6 +326,11 @@ impl ScreenCompositor {
         buttons.keyboard_focus_visible = state.interaction.keyboard_focus_visible();
         frame_context.buttons = Some(buttons.clone());
         let context = &frame_context;
+        let covered_context = (!overlays.is_empty()).then(|| {
+            let mut context = context.clone();
+            context.motion.reduced_motion = true;
+            context
+        });
         let mut chrome = prepared.chrome.clone();
         chrome.terminal_size = (bounds.width, bounds.height);
         let layout =
@@ -403,7 +408,7 @@ impl ScreenCompositor {
                 _ => content.render_content(
                     frame,
                     &layout,
-                    context,
+                    covered_context.as_ref().unwrap_or(context),
                     icons.map(|v| v as &dyn ui::HomeIconRenderer),
                     icons.map(|v| v as &dyn ui::LauncherIconRenderer),
                 ),
@@ -612,7 +617,7 @@ impl ScreenCompositor {
             (!context.motion.reduced_motion
                 && overlays.is_empty()
                 && content.busy_visible(layout.main))
-            .then_some(ui::BusyIndicator::FRAME_INTERVAL),
+            .then_some(ui::BusyIndicator::LABEL_FRAME_INTERVAL),
             self.toast
                 .as_ref()
                 .filter(|toast| toast.requests_redraw(context.motion))

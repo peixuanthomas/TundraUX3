@@ -1,6 +1,6 @@
 use super::layout::{controls, logs_action_bar};
 use super::{LogsCategory, LogsHitTarget, LogsViewModel, logs_layout};
-use crate::components::{Button, Surface};
+use crate::components::{BusyIndicator, Button, Surface};
 use crate::screens::diagnostics::render_diagnostics_content_titled;
 use crate::{DiagnosticsCheckViewModel, DiagnosticsTab, DiagnosticsViewModel, RenderContext};
 use ratatui::{
@@ -238,19 +238,19 @@ pub fn render_logs_content(
         button.render_borderless_frame(frame, control.area, &theme);
     }
     logs_action_bar(model).render(frame, layout.action_bar.area, &background_context);
-    frame.render_widget(
-        Paragraph::new(if model.loading {
-            format!(
-                "{} {}",
-                crate::components::BusyIndicator::from_motion(context.motion).symbol(),
-                i18n::tr!("ui-logs-loading-logs")
-            )
-        } else {
-            model.filter_summary.clone()
-        })
-        .style(theme.muted_style()),
-        layout.filter_summary,
-    );
+    if model.loading {
+        BusyIndicator::from_motion(context.motion).render_label(
+            frame,
+            layout.filter_summary,
+            &i18n::tr!("ui-logs-loading-logs"),
+            context,
+        );
+    } else {
+        frame.render_widget(
+            Paragraph::new(model.filter_summary.clone()).style(theme.muted_style()),
+            layout.filter_summary,
+        );
+    }
     if let Some(reason) = unavailable {
         frame.render_widget(
             Paragraph::new(reason)
@@ -282,13 +282,10 @@ pub fn render_logs_content(
             &title,
             Some((
                 if model.loading {
-                    format!(
-                        "{} {}",
-                        crate::components::BusyIndicator::from_motion(context.motion).symbol(),
-                        i18n::tr!("ui-logs-loading-events")
-                    )
+                    BusyIndicator::from_motion(context.motion)
+                        .label(&i18n::tr!("ui-logs-loading-events"), context)
                 } else {
-                    i18n::tr!("ui-logs-no-events-match-the-current-query")
+                    i18n::tr!("ui-logs-no-events-match-the-current-query").into()
                 },
                 i18n::tr!(
                     "ui-logs-select-an-event-to-inspect-its-operation-and-correlation-identifiers"

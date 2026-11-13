@@ -90,7 +90,35 @@ use ui::animate::{self, Clock};
 
 Callers retain animation state and advance the clock with the same `MotionFrame` for each frame. Keyboard and pointer actions share transitions and take effect immediately. New navigation, reversal, or resize interrupts active motion; reduced motion goes directly to the target. Idle UI has no animation timer, and slow output skips missed frames instead of catching up.
 
-Defaults are 160ms for pages, 180ms for dialogs and details, and 120ms for menus. The keyboard expands over 160ms. Progress graphics interpolate for 200ms without overshoot while numeric values update immediately; busy indicators occupy one character with an 80ms step.
+Defaults are 160ms for pages, 180ms for dialogs and details, and 120ms for menus. The keyboard expands over 160ms. Progress graphics interpolate for 200ms without overshoot while numeric values update immediately. The one-cell spinner advances every 80ms, and a white highlight crosses its gray label every 1.2s. Reduced motion shows a static label.
+
+### OpenCode attribution
+
+The loading sweep adapts the timing and color calculations from OpenCode v2.2.6. The dialog backdrop and option styling follow the same release. [ShimmerText](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/tui/src/component/shimmer-text.tsx) · [TabPulse](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/tui/src/component/tab-pulse.tsx) · [Dialog](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/tui/src/ui/dialog.tsx) · [DialogSelect](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/tui/src/ui/dialog-select.tsx).
+
+```text
+MIT License
+
+Copyright (c) 2025 opencode
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 Advanced animation settings reuse `FormDialog` for nine numeric fields in three columns, Tab navigation, range checks, and small-window scrolling. Reset changes the draft; Save validates and commits all values together, while Cancel leaves configuration unchanged. Reset, Save, and Cancel remain visible.
 

@@ -1,6 +1,6 @@
 use crate::{
     RenderContext,
-    components::{Button, Scrollbar, ScrollbarOrientation, Surface, TextInput},
+    components::{BusyIndicator, Button, Scrollbar, ScrollbarOrientation, Surface, TextInput},
 };
 use ratatui::{
     Frame,
@@ -1649,6 +1649,7 @@ pub fn render_management_content(
         // A form owns the main area's buttons. Keep the covered page visible,
         // but do not register its controls or pass pointer feedback to them.
         content_context.buttons = None;
+        content_context.motion.reduced_motion = true;
     }
     let context = &content_context;
     let theme = context.compatibility_theme();
@@ -1881,24 +1882,27 @@ pub fn render_management_content(
             );
         }
         if model.rows.is_empty() {
-            let message = if model.loading {
-                format!(
-                    "{} {}",
-                    crate::components::BusyIndicator::from_motion(context.motion).symbol(),
-                    i18n::tr!("management-loading")
-                )
-            } else if model.empty_message.is_empty() {
-                i18n::tr!("management-empty")
+            if model.loading {
+                BusyIndicator::from_motion(context.motion).render_label(
+                    frame,
+                    layout.list_rows,
+                    &i18n::tr!("management-loading"),
+                    context,
+                );
             } else {
-                model.empty_message.clone()
-            };
-            render_text(
-                frame,
-                layout.list_rows,
-                &message,
-                0,
-                Style::default().fg(tokens.muted),
-            );
+                let message = if model.empty_message.is_empty() {
+                    i18n::tr!("management-empty")
+                } else {
+                    model.empty_message.clone()
+                };
+                render_text(
+                    frame,
+                    layout.list_rows,
+                    &message,
+                    0,
+                    Style::default().fg(tokens.muted),
+                );
+            }
         }
         for (index, area) in &layout.headers {
             let label = model.sort.map_or_else(

@@ -75,14 +75,14 @@ Use restrained transitions to explain state changes without delaying operation. 
 | Details | 180ms | Clipped expansion or collapse |
 | On-screen keyboard | 160ms | Clipped expansion or collapse from the bottom |
 | Progress graphic | 200ms | Interpolation toward the real value, without overshoot |
-| Busy indicator | 80ms per step | One terminal character |
+| Busy indicator | 80ms per step | One terminal character, with a 1.2s white highlight sweep across the gray loading label |
 
 - Page, dialog, and menu bodies are readable on the first frame. Do not show an empty moving outline or wait for the transition to reveal text. Opening and closing keep the intended final layout and blend only the presentation.
 - Details expand rightward in wide windows and vertically in narrow windows. The list, details, and keyboard use the same current geometry for painting, clipping, PTY sizing, automation, and hit testing. Do not insert blank intermediate frames.
 - The real progress value and its numeric label update immediately. Only the graphic interpolates; changing targets or reversing direction starts from its current displayed value and never overshoots.
 - New navigation, reverse actions, repeated switching, input-method changes, and resize interrupt or retarget the active transition. Do not queue animations or require an extra key or click to finish one.
 - Reduced motion renders the terminal state directly, including details, keyboard, progress, and busy feedback. No hidden animation continues afterward.
-- Active UI transitions schedule frames at 60 FPS. Idle UI has no animation timer. Weather and continuous rainbow effects retain their separate 30 FPS policy. Cursor blink, clocks, and real data refresh retain their own deadlines.
+- Active UI transitions schedule frames at 60 FPS. Loading labels request a frame every 40ms while visible. Idle UI has no animation timer. Weather and continuous rainbow effects retain their separate 30 FPS policy. Cursor blink, clocks, and real data refresh retain their own deadlines.
 - Slow output advances by elapsed time and skips missed frames. Never replay accumulated animation frames after the terminal stalls.
 - Motion curves, durations, clipping, spacing, and pane geometry belong in `crates/ui`; Shell owns input routing, navigation, dialog stacking, and transition lifecycle.
 

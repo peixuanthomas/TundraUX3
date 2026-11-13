@@ -2124,7 +2124,7 @@ fn visible_busy_state_requests_only_its_shared_interval_and_reduced_motion_is_st
         );
         assert_eq!(
             compositor.next_redraw_in(),
-            (!reduced).then_some(ui::BusyIndicator::FRAME_INTERVAL)
+            (!reduced).then_some(ui::BusyIndicator::LABEL_FRAME_INTERVAL)
         );
         if let ScreenViewModel::Diagnostics(model) = &mut frame.page {
             model.scanning = false;

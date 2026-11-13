@@ -1,5 +1,5 @@
-use ratatui::{Terminal, backend::TestBackend, layout::Rect};
-use std::sync::Arc;
+use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Color};
+use std::{sync::Arc, time::Duration};
 use ui::components::{ButtonFrame, WorkspaceFocus};
 use ui::*;
 
@@ -63,7 +63,7 @@ fn packages_distinguishes_navigation_table_details_and_empty_rows() {
                 let nav = layout.workspace.as_ref().unwrap().navigation[0];
                 let context = RenderContext::from_theme(
                     &TundraTheme::default(),
-                    MotionFrame::reduced(std::time::Duration::ZERO),
+                    MotionFrame::reduced(Duration::ZERO),
                     RenderCapabilities {
                         color,
                         ..Default::default()
@@ -102,6 +102,60 @@ fn packages_distinguishes_navigation_table_details_and_empty_rows() {
                 assert_eq!(buffer[(layout.list_rows.x, y)].fg, tokens.muted);
             }
         }
+    }
+}
+
+#[test]
+fn package_loading_sweeps_over_wide_text_and_stops_in_reduced_motion() {
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
+    let snapshot = i18n::LanguageSnapshot::load(&assets, "zh-CN", 1)
+        .unwrap()
+        .snapshot;
+    let _language = i18n::enter_snapshot(Arc::new(snapshot));
+    let main = Rect::new(0, 0, 108, 20);
+    let mut model = model(false);
+    model.rows.clear();
+    model.loading = true;
+    let layout = management_layout(main, &model);
+    let mut terminal = Terminal::new(TestBackend::new(main.width, main.height)).unwrap();
+    let mut render = |color, millis, reduced_motion| {
+        let context = RenderContext::from_theme(
+            &TundraTheme::default(),
+            MotionFrame {
+                now: Duration::from_millis(millis),
+                reduced_motion,
+                ..Default::default()
+            },
+            RenderCapabilities {
+                color,
+                ..Default::default()
+            },
+        );
+        terminal
+            .draw(|frame| render_management_content(frame, main, &model, &context))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..8)
+            .map(|dx| buffer[(layout.list_rows.x + dx, layout.list_rows.y)].clone())
+            .collect::<Vec<_>>()
+    };
+    for color in [
+        ColorCapability::TrueColor,
+        ColorCapability::Indexed,
+        ColorCapability::Ansi,
+    ] {
+        let start = render(color, 0, false);
+        let moving = render(color, 280, false);
+        let repeated = render(color, 1200, false);
+        assert_eq!(start[2].symbol(), "正");
+        assert_ne!(start[2].fg, moving[2].fg);
+        assert_eq!(start[2..], repeated[2..]);
+        assert_eq!(start[2].bg, moving[2].bg);
+        if color != ColorCapability::TrueColor {
+            assert!(!matches!(moving[2].fg, Color::Rgb(..)));
+            assert!(!matches!(moving[2].bg, Color::Rgb(..)));
+        }
+        assert_eq!(render(color, 0, true), render(color, 360, true));
     }
 }
 
