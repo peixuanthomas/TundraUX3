@@ -123,7 +123,7 @@ fn quick_access_without_a_current_location_does_not_select_the_trash() {
         ratatui::style::Color::DarkGray
     );
     assert_eq!(buffer[(trash.x, trash.y)].fg, theme.foreground);
-    assert_eq!(buffer[(trash.x, trash.y)].bg, context.theme.alternate_row);
+    assert_eq!(buffer[(trash.x, trash.y)].bg, theme.background);
     assert_eq!(buffer[(trash.x, trash.y)].symbol(), " ");
 }
 

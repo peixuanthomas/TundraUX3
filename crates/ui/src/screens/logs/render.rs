@@ -1,12 +1,11 @@
 use super::layout::{controls, logs_action_bar};
 use super::{LogsCategory, LogsHitTarget, LogsViewModel, logs_layout};
-use crate::components::{BusyIndicator, Button, Surface};
+use crate::components::{Button, Surface};
 use crate::screens::diagnostics::render_diagnostics_content_titled;
 use crate::{DiagnosticsCheckViewModel, DiagnosticsTab, DiagnosticsViewModel, RenderContext};
 use ratatui::{
     Frame,
     layout::Rect,
-    style::Style,
     widgets::{Clear, Paragraph, Wrap},
 };
 
@@ -206,7 +205,6 @@ pub fn render_logs_content(
 
     let layout = logs_layout(main, model);
     Surface::new()
-        .on_canvas()
         .titled(i18n::tr!("ui-logs-logs"))
         .bordered(false)
         .render_frame(frame, layout.panel, context);
@@ -238,19 +236,19 @@ pub fn render_logs_content(
         button.render_borderless_frame(frame, control.area, &theme);
     }
     logs_action_bar(model).render(frame, layout.action_bar.area, &background_context);
-    if model.loading {
-        BusyIndicator::from_motion(context.motion).render_label(
-            frame,
-            layout.filter_summary,
-            &i18n::tr!("ui-logs-loading-logs"),
-            context,
-        );
-    } else {
-        frame.render_widget(
-            Paragraph::new(model.filter_summary.clone()).style(theme.muted_style()),
-            layout.filter_summary,
-        );
-    }
+    frame.render_widget(
+        Paragraph::new(if model.loading {
+            format!(
+                "{} {}",
+                crate::components::BusyIndicator::from_motion(context.motion).symbol(),
+                i18n::tr!("ui-logs-loading-logs")
+            )
+        } else {
+            model.filter_summary.clone()
+        })
+        .style(theme.muted_style()),
+        layout.filter_summary,
+    );
     if let Some(reason) = unavailable {
         frame.render_widget(
             Paragraph::new(reason)
@@ -282,10 +280,13 @@ pub fn render_logs_content(
             &title,
             Some((
                 if model.loading {
-                    BusyIndicator::from_motion(context.motion)
-                        .label(&i18n::tr!("ui-logs-loading-events"), context)
+                    format!(
+                        "{} {}",
+                        crate::components::BusyIndicator::from_motion(context.motion).symbol(),
+                        i18n::tr!("ui-logs-loading-events")
+                    )
                 } else {
-                    i18n::tr!("ui-logs-no-events-match-the-current-query").into()
+                    i18n::tr!("ui-logs-no-events-match-the-current-query")
                 },
                 i18n::tr!(
                     "ui-logs-select-an-event-to-inspect-its-operation-and-correlation-identifiers"
@@ -293,9 +294,7 @@ pub fn render_logs_content(
             )),
         );
         frame.render_widget(Clear, layout.detail_text);
-        Surface::new()
-            .raised(true)
-            .render_frame(frame, layout.detail_text, context);
+        Surface::new().render_frame(frame, layout.detail_text, context);
         let lines =
             crate::management_wrapped_lines(&logs_detail_text(model), layout.detail_text.width);
         let start = model.detail_scroll.min(
@@ -311,7 +310,7 @@ pub fn render_logs_content(
                     .map(ratatui::text::Line::from)
                     .collect::<Vec<_>>(),
             )
-            .style(Style::default().fg(context.theme.text)),
+            .style(theme.body_style()),
             layout.detail_text,
         );
         if let Some(bar) = layout.detail_scrollbar {
@@ -343,8 +342,7 @@ pub fn render_logs_overlay(
                 .find(|(_, item)| item.0 == control.target)
             {
                 let mut button = Button::new(logs_control_id(model, control.target), label.clone())
-                    .with_background(context.theme.raised)
-                    .with_selection_fill();
+                    .with_centered_label(true);
                 button.state.selected = index == selected;
                 button.set_focused(index == selected);
                 button.set_disabled(!logs_control_enabled(model, control.target));

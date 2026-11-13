@@ -1,6 +1,5 @@
 use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
-use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Clear, Paragraph};
 
@@ -28,10 +27,10 @@ pub(crate) fn render_notification_overlay_context(
     model: &NotificationViewModel,
     context: &RenderContext,
 ) {
+    let theme = &context.compatibility_theme();
     if model.level != NotificationLevel::Modal {
         return;
     }
-    let theme = &context.compatibility_theme();
 
     let layout = match notification_layout(area, model) {
         NotificationLayout::Dialog(layout) => layout,
@@ -69,7 +68,7 @@ pub(crate) fn render_notification_overlay_context(
         .collect::<Vec<_>>();
     frame.render_widget(
         Paragraph::new(message_lines)
-            .style(Style::default().fg(context.theme.muted))
+            .style(theme.body_style())
             .alignment(if model.align_left {
                 HorizontalAlignment::Left
             } else {
@@ -90,7 +89,7 @@ pub(crate) fn render_notification_overlay_context(
         frame.render_widget(
             Paragraph::new(i18n::tr!("ui-notifications-scroll-help"))
                 .alignment(HorizontalAlignment::Center)
-                .style(Style::default().fg(context.theme.muted)),
+                .style(theme.muted_style()),
             area,
         );
     }
@@ -103,9 +102,7 @@ pub(crate) fn render_notification_overlay_context(
         let mut button = Button::new(
             format!("notification.{}.action.{}", model.id, action.id),
             label,
-        )
-        .with_background(context.theme.raised)
-        .with_selection_fill();
+        );
         button.state.selected = action.selected;
         button.render_borderless_frame(frame, action_layout.area, theme);
     }

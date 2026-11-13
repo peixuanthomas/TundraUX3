@@ -52,7 +52,7 @@ Enter moves to the next field and submits from the last field; Space or a tap to
 
 Selection dialogs keep this extended scrollbar hit area clear of option rows and the Close button, including the last row of long paths.
 
-Ordinary workspaces use headings, backgrounds, and whitespace. Navigation entries and table rows use one line with alternating backgrounds and full-row targets. Detail panes and column headings use a raised background. Dialogs use the raised background, muted explanatory text, and a full-width accent fill on the active option.
+Ordinary workspaces use headings, backgrounds, and whitespace instead of complete frames. Navigation entries and table rows use one line. Shared spacing is one row between groups, two columns between groups, and one cell between grid items; full rows remain clickable. A modal, menu, or input may retain one boundary.
 
 ### Page controls
 
@@ -68,9 +68,9 @@ Ordinary workspaces use headings, backgrounds, and whitespace. Navigation entrie
 
 `TextInput` provides a cursor, selection, scrolling, and password masking. Button hover, pressed, focused, current-item, and disabled styles are calculated centrally by `TundraTheme` and `RenderContext`. See [UI requirements](../../docs/UI-requirements.md) for keyboard, mouse, and touchscreen rules.
 
-The default palette uses the Glacier Night canvas `#071116`, surface `#0D1B22`, alternate row `#162832`, and raised surface `#192C36`. Current-item and multi-selection backgrounds remain independent of keyboard focus. Explicit saved appearance settings remain supported.
+The default palette is canvas `#101010`, surface `#181818`, raised surface `#242424`, text `#E6E6E6`, muted text `#999999`, accent `#63D3E5`, and border `#383838`. Ordinary buttons use plain text; primary actions use accent fill, while danger actions retain semantic color. Current-item and multi-selection backgrounds remain independent of keyboard focus. Explicit saved appearance settings remain supported.
 
-Compatibility themes retain the frame's color capability. Terminals with 256 colors use a navy canvas and distinct dark shades. Terminals with 16 colors use blue and black.
+Compatibility themes retain the frame's terminal color capability when rebuilding surface and semantic colors, so shared buttons and legacy renderers keep ANSI output free of RGB colors.
 
 ## Animations
 
@@ -90,35 +90,7 @@ use ui::animate::{self, Clock};
 
 Callers retain animation state and advance the clock with the same `MotionFrame` for each frame. Keyboard and pointer actions share transitions and take effect immediately. New navigation, reversal, or resize interrupts active motion; reduced motion goes directly to the target. Idle UI has no animation timer, and slow output skips missed frames instead of catching up.
 
-Defaults are 160ms for pages, 180ms for dialogs and details, and 120ms for menus. The keyboard expands over 160ms. Progress graphics interpolate for 200ms without overshoot while numeric values update immediately. The one-cell spinner advances every 80ms, and a white highlight crosses its gray label every 1.2s. Reduced motion shows a static label.
-
-### OpenCode attribution
-
-The loading sweep adapts the timing and color calculations from OpenCode v2.2.6. The dialog backdrop and option styling follow the same release. [ShimmerText](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/tui/src/component/shimmer-text.tsx) · [TabPulse](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/tui/src/component/tab-pulse.tsx) · [Dialog](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/tui/src/ui/dialog.tsx) · [DialogSelect](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/tui/src/ui/dialog-select.tsx).
-
-```text
-MIT License
-
-Copyright (c) 2025 opencode
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
+Defaults are 160ms for pages, 180ms for dialogs and details, and 120ms for menus. The keyboard expands over 160ms. Progress graphics interpolate for 200ms without overshoot while numeric values update immediately; busy indicators occupy one character with an 80ms step.
 
 Advanced animation settings reuse `FormDialog` for nine numeric fields in three columns, Tab navigation, range checks, and small-window scrolling. Reset changes the draft; Save validates and commits all values together, while Cancel leaves configuration unchanged. Reset, Save, and Cancel remain visible.
 

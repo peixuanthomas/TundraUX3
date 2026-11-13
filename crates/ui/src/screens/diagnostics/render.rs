@@ -12,8 +12,8 @@ use super::model::{
     DiagnosticsStatus, DiagnosticsTab, DiagnosticsViewModel,
 };
 use crate::components::{
-    BusyIndicator, Button, ComponentTone, List, ListItem, PageAction, PageActionBar,
-    PageActionStatus, Scrollbar, Surface,
+    Button, ComponentTone, List, ListItem, PageAction, PageActionBar, PageActionStatus, Scrollbar,
+    Surface,
 };
 use crate::screens::clock::render_clock_line;
 use crate::screens::shell::fit_cell;
@@ -38,7 +38,6 @@ pub fn render_diagnostics_page_content(
     let theme = &context.compatibility_theme();
     let layout = diagnostics_layout(main, model);
     Surface::new()
-        .on_canvas()
         .titled(i18n::tr!("ui-diagnostics-system-status-diagnostics"))
         .bordered(false)
         .render_frame(frame, layout.panel, context);
@@ -71,27 +70,15 @@ pub(crate) fn render_diagnostics_header(
         .iter()
         .filter(|check| check.status == DiagnosticsStatus::Fail)
         .count();
-    let scanned_at = model
-        .scanned_at
-        .clone()
-        .unwrap_or_else(|| i18n::tr!("ui-diagnostics-not-yet-scanned"));
-    if model.scanning && !model.restart_required {
-        BusyIndicator::from_motion(context.motion).render_label(
-            frame,
-            area,
-            &i18n::tr!(
-                "ui-diagnostics-last-scan",
-                state = i18n::tr!("ui-diagnostics-scanning-health-checks"),
-                scanned_at = scanned_at
-            ),
-            context,
-        );
-        return;
-    }
     let (state, style) = if model.restart_required {
         (
             i18n::tr!("ui-diagnostics-restart-required"),
             diagnostics_warning_style(theme),
+        )
+    } else if model.scanning {
+        (
+            i18n::tr!("ui-diagnostics-scanning-health-checks"),
+            Style::default().fg(crate::components::tone_color(ComponentTone::Warning, theme)),
         )
     } else if failure_count > 0 {
         (
@@ -126,7 +113,13 @@ pub(crate) fn render_diagnostics_header(
             Style::default().fg(crate::components::tone_color(ComponentTone::Success, theme)),
         )
     };
-    let marker = if failure_count > 0 {
+    let scanned_at = model
+        .scanned_at
+        .clone()
+        .unwrap_or_else(|| i18n::tr!("ui-diagnostics-not-yet-scanned"));
+    let marker = if model.scanning {
+        crate::components::BusyIndicator::from_motion(context.motion).symbol()
+    } else if failure_count > 0 {
         DiagnosticsStatus::Fail.marker()
     } else if model.restart_required || warning_count > 0 {
         DiagnosticsStatus::Warning.marker()
@@ -174,13 +167,12 @@ pub(crate) fn render_diagnostics_content_titled(
     theme: &TundraTheme,
     context: &RenderContext,
     title: &str,
-    empty_content: Option<(Line<'static>, String)>,
+    empty_content: Option<(String, String)>,
 ) {
     Surface::new()
         .titled(title)
         .render_frame(frame, layout.list_panel, context);
     Surface::new()
-        .raised(true)
         .titled(i18n::tr!("ui-diagnostics-details"))
         .render_frame(frame, layout.detail_panel, context);
     crate::render_table_headers(
@@ -195,20 +187,20 @@ pub(crate) fn render_diagnostics_content_titled(
         if let Some((list_message, detail_message)) = empty_content {
             frame.render_widget(
                 Paragraph::new(list_message)
-                    .style(Style::default().fg(context.theme.muted))
+                    .style(theme.muted_style())
                     .wrap(Wrap { trim: true }),
                 layout.list_rows_area,
             );
             frame.render_widget(
                 Paragraph::new(detail_message)
-                    .style(Style::default().fg(context.theme.muted))
+                    .style(theme.muted_style())
                     .wrap(Wrap { trim: true }),
                 Surface::new().titled("").inner(layout.detail_panel),
             );
             return;
         }
     }
-    render_diagnostics_rows(frame, layout, model, context);
+    render_diagnostics_rows(frame, layout, model, theme, context);
     render_diagnostics_detail(frame, layout, model, theme);
 }
 
@@ -228,29 +220,29 @@ fn render_diagnostics_rows(
     frame: &mut Frame<'_>,
     layout: &DiagnosticsContentLayout,
     model: &DiagnosticsViewModel,
+    theme: &TundraTheme,
     context: &RenderContext,
 ) {
     if model.item_count() == 0 {
-        if model.scanning && model.tab == DiagnosticsTab::Health {
-            BusyIndicator::from_motion(context.motion).render_label(
-                frame,
-                layout.list_rows_area,
-                i18n::tr!("ui-diagnostics-scanning-padded").trim_start(),
-                context,
-            );
-            return;
-        }
-        let text = match model.tab {
-            DiagnosticsTab::Health => i18n::tr!("ui-diagnostics-no-checks-available-padded"),
-            DiagnosticsTab::Logs => {
-                if model.can_view_details {
-                    i18n::tr!("ui-diagnostics-no-logs-found-padded")
-                } else {
-                    i18n::tr!("ui-diagnostics-logs-are-restricted-to-administrators-padded")
+        let text = if model.scanning && model.tab == DiagnosticsTab::Health {
+            format!(
+                "{} {}",
+                crate::components::BusyIndicator::from_motion(context.motion).symbol(),
+                i18n::tr!("ui-diagnostics-scanning-padded")
+            )
+        } else {
+            match model.tab {
+                DiagnosticsTab::Health => i18n::tr!("ui-diagnostics-no-checks-available-padded"),
+                DiagnosticsTab::Logs => {
+                    if model.can_view_details {
+                        i18n::tr!("ui-diagnostics-no-logs-found-padded")
+                    } else {
+                        i18n::tr!("ui-diagnostics-logs-are-restricted-to-administrators-padded")
+                    }
                 }
-            }
-            DiagnosticsTab::Incidents => {
-                i18n::tr!("ui-diagnostics-no-incidents-recorded-padded")
+                DiagnosticsTab::Incidents => {
+                    i18n::tr!("ui-diagnostics-no-incidents-recorded-padded")
+                }
             }
         };
         render_clock_line(
@@ -262,7 +254,7 @@ fn render_diagnostics_rows(
                 u16::from(layout.list_rows_area.height > 0),
             ),
             text.to_string(),
-            Style::default().fg(context.theme.muted),
+            theme.muted_style(),
             HorizontalAlignment::Left,
         );
         return;
@@ -338,7 +330,7 @@ fn render_diagnostics_detail(
     );
     frame.render_widget(
         Paragraph::new(lines.into_iter().skip(offset).collect::<Vec<_>>())
-            .style(Style::default().fg(theme.foreground)),
+            .style(theme.body_style()),
         content,
     );
     let context = crate::RenderContext::from_theme(theme, Default::default(), Default::default());

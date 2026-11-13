@@ -106,8 +106,6 @@ pub struct Button {
     pub focus_fill: Option<ratatui::style::Color>,
     pub surface_border: bool,
     pub label_alignment: HorizontalAlignment,
-    background: Option<ratatui::style::Color>,
-    selection_fill: bool,
     capture_role: &'static str,
     sensitive: bool,
     capture_selected: Option<bool>,
@@ -139,8 +137,6 @@ impl Button {
             focus_fill: None,
             surface_border: true,
             label_alignment: HorizontalAlignment::Center,
-            background: None,
-            selection_fill: false,
             capture_role: "button",
             sensitive: false,
             capture_selected: None,
@@ -192,16 +188,6 @@ impl Button {
 
     pub fn with_focus_fill(mut self, fill: Option<ratatui::style::Color>) -> Self {
         self.focus_fill = fill;
-        self
-    }
-
-    pub(crate) fn with_background(mut self, background: ratatui::style::Color) -> Self {
-        self.background = Some(background);
-        self
-    }
-
-    pub(crate) fn with_selection_fill(mut self) -> Self {
-        self.selection_fill = true;
         self
     }
 
@@ -465,7 +451,6 @@ impl Button {
     fn surface_style_for_state(&self, state: ComponentState, theme: &TundraTheme) -> Style {
         let style = self.style_for_state(state, theme);
         if state.disabled
-            || (self.selection_fill && self.state.selected)
             || self.emphasis == ButtonEmphasis::Primary
             || (self.pressed_fill && state.active)
         {
@@ -478,7 +463,7 @@ impl Button {
             } else if self.current {
                 tokens.raised
             } else {
-                self.background.unwrap_or(tokens.surface)
+                tokens.surface
             },
         )
     }
@@ -564,18 +549,15 @@ impl Button {
 
     fn style_for_state(&self, state: ComponentState, theme: &TundraTheme) -> Style {
         if state.disabled {
-            let style = theme.disabled_style();
-            return self.background.map_or(style, |color| style.bg(color));
+            return theme.disabled_style();
         }
 
         let tokens = theme.tokens();
         let focused = state.focused || (state.selected && !self.current);
-        let mut style = theme.body_style().bg(self.background.unwrap_or_else(|| {
-            theme
-                .buttons
-                .as_ref()
-                .map_or(theme.background, |frame| frame.background)
-        }));
+        let mut style = theme.body_style().bg(theme
+            .buttons
+            .as_ref()
+            .map_or(theme.background, |frame| frame.background));
         if self.current {
             style = style.bg(tokens.raised).add_modifier(Modifier::BOLD);
         }
@@ -585,14 +567,7 @@ impl Button {
         {
             style = style.bg(fill);
         }
-        if self.selection_fill && self.state.selected {
-            let fill = match self.emphasis {
-                ButtonEmphasis::Danger => theme.error,
-                _ if state.active || state.hovered => theme.button_pressed_color(),
-                _ => theme.button_accent_color(),
-            };
-            style = tokens.filled_style(fill).add_modifier(Modifier::BOLD);
-        } else if self.emphasis == ButtonEmphasis::Primary {
+        if self.emphasis == ButtonEmphasis::Primary {
             style = tokens
                 .filled_style(if state.active || state.hovered {
                     theme.button_pressed_color()

@@ -14,7 +14,6 @@ TundraUX3 brings system tools, files, editors, and everyday utilities into one t
 - **Development tools:** run programs in an embedded terminal and debug Bash scripts with breakpoints, stepping, variables, and call stacks.
 - **System activity:** monitor resource usage, inspect logs and notifications, and track background tasks and their output.
 - **Personal workspace:** search Launcher by name or command, organize custom entries, choose themes and languages, and use the built-in clock and weather apps.
-- **Dark blue interface:** shaded panels, full-row selection, and dialogs that dim the page behind them.
 
 | Platform | Main support |
 | --- | --- |

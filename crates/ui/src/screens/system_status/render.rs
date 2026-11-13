@@ -96,7 +96,6 @@ pub fn render_system_status_content(
 ) {
     let l = system_status_layout(main, model);
     Surface::new()
-        .on_canvas()
         .titled(i18n::tr!("ui-system-status-system-status"))
         .bordered(false)
         .render_frame(frame, l.panel, context);
@@ -299,11 +298,12 @@ fn render_formatted_detail(
 ) {
     match &vm.state {
         SystemStatusWidgetState::Loading => {
-            EmptyState::loading(i18n::tr!("ui-system-status-loading")).render_frame(
-                frame,
-                layout.canvas,
-                context,
-            );
+            EmptyState::new(format!(
+                "{} {}",
+                crate::components::BusyIndicator::from_motion(context.motion).symbol(),
+                i18n::tr!("ui-system-status-loading")
+            ))
+            .render_frame(frame, layout.canvas, context);
             return;
         }
         SystemStatusWidgetState::Unavailable { message } => {
@@ -552,9 +552,11 @@ fn state_placeholder(
     context: &RenderContext,
 ) -> bool {
     let e = match state {
-        SystemStatusSectionState::Loading => {
-            Some(EmptyState::loading(i18n::tr!("ui-system-status-loading")))
-        }
+        SystemStatusSectionState::Loading => Some(EmptyState::new(format!(
+            "{} {}",
+            crate::components::BusyIndicator::from_motion(context.motion).symbol(),
+            i18n::tr!("ui-system-status-loading")
+        ))),
         SystemStatusSectionState::Unavailable { message } => {
             Some(EmptyState::new(i18n::tr!("ui-system-status-unavailable")).detail(message))
         }

@@ -12,7 +12,6 @@ use crate::RenderContext;
 pub struct EmptyState {
     pub title: String,
     pub detail: Option<String>,
-    busy: bool,
 }
 
 impl EmptyState {
@@ -20,16 +19,8 @@ impl EmptyState {
         Self {
             title: title.into(),
             detail: None,
-            busy: false,
         }
     }
-
-    pub(crate) fn loading(title: impl Into<String>) -> Self {
-        let mut state = Self::new(title);
-        state.busy = true;
-        state
-    }
-
     pub fn detail(mut self, detail: impl Into<String>) -> Self {
         self.detail = Some(detail.into());
         self
@@ -38,17 +29,12 @@ impl EmptyState {
     pub fn render(&self, area: Rect, buffer: &mut Buffer, context: &RenderContext) {
         crate::automation::control("", "status", &self.title, area, Default::default(), &[]);
         let tokens = context.theme;
-        let title = if self.busy {
-            super::BusyIndicator::from_motion(context.motion).label(&self.title, context)
-        } else {
-            Line::styled(
-                self.title.as_str(),
-                Style::default()
-                    .fg(tokens.text)
-                    .add_modifier(Modifier::BOLD),
-            )
-        };
-        let mut lines = vec![title];
+        let mut lines = vec![Line::styled(
+            self.title.as_str(),
+            Style::default()
+                .fg(tokens.text)
+                .add_modifier(Modifier::BOLD),
+        )];
         if let Some(detail) = &self.detail {
             lines.push(Line::styled(
                 detail.as_str(),

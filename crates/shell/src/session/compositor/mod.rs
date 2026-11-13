@@ -326,11 +326,6 @@ impl ScreenCompositor {
         buttons.keyboard_focus_visible = state.interaction.keyboard_focus_visible();
         frame_context.buttons = Some(buttons.clone());
         let context = &frame_context;
-        let covered_context = (!overlays.is_empty()).then(|| {
-            let mut context = context.clone();
-            context.motion.reduced_motion = true;
-            context
-        });
         let mut chrome = prepared.chrome.clone();
         chrome.terminal_size = (bounds.width, bounds.height);
         let layout =
@@ -344,9 +339,7 @@ impl ScreenCompositor {
         state.refresh_hit_map_with_frame_layout(context.transitions, layout);
         self.motion
             .update_layout(state, &layout, context.theme, context.motion.reduced_motion);
-        ui::components::Surface::new()
-            .on_canvas()
-            .render_frame(frame, bounds, context);
+        ui::components::Surface::new().render_frame(frame, bounds, context);
         let management = matches!(prepared.page, ScreenViewModel::Management(_))
             .then(|| state.to_management_view_model());
         let script = matches!(prepared.page, ScreenViewModel::Script(_))
@@ -408,7 +401,7 @@ impl ScreenCompositor {
                 _ => content.render_content(
                     frame,
                     &layout,
-                    covered_context.as_ref().unwrap_or(context),
+                    context,
                     icons.map(|v| v as &dyn ui::HomeIconRenderer),
                     icons.map(|v| v as &dyn ui::LauncherIconRenderer),
                 ),
@@ -417,17 +410,7 @@ impl ScreenCompositor {
             ui::render_compact_home(frame, layout.main, &chrome, &context.compatibility_theme());
         }
         if visible_content {
-            let mut page_dialogs = overlays.iter().filter(|overlay| {
-                overlay.category == super::overlays::ShellOverlayCategory::PageDialog
-            });
-            let page_dialog_open = page_dialogs.next().is_some();
-            if page_dialog_open {
-                ui::dim_backdrop(frame.buffer_mut(), layout.main, context);
-            }
             content.render_overlay_underlay(frame, &layout, context);
-            if page_dialogs.next().is_some() {
-                ui::dim_backdrop(frame.buffer_mut(), layout.main, context);
-            }
         }
         let capture_after_page_overlays =
             self.motion.needs_shell_modal_base() || self.motion.needs_page_overlay_base();
@@ -474,12 +457,6 @@ impl ScreenCompositor {
         state.displayed_status = Some(displayed_status.full_message());
         if capture_after_page_overlays {
             self.motion.capture_base(frame.buffer_mut(), state);
-        }
-        if prepared.notification.is_some()
-            || prepared.help.is_some()
-            || prepared.time_sync.is_some()
-        {
-            ui::dim_backdrop(frame.buffer_mut(), layout.main, context);
         }
         if let Some(capture) = &mut capture
             && (prepared.notification.is_some()
@@ -617,7 +594,7 @@ impl ScreenCompositor {
             (!context.motion.reduced_motion
                 && overlays.is_empty()
                 && content.busy_visible(layout.main))
-            .then_some(ui::BusyIndicator::LABEL_FRAME_INTERVAL),
+            .then_some(ui::BusyIndicator::FRAME_INTERVAL),
             self.toast
                 .as_ref()
                 .filter(|toast| toast.requests_redraw(context.motion))

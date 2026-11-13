@@ -25,7 +25,6 @@ pub fn render_user_management_content(
     let theme = &context.compatibility_theme();
     let layout = user_management_layout(main, model);
     Surface::new()
-        .on_canvas()
         .titled(i18n::tr!("ui-user-management-user-management"))
         .bordered(false)
         .render_frame(frame, layout.panel, context);
@@ -44,7 +43,6 @@ pub fn render_user_management_content(
     render_user_management_table(frame, &layout, model, context);
     if !layout.details.is_empty() {
         Surface::new()
-            .raised(true)
             .titled(i18n::tr!("management-touch-details"))
             .render_frame(frame, layout.details, context);
         let details = model
@@ -74,7 +72,7 @@ pub fn render_user_management_content(
         frame.render_widget(
             Paragraph::new(details)
                 .wrap(Wrap { trim: false })
-                .style(theme.raised_style()),
+                .style(theme.body_style()),
             Surface::new().titled("").inner(layout.details),
         );
     }
@@ -335,8 +333,7 @@ pub fn render_user_management_overlay(
                 format!("user-management.action.{:?}", action.action),
                 super::layout::user_management_action_label(&action),
             )
-            .with_background(context.theme.raised)
-            .with_selection_fill()
+            .with_focus_fill(Some(context.theme.accent_soft))
             .with_emphasis(if action.dangerous {
                 crate::components::ButtonEmphasis::Danger
             } else {

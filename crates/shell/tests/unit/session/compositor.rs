@@ -1307,60 +1307,6 @@ fn global_notification_is_the_only_shell_modal_visual() {
 }
 
 #[test]
-fn modal_dims_the_page_and_keeps_chrome_and_selected_action_readable() {
-    for color in [
-        ui::ColorCapability::TrueColor,
-        ui::ColorCapability::Indexed,
-        ui::ColorCapability::Ansi,
-    ] {
-        let mut state = session();
-        let mut compositor = ScreenCompositor::default();
-        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-        let mut prepared = home_frame(&state, 0, true);
-        prepared.context = ui::RenderContext::from_theme(
-            &ui::TundraTheme::default(),
-            prepared.context.motion,
-            ui::RenderCapabilities {
-                color,
-                ..Default::default()
-            },
-        );
-        let tokens = prepared.context.theme;
-        draw(&mut compositor, &mut terminal, &mut state, &prepared);
-        let home = terminal.backend().buffer().clone();
-        let model = ui::NotificationViewModel::new(
-            "test.modal",
-            ui::NotificationLevel::Modal,
-            ui::NotificationTone::Info,
-            "Confirm operation",
-            "Keep this dialog visible",
-            vec![ui::NotificationActionViewModel::new("cancel", "Cancel").selected(true)],
-        );
-        let ui::NotificationLayout::Dialog(dialog) = ui::notification_layout(home.area, &model)
-        else {
-            panic!("dialog fits the test terminal");
-        };
-        prepared.notification = Some(model);
-        draw(&mut compositor, &mut terminal, &mut state, &prepared);
-        let buffer = terminal.backend().buffer();
-        let point = (0, 1);
-        assert_eq!(buffer[point].symbol(), home[point].symbol());
-        assert_ne!(buffer[point].bg, home[point].bg);
-        assert_eq!(buffer[(0, 0)], home[(0, 0)]);
-        assert_eq!(buffer[(0, 39)], home[(0, 39)]);
-        assert_eq!(
-            buffer[(dialog.message.x, dialog.message.y)].bg,
-            tokens.raised
-        );
-        let action = dialog.actions[0].area;
-        assert_eq!(buffer[(action.x, action.y)].bg, tokens.accent);
-        prepared.notification = None;
-        draw(&mut compositor, &mut terminal, &mut state, &prepared);
-        assert_eq!(terminal.backend().buffer()[point], home[point]);
-    }
-}
-
-#[test]
 fn exit_dialog_round_trip_with_keyboard_mouse_or_touch_alone() {
     use crossterm::event::{
         Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -2124,7 +2070,7 @@ fn visible_busy_state_requests_only_its_shared_interval_and_reduced_motion_is_st
         );
         assert_eq!(
             compositor.next_redraw_in(),
-            (!reduced).then_some(ui::BusyIndicator::LABEL_FRAME_INTERVAL)
+            (!reduced).then_some(ui::BusyIndicator::FRAME_INTERVAL)
         );
         if let ScreenViewModel::Diagnostics(model) = &mut frame.page {
             model.scanning = false;

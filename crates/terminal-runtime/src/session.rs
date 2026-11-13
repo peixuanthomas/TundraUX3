@@ -28,8 +28,6 @@ pub fn text_render_capabilities() -> ui::RenderCapabilities {
     ui::RenderCapabilities {
         color: if true_color {
             ui::ColorCapability::TrueColor
-        } else if std::env::var("TERM").is_ok_and(|term| term.ends_with("-256color")) {
-            ui::ColorCapability::Indexed
         } else {
             ui::ColorCapability::Ansi
         },

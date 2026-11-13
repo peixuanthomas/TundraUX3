@@ -176,7 +176,7 @@ impl DataTable {
             .style(
                 Style::default()
                     .fg(tokens.text)
-                    .bg(tokens.raised)
+                    .bg(tokens.surface)
                     .add_modifier(Modifier::BOLD),
             )
             .render(Rect::new(inner.x, inner.y, inner.width, 1), buffer);
@@ -224,11 +224,6 @@ impl DataTable {
             );
             self.capture_cells("cell", "cell", row, row_area);
             let mut style = interactive_style(state, &theme);
-            style = style.bg(if !selected || state.disabled {
-                tokens.row_background(index)
-            } else {
-                tokens.accent_soft
-            });
             let tone = self.row_tones.get(index).copied().unwrap_or_default();
             if !state.disabled && (tone != ComponentTone::Default || (!selected && !state.focused))
             {
@@ -237,7 +232,18 @@ impl DataTable {
             Paragraph::new(join_row(row, inner.width, self.column_widths.as_deref()))
                 .alignment(HorizontalAlignment::Left)
                 .style(style)
-                .render(row_area, buffer);
+                .render(
+                    Rect::new(
+                        inner.x,
+                        inner
+                            .y
+                            .saturating_add(header_height)
+                            .saturating_add((index - self.viewport_start) as u16),
+                        inner.width,
+                        1,
+                    ),
+                    buffer,
+                );
         }
     }
 

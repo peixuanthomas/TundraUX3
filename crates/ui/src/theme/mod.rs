@@ -1,4 +1,4 @@
-//! Terminal visual tokens and the compatibility theme used by existing
+//! Neutral terminal visual tokens and the compatibility theme used by existing
 //! screens. New components consume [`ThemeTokens`]; the small `TundraTheme`
 //! facade keeps older view models source-compatible while they are migrated.
 
@@ -22,7 +22,6 @@ impl SpringStyle {
 pub enum ColorCapability {
     #[default]
     TrueColor,
-    Indexed,
     Ansi,
 }
 
@@ -52,7 +51,7 @@ impl TerminalColors {
         }
     }
 
-    pub(crate) fn resolve(self, color: Color, foreground: bool) -> Color {
+    fn resolve(self, color: Color, foreground: bool) -> Color {
         let index = match color {
             Color::Reset => {
                 return (if foreground {
@@ -105,7 +104,6 @@ pub struct ThemeTokens {
     pub canvas: Color,
     pub editor_canvas: Color,
     pub surface: Color,
-    pub alternate_row: Color,
     pub raised: Color,
     pub border: Color,
     pub text: Color,
@@ -131,30 +129,29 @@ impl ThemeTokens {
             .bg(background)
     }
 
-    /// Tundra's dark blue base palette.
+    /// The neutral base palette. The established name remains source-compatible.
     pub const fn glacier_night() -> Self {
         Self {
             border_shape: BorderShape::Rounded,
-            canvas: Color::Rgb(0x07, 0x11, 0x16),
+            canvas: Color::Rgb(0x10, 0x10, 0x10),
             editor_canvas: Color::Black,
-            surface: Color::Rgb(0x0D, 0x1B, 0x22),
-            alternate_row: Color::Rgb(0x16, 0x28, 0x32),
-            raised: Color::Rgb(0x19, 0x2C, 0x36),
+            surface: Color::Rgb(0x18, 0x18, 0x18),
+            raised: Color::Rgb(0x24, 0x24, 0x24),
             border: Color::Rgb(0x38, 0x38, 0x38),
-            text: Color::Rgb(0xE6, 0xF1, 0xF4),
-            muted: Color::Rgb(0x8E, 0xA7, 0xB0),
+            text: Color::Rgb(0xE6, 0xE6, 0xE6),
+            muted: Color::Rgb(0x99, 0x99, 0x99),
             accent: Color::Rgb(0x63, 0xD3, 0xE5),
-            accent_soft: Color::Rgb(0x26, 0x52, 0x5C),
+            accent_soft: Color::Rgb(0x2F, 0x50, 0x56),
             accent_strong: Color::Rgb(0x76, 0xE1, 0xF1),
             focus: Color::Rgb(0xA4, 0xF1, 0xFA),
             success: Color::Rgb(0x79, 0xD6, 0x9B),
             warning: Color::Rgb(0xEB, 0xCB, 0x78),
             danger: Color::Rgb(0xF2, 0x7D, 0x89),
-            shadow: Color::Rgb(0x02, 0x06, 0x08),
+            shadow: Color::Rgb(0x08, 0x08, 0x08),
         }
     }
 
-    /// Applies a user accent while deriving its dependent roles. The blue
+    /// Applies a user accent while deriving its dependent roles. The neutral
     /// surface colours remain fixed, so a preference cannot turn ordinary
     /// cards into large accent-coloured fields.
     pub fn with_accent(mut self, accent: Color) -> Self {
@@ -165,48 +162,22 @@ impl ThemeTokens {
         self
     }
 
-    pub fn row_background(&self, index: usize) -> Color {
-        if index.is_multiple_of(2) {
-            self.surface
-        } else {
-            self.alternate_row
-        }
-    }
-
-    /// Keep background levels distinct where the terminal has enough colors.
+    /// Uses the explicitly limited ANSI palette when true colour is not
+    /// available. The mapping intentionally stays stable across terminals:
+    /// black surfaces, white/gray text, the user's named ANSI accent with a
+    /// brighter focus, green success, yellow warning, and light-red danger.
     pub fn for_capability(self, capability: ColorCapability) -> Self {
         if capability == ColorCapability::TrueColor {
             return self;
         }
 
         let accent = ansi_accent(self.accent);
-        let (canvas, surface, alternate_row, raised, shadow) = match capability {
-            ColorCapability::Indexed => (
-                Color::Indexed(17),
-                Color::Indexed(234),
-                Color::Indexed(235),
-                Color::Indexed(237),
-                Color::Indexed(232),
-            ),
-            _ => (
-                Color::Blue,
-                Color::Black,
-                Color::Black,
-                Color::Blue,
-                Color::Black,
-            ),
-        };
         Self {
             border_shape: self.border_shape,
-            canvas: if matches!(self.canvas, Color::Rgb(..)) {
-                canvas
-            } else {
-                self.canvas
-            },
+            canvas: Color::Black,
             editor_canvas: Color::Black,
-            surface,
-            alternate_row,
-            raised,
+            surface: Color::Black,
+            raised: Color::Black,
             border: match self.border {
                 Color::Rgb(..) | Color::Indexed(_) => Color::DarkGray,
                 color => color,
@@ -214,17 +185,13 @@ impl ThemeTokens {
             text: Color::White,
             muted: Color::Gray,
             accent,
-            accent_soft: if capability == ColorCapability::Indexed {
-                Color::Indexed(24)
-            } else {
-                Color::Blue
-            },
+            accent_soft: Color::DarkGray,
             accent_strong: accent,
             focus: lighten(accent, 42),
             success: Color::Green,
             warning: Color::Yellow,
             danger: Color::LightRed,
-            shadow,
+            shadow: Color::Black,
         }
     }
 }
@@ -924,7 +891,7 @@ impl TundraTheme {
     pub fn button_pressed_color(&self) -> Color {
         self.buttons.as_ref().map_or_else(
             || {
-                if self.color_capability != ColorCapability::TrueColor {
+                if self.color_capability == ColorCapability::Ansi {
                     return match lighten(self.accent_color, 35) {
                         Color::Black => Color::DarkGray,
                         Color::DarkGray => Color::Gray,
@@ -979,7 +946,7 @@ impl TundraTheme {
             return preferred;
         }
         let target = contrast_text(self.background).unwrap();
-        if self.color_capability != ColorCapability::TrueColor {
+        if self.color_capability == ColorCapability::Ansi {
             return target;
         }
         let (r, g, b) = color_rgb(preferred).unwrap();

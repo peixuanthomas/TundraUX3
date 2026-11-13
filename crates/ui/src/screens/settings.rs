@@ -10,7 +10,6 @@ pub use slider::SettingsSliderLayout;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, HorizontalAlignment, Layout, Rect};
-use ratatui::style::Color;
 use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use crate::components::{
@@ -873,9 +872,7 @@ pub fn render_settings_content(
     context: &RenderContext,
 ) {
     let theme = &context.compatibility_theme();
-    Surface::new()
-        .on_canvas()
-        .render_frame(frame, layout.main, context);
+    Surface::new().render_frame(frame, layout.main, context);
 
     let buttons = SettingsCategory::ALL
         .into_iter()
@@ -903,7 +900,6 @@ pub fn render_settings_content(
     }
     let mut button = Button::new("settings.operating-system", system_label)
         .with_centered_label(true)
-        .with_background(context.theme.surface)
         .with_bracketed_label(false);
     button.set_focused(model.focus == SettingsFocus::OperatingSystem);
     button.render_borderless_frame(frame, layout.operating_system, theme);
@@ -1141,7 +1137,6 @@ fn render_cards(
                 continue;
             }
             let row = Rect::new(visible_rows.x, row_y as u16, visible_rows.width, 1);
-            let background = frame.buffer_mut()[(row.x, row.y)].bg;
             render_settings_control(
                 frame,
                 Rect::new(
@@ -1152,7 +1147,6 @@ fn render_cards(
                 ),
                 item,
                 model.focus == SettingsFocus::Content && item.field == model.selected_field,
-                background,
                 theme,
             );
         }
@@ -1286,7 +1280,7 @@ fn render_update_confirmation(
         .render_frame(frame, dialog, context);
     frame.render_widget(
         Paragraph::new(confirmation.body.clone())
-            .style(theme.raised_style().fg(theme.muted))
+            .style(theme.body_style())
             .alignment(HorizontalAlignment::Center)
             .wrap(Wrap { trim: true }),
         Rect::new(
@@ -1300,8 +1294,7 @@ fn render_update_confirmation(
         let mut button = Button::new("settings.update.confirm", &confirmation.confirm_label)
             .with_bracketed_label(false)
             .with_centered_label(true)
-            .with_background(context.theme.raised)
-            .with_selection_fill();
+            .with_emphasis(crate::components::ButtonEmphasis::Primary);
         button.state.selected = confirmation.confirm_selected;
         button.render_borderless_frame(frame, area, theme);
     }
@@ -1311,9 +1304,7 @@ fn render_update_confirmation(
             i18n::tr!("ui-settings-touch-cancel"),
         )
         .with_bracketed_label(false)
-        .with_centered_label(true)
-        .with_background(context.theme.raised)
-        .with_selection_fill();
+        .with_centered_label(true);
         button.state.selected = !confirmation.confirm_selected;
         button.render_borderless_frame(frame, area, theme);
     }
@@ -1399,20 +1390,24 @@ fn render_picker(
         .iter()
         .enumerate()
         .map(|(index, option)| {
-            let mut item = ComponentListItem::new(
+            let detail = if option.detail.is_empty() {
+                String::new()
+            } else {
+                format!("  {}", option.detail)
+            };
+            ComponentListItem::new(
                 format!("settings.picker.{index}"),
-                truncate(&option.label, usize::from(list.width.saturating_sub(2))),
+                truncate(
+                    &format!("{}{detail}", option.label),
+                    usize::from(list.width.saturating_sub(2)),
+                ),
             )
             .disabled(!option.enabled)
             .tone(if option.enabled {
                 ComponentTone::Default
             } else {
                 ComponentTone::Muted
-            });
-            if !option.detail.is_empty() {
-                item = item.with_description(&option.detail);
-            }
-            item
+            })
         })
         .collect::<Vec<_>>();
     let mut component_list =
@@ -1456,7 +1451,6 @@ fn render_settings_control(
     area: Rect,
     item: &SettingsItemViewModel,
     selected: bool,
-    background: Color,
     theme: &TundraTheme,
 ) {
     if area.width == 0
@@ -1479,7 +1473,7 @@ fn render_settings_control(
         frame.render_widget(
             Paragraph::new(item.value.clone())
                 .alignment(HorizontalAlignment::Right)
-                .style(style.bg(background)),
+                .style(style),
             area,
         );
         return;
@@ -1489,7 +1483,6 @@ fn render_settings_control(
         item.value.clone(),
     )
     .with_bracketed_label(false)
-    .with_background(background)
     .with_capture_name(&item.label);
     if item.kind == SettingsControlKind::Toggle {
         button = button

@@ -4,22 +4,20 @@ This is the shared design and acceptance contract for the complete interface: st
 
 ## Visual language and density
 
-The default appearance uses dark blue backgrounds and one accent. Theme overrides and explicit saved appearance choices remain supported.
+The default dark appearance uses neutral surfaces and one accent. Theme overrides and explicit saved appearance choices remain supported.
 
 | Token | Default | Use |
 | --- | --- | --- |
-| Canvas | `#071116` | Full-frame background |
-| Surface | `#0D1B22` | Navigation, lists, and content groups |
-| Alternate row | `#162832` | Every other list or table row |
-| Raised surface | `#192C36` | Detail panes, table headers, and dialogs |
-| Text | `#E6F1F4` | Normal readable content |
-| Muted text | `#8EA7B0` | Secondary information |
+| Canvas | `#101010` | Full-frame background |
+| Surface | `#181818` | Grouped or selected content |
+| Raised surface | `#242424` | Raised controls and overlays |
+| Text | `#E6E6E6` | Normal readable content |
+| Muted text | `#999999` | Secondary information |
 | Accent | `#63D3E5` | Focus and primary actions |
 | Border | `#383838` | Inputs and necessary overlay boundaries |
 
 - Separate ordinary pages, groups, lists, tables, and action areas with headings, whitespace, alignment, or a change of background. Do not draw complete boxes around them or nest decorative frames.
 - A modal, menu, or input may use one boundary. Temporary messages use the shared surface and the corresponding success, warning, or danger color.
-- Use a shaded backdrop and a raised panel for modal dialogs. Keep the title, message, and actions visually separate. In option lists, fill the active row across its full width and mute secondary text on the other rows.
 - Ordinary buttons use plain action text without `[]`. Primary actions use an accent fill; destructive actions use the danger color. Selection and the current item use background emphasis independently of keyboard focus.
 - Navigation entries and table rows each occupy one terminal row. Use one row between groups, two columns between adjacent groups, and one cell between grid items. Keep a complete row clickable, including its padding, for mouse and touch.
 - The title bar and status bar each occupy one row. A 108 × 20 terminal therefore retains 18 content rows. Tasks, Help, Back, and the clock remain available; use compact labels when needed. The keyboard entry sits in the status row immediately before the clock.
@@ -75,14 +73,14 @@ Use restrained transitions to explain state changes without delaying operation. 
 | Details | 180ms | Clipped expansion or collapse |
 | On-screen keyboard | 160ms | Clipped expansion or collapse from the bottom |
 | Progress graphic | 200ms | Interpolation toward the real value, without overshoot |
-| Busy indicator | 80ms per step | One terminal character, with a 1.2s white highlight sweep across the gray loading label |
+| Busy indicator | 80ms per step | One terminal character |
 
 - Page, dialog, and menu bodies are readable on the first frame. Do not show an empty moving outline or wait for the transition to reveal text. Opening and closing keep the intended final layout and blend only the presentation.
 - Details expand rightward in wide windows and vertically in narrow windows. The list, details, and keyboard use the same current geometry for painting, clipping, PTY sizing, automation, and hit testing. Do not insert blank intermediate frames.
 - The real progress value and its numeric label update immediately. Only the graphic interpolates; changing targets or reversing direction starts from its current displayed value and never overshoots.
 - New navigation, reverse actions, repeated switching, input-method changes, and resize interrupt or retarget the active transition. Do not queue animations or require an extra key or click to finish one.
 - Reduced motion renders the terminal state directly, including details, keyboard, progress, and busy feedback. No hidden animation continues afterward.
-- Active UI transitions schedule frames at 60 FPS. Loading labels request a frame every 40ms while visible. Idle UI has no animation timer. Weather and continuous rainbow effects retain their separate 30 FPS policy. Cursor blink, clocks, and real data refresh retain their own deadlines.
+- Active UI transitions schedule frames at 60 FPS. Idle UI has no animation timer. Weather and continuous rainbow effects retain their separate 30 FPS policy. Cursor blink, clocks, and real data refresh retain their own deadlines.
 - Slow output advances by elapsed time and skips missed frames. Never replay accumulated animation frames after the terminal stalls.
 - Motion curves, durations, clipping, spacing, and pane geometry belong in `crates/ui`; Shell owns input routing, navigation, dialog stacking, and transition lifecycle.
 

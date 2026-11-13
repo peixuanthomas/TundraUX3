@@ -28,7 +28,6 @@ pub fn render_explorer_content(
     let context = &content_context;
     let theme = &context.compatibility_theme();
     Surface::new()
-        .on_canvas()
         .titled(i18n::tr!(if model.save_picker.is_some() {
             "ui-explorer-save-title"
         } else {
@@ -195,9 +194,6 @@ fn render_explorer_sidebar(
     context: &crate::RenderContext,
     theme: &TundraTheme,
 ) {
-    if let Some(area) = layout.sidebar {
-        Surface::new().render_frame(frame, area, context);
-    }
     if let Some(track) = layout.quick_location_scrollbar {
         Scrollbar::new(
             model.quick_locations.len(),
@@ -210,7 +206,7 @@ fn render_explorer_sidebar(
         frame.render_widget(
             Paragraph::new(i18n::tr!("ui-explorer-quick-access"))
                 .alignment(HorizontalAlignment::Left)
-                .style(theme.title_style().bg(context.theme.surface)),
+                .style(theme.title_style()),
             header,
         );
     }
@@ -230,7 +226,6 @@ fn render_explorer_sidebar(
             fit_cell(&label, usize::from(location_layout.area.width)),
         )
         .with_bracketed_label(false)
-        .with_background(context.theme.row_background(location_layout.index))
         .with_current(location.current);
         button.set_disabled(!location.enabled);
         button.state.selected = location.drop_target;

@@ -30,17 +30,16 @@ fn text(buffer: &Buffer, area: Rect) -> String {
 }
 
 #[test]
-fn dark_blue_palette_keeps_user_accent_and_border_preferences() {
+fn neutral_palette_keeps_user_accent_and_border_preferences() {
     let theme = TundraTheme::default()
         .with_accent_color(Color::Magenta)
         .with_border_color(Color::Blue);
     let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
-    assert_eq!(context.theme.canvas, Color::Rgb(7, 17, 22));
-    assert_eq!(context.theme.surface, Color::Rgb(13, 27, 34));
-    assert_eq!(context.theme.alternate_row, Color::Rgb(22, 40, 50));
-    assert_eq!(context.theme.raised, Color::Rgb(25, 44, 54));
-    assert_eq!(context.theme.text, Color::Rgb(230, 241, 244));
-    assert_eq!(context.theme.muted, Color::Rgb(142, 167, 176));
+    assert_eq!(context.theme.canvas, Color::Rgb(16, 16, 16));
+    assert_eq!(context.theme.surface, Color::Rgb(24, 24, 24));
+    assert_eq!(context.theme.raised, Color::Rgb(36, 36, 36));
+    assert_eq!(context.theme.text, Color::Rgb(230, 230, 230));
+    assert_eq!(context.theme.muted, Color::Rgb(153, 153, 153));
     assert_eq!(context.theme.accent, Color::Magenta);
     assert_eq!(context.theme.border, Color::Blue);
     assert_eq!(theme.title_style().fg, Some(theme.foreground));
@@ -469,7 +468,7 @@ fn selected_status_rows_keep_semantic_colors_while_focus_and_input_mode_change()
             {
                 let cell = &buffer[(0, index as u16)];
                 assert_eq!(cell.fg, color);
-                assert_eq!(cell.bg, context.theme.accent_soft);
+                assert_eq!(cell.bg, context.theme.raised);
                 assert_eq!(
                     cell.modifier.contains(Modifier::UNDERLINED),
                     keyboard && current == index

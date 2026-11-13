@@ -276,13 +276,12 @@ pub(super) fn render_entry_overlay(
         frame.render_widget(Clear, layout.area);
         Surface::new()
             .bordered(true)
-            .raised(true)
             .titled(editor.action.label())
             .render_frame(frame, layout.area, context);
         let message = editor.form().message;
         frame.render_widget(
             Paragraph::new(message)
-                .style(theme.raised_style().fg(theme.muted))
+                .style(theme.body_style())
                 .wrap(Wrap { trim: false }),
             Rect::new(
                 layout.area.x + 1,
@@ -304,15 +303,13 @@ pub(super) fn render_entry_overlay(
             "launcher.edit.save",
             format!("F10 {}", i18n::tr!("shell-save")),
         )
-        .with_background(context.theme.raised)
         .with_emphasis(ButtonEmphasis::Primary);
         save.set_focused(editor.selected == editor.inputs.len());
         save.render_borderless_frame(frame, layout.submit, &theme);
         let mut cancel = Button::new(
             "launcher.edit.cancel",
             format!("Esc {}", i18n::tr!("shell-cancel")),
-        )
-        .with_background(context.theme.raised);
+        );
         cancel.set_focused(editor.selected == editor.inputs.len() + 1);
         cancel.render_borderless_frame(frame, layout.cancel, &theme);
         return true;
@@ -325,13 +322,8 @@ pub(super) fn render_entry_overlay(
             .raised(true)
             .render_frame(frame, area, context);
         for (index, (action, row)) in menu.actions().zip(rows).enumerate() {
-            let mut button = menu
-                .button(index, action)
-                .with_background(context.theme.raised)
-                .with_selection_fill()
-                .with_label_alignment(ratatui::layout::HorizontalAlignment::Left);
-            button.state.selected = menu.selected == index;
-            button.render_borderless_frame(frame, row, &theme);
+            menu.button(index, action)
+                .render_borderless_frame(frame, row, &theme);
         }
         return true;
     }

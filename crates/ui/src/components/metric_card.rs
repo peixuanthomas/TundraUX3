@@ -4,7 +4,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Bar, BarChart, BarGroup, Paragraph, Sparkline};
 
-use super::{ComponentState, EmptyState, ProgressGauge, Surface, tone_color};
+use super::{BusyIndicator, ComponentState, EmptyState, ProgressGauge, Surface, tone_color};
 use crate::{
     RenderContext, SystemStatusWidgetSize, SystemStatusWidgetState, SystemStatusWidgetViewModel,
 };
@@ -60,8 +60,12 @@ impl<'a> MetricCard<'a> {
         let theme = &theme;
         match &self.model.state {
             SystemStatusWidgetState::Loading => {
-                EmptyState::loading(i18n::tr!("ui-components-loading"))
-                    .render_frame(frame, inner, context);
+                EmptyState::new(format!(
+                    "{} {}",
+                    BusyIndicator::from_motion(context.motion).symbol(),
+                    i18n::tr!("ui-components-loading"),
+                ))
+                .render_frame(frame, inner, context);
                 return;
             }
             SystemStatusWidgetState::Unavailable { message } => {

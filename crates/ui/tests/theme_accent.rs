@@ -5,7 +5,7 @@ use ui::components::{
     Button, ButtonEmphasis, ButtonFrame, ButtonRegion, List, ListItem, NavRail, NavRailItem,
     Surface,
 };
-use ui::{ColorCapability, MotionFrame, RenderCapabilities, RenderContext, TundraTheme};
+use ui::{MotionFrame, RenderCapabilities, RenderContext, TundraTheme};
 
 const ANSI_ACCENTS: [(Color, Color); 16] = [
     (Color::Black, Color::Black),
@@ -77,14 +77,7 @@ fn reported_palette_drives_accents_pressed_color_and_default_colors() {
 
 #[test]
 fn named_accents_survive_terminal_capability_and_legacy_theme_resolution() {
-    for capabilities in [
-        RenderCapabilities::ansi(),
-        RenderCapabilities {
-            color: ColorCapability::Indexed,
-            ..Default::default()
-        },
-        RenderCapabilities::default(),
-    ] {
+    for capabilities in [RenderCapabilities::ansi(), RenderCapabilities::default()] {
         for (accent, focus) in ANSI_ACCENTS {
             let theme = TundraTheme::default().with_accent_color(accent);
             let context = RenderContext::from_theme(&theme, MotionFrame::default(), capabilities);
@@ -106,30 +99,20 @@ fn compatibility_tokens_retain_resolved_surfaces_and_semantic_colors() {
     let theme = TundraTheme::default()
         .with_accent_color(Color::Magenta)
         .with_border_color(Color::Blue);
-    for capabilities in [
-        RenderCapabilities::ansi(),
-        RenderCapabilities {
-            color: ColorCapability::Indexed,
-            ..Default::default()
-        },
-        RenderCapabilities::default(),
-    ] {
+    for capabilities in [RenderCapabilities::ansi(), RenderCapabilities::default()] {
         let context = RenderContext::from_theme(&theme, MotionFrame::default(), capabilities);
         let tokens = context.compatibility_theme().tokens();
         assert_eq!(tokens, context.theme);
         assert_eq!(tokens.accent, Color::Magenta);
         assert_eq!(tokens.border, Color::Blue);
-        if capabilities.color == ColorCapability::Indexed {
-            assert_eq!(tokens.canvas, Color::Indexed(17));
-        }
-        if capabilities.color != ColorCapability::TrueColor {
-            assert_ne!(tokens.surface, tokens.canvas);
-            assert_ne!(tokens.raised, tokens.surface);
+        if capabilities == RenderCapabilities::ansi() {
+            assert_eq!(tokens.surface, Color::Black);
+            assert_eq!(tokens.raised, Color::Black);
             assert_eq!(tokens.success, Color::Green);
             assert_eq!(tokens.danger, Color::LightRed);
         } else {
-            assert_eq!(tokens.surface, Color::Rgb(13, 27, 34));
-            assert_eq!(tokens.raised, Color::Rgb(25, 44, 54));
+            assert_eq!(tokens.surface, Color::Rgb(24, 24, 24));
+            assert_eq!(tokens.raised, Color::Rgb(36, 36, 36));
             assert_eq!(tokens.success, Color::Rgb(121, 214, 155));
             assert_eq!(tokens.danger, Color::Rgb(242, 125, 137));
         }
@@ -243,11 +226,7 @@ fn ansi_components_keep_titles_neutral_and_use_user_accent_for_focus() {
         assert_eq!(buffer[(1, 0)].symbol(), "S");
         assert_eq!(buffer[(1, 0)].fg, context.theme.text);
         assert_eq!(buffer[(1, 1)].symbol(), ">");
-        assert_eq!(buffer[(1, 1)].bg, accent);
-        assert_eq!(
-            Some(buffer[(1, 1)].fg),
-            context.theme.filled_style(accent).fg
-        );
+        assert_eq!(buffer[(1, 1)].fg, accent);
 
         let mut rail = NavRail::new("nav", vec![NavRailItem::new("settings", "Settings")]);
         for focused in [false, true] {

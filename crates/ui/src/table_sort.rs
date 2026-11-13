@@ -80,7 +80,6 @@ pub fn render_table_headers(
                 table_header_text(&label, area.width),
             )
             .with_bracketed_label(false)
-            .with_background(context.theme.raised)
             .render_borderless_frame(frame, *area, &theme);
         }
     }
