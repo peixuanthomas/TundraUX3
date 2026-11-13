@@ -35,11 +35,11 @@ ui-settings-leave-empty-to-always-use-the-system-default-enter-save-esc-cancel =
 ui-settings-explorer-files-opened-in-editor-padded = { " " }Explorer files opened in Editor{ " " }
 ui-settings-synchronizing-with-this-server = Synchronizing with this server…
 ui-settings-enter-an-http-s-endpoint-that-returns-a-valid-date-response-header = Enter an HTTP(S) endpoint that returns a valid Date response header.
-ui-settings-the-address-is-saved-only-after-a-successful-synchronization-test = The address is saved only after a successful synchronization test.
+ui-settings-the-address-is-saved-only-after-a-successful-synchronization-test = The address is saved after a successful synchronization test.
 ui-settings-enter-test-and-save-esc-cancel = Enter: test and save    Esc: cancel
 ui-settings-time-synchronization-server-padded = { " " }Time synchronization server{ " " }
 ui-settings-system-time-server-help = Enter a server name or IP address. Separate added or fallback servers with spaces; leave empty to remove an entry.
-ui-settings-system-time-server-save-help = Changes are reviewed and authorized before updating the Linux configuration.
+ui-settings-system-time-server-save-help = You can review changes and authorize them before saving.
 ui-settings-enter-save-esc-cancel = Enter: save    Esc: cancel
 
 ui-settings-locked-value = { $value } locked

@@ -11,5 +11,5 @@ preview-back = 返回预览
 preview-glacier = 原生控件与 tachyonfx 扫入效果。
 preview-tea = 模型 → 消息 → 更新 → 视图。
 preview-spring = 弹簧保留位置、速度和目标状态。
-preview-unsaved = Rust / Ratatui 预览，不保存偏好设置。
-preview-user-text = 您输入的文本：{ $text }
+preview-unsaved = 样式预览，不保存设置。
+preview-user-text = 你输入的文本：{ $text }

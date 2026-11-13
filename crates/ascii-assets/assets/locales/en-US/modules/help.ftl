@@ -40,8 +40,8 @@ ui-help-logs-back = Back
 
 ui-help-settings-title = Settings
 ui-help-settings-open = Open or change value
-ui-help-settings-adjust = Up/Down selects categories when navigation is focused, or content items; Left/Right moves between the application list and settings
-ui-help-settings-section = Move through categories, Operating System and the current page controls
+ui-help-settings-adjust = Up/Down switches categories or settings; Left/Right moves between the application list and settings
+ui-help-settings-section = Move through categories, the Operating System entry, and current page controls
 ui-help-settings-number = In a number dialog: adjust, type, then confirm
 
 ui-help-users-title = User Management
@@ -58,20 +58,20 @@ ui-help-management-focus = Switch area
 ui-help-management-details = Show details
 ui-help-management-pages = Switch page
 ui-help-packages-title = Package manager
-ui-help-selection-range = Select the range from the selection anchor to this item
-ui-help-selection-toggle = Select or deselect this item, keeping other selections
-ui-help-packages-apply = Install, remove or upgrade all selected packages when every item supports the action
-ui-help-selection-move = Move the current row, keeping multiple selections; a plain click selects one item
+ui-help-selection-range = Select from the last selection to this item
+ui-help-selection-toggle = Select or deselect this item and keep other selections
+ui-help-packages-apply = Install, remove or upgrade all selected packages. The action is available only when every package supports it.
+ui-help-selection-move = Move the current row and keep multiple selections; a plain click selects one item
 ui-help-selection-actions = Enter the action area or activate the selected button
-ui-help-selection-lifecycle = Sorting and refresh keep existing selections; changing lists or filters clears them. A batch may complete partially. After a failure, refresh to check the result; completed changes remain.
+ui-help-selection-lifecycle = Sorting or refreshing keeps existing selections; changing lists or filters clears them. A batch may complete partially. Refresh after a failure to check the result.
 ui-help-services-batch-state = Start, stop or restart all selected services
 ui-help-services-batch-startup = Enable or disable startup for all selected services
 ui-help-services-batch-more = More actions also offers batch configuration reload. View logs and edit configuration with one service selected.
 ui-help-processes-batch-state = Pause or continue all selected processes
 ui-help-processes-batch-stop = Terminate or force termination of all selected processes
 ui-help-processes-batch-priority = Set the same main-thread priority for every selected process; lower values mean higher priority
-ui-help-scheduled-batch-actions = Use the action buttons to pause, resume or run all selected tasks. Only actions supported by every selected task are available.
-ui-help-packages-pages = Switch Installed, Updates and Search, clearing multiple selections
+ui-help-scheduled-batch-actions = Use the action buttons to pause, resume or run all selected tasks. The action is available only when every task supports it.
+ui-help-packages-pages = Switch between Installed, Updates and Search, and clear multiple selections
 
 ui-help-system-status-title = System Status
 ui-help-system-status-edit = Edit dashboard
@@ -128,7 +128,7 @@ ui-help-editor-settings = Adjust editor settings
 
 ui-help-logs-level = Filter by minimum level; All by default, Critical is highest
 ui-help-logs-folder = Open the UX logs root in Explorer
-ui-help-logs-source = Switch UX / Linux logs; Tab does not switch log views
+ui-help-logs-source = Switch between UX and Linux logs
 ui-help-home-edit = Edit Home / finish editing
 ui-help-home-reorder = Move selected icon in edit mode
 ui-help-home-edit-cancel = Cancel drag / finish editing

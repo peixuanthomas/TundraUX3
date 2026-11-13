@@ -18,7 +18,7 @@ ui-style-preview-progress = { $status }  { $progress }%  / 目标 { $target }%
 
 ui-style-preview-help = F1-F3 样式 | F4 动画 { $motion } | F5 重播 | Esc 返回/退出
     Tab/Shift-Tab 焦点 | 方向键/鼠标 选择 | Enter 执行
-    在输入框中输入。仅供演示，不保存偏好设置。
+    在输入框中输入。演示不会保存设置。
 
 ui-style-preview-minimum-size = 预览需要至少 60 列：Tea 需要 20 行；Glacier 和 Spring 需要 24 行。
     请调整大小以继续。Esc / Ctrl-C 退出。

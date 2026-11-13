@@ -4,13 +4,13 @@ ui-test-help = Usage: tundra-cli debug ui-test
     F1-F6 or PageUp/PageDown switch pages; click the bottom buttons to switch with a mouse or touch.
     Tab/Shift+Tab moves focus; arrows select items; type or paste in the text field and command palette.
     Esc, Ctrl+C or Exit closes the preview and restores the terminal. Minimum size: 88 columns x 30 rows.
-    All values are temporary samples. No configuration, theme, language files, logs or saved state are read or written.
+    All values are temporary samples. No configuration or saved state is read or written.
 ui-test-terminal-required = debug ui-test requires an interactive terminal (stdin and stdout).
 ui-test-title = Shared UI controls — debug ui-test
 ui-test-keys = F1-F6 / PgUp / PgDn: pages · Tab / Shift+Tab: focus · Arrows: select · Esc: exit
 ui-test-small = Enlarge the terminal to at least 88 columns x 30 rows.
-ui-test-safe = Sample data only; actions do not change files or settings.
-ui-test-activated = Demo action activated; no files or settings were changed.
+ui-test-safe = Sample data only.
+ui-test-activated = Demo action activated.
 ui-test-basic = Basic
 ui-test-selection = Selection
 ui-test-navigation = Navigate

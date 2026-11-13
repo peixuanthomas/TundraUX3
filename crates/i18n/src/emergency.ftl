@@ -13,6 +13,6 @@ resources-fallback = Some resources could not be repaired. Built-in resources ar
     { $repaired_files }
     Files using built-in resources:
     { $failed_files }
-language-reload-failed = Could not reload the language: { $reason }. The previous language is still active.
+language-reload-failed = Could not reload the language: { $reason }. Continuing with the current language.
 notifications-action-ok = OK
 notifications-status-ready = Ready

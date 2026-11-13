@@ -34,5 +34,5 @@ platform-network-history-transaction-id = Network transaction: { $id }
 platform-network-history-waiting-confirmation = Network transaction { $id } awaits confirmation for 120 seconds. Run network confirm with this ID after checking the connection.
 platform-network-history-external-change = Configuration changed outside this transaction: { $path }
 platform-network-history-no-applied-changes = No network changes were applied
-platform-network-history-recovery-completed = Previous network configuration restored; configuration files matched backups and the backend completed activation
-platform-network-history-recovery-failed = Recovery failed: { $error }. Backups retained at { $directory }
+platform-network-history-recovery-completed = Previous network configuration restored.
+platform-network-history-recovery-failed = Recovery failed: { $error }. Backup: { $directory }

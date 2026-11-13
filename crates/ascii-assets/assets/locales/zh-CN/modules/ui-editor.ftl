@@ -96,7 +96,7 @@ editor-search-scope = 替换范围
 editor-search-all = 全部匹配
 editor-search-current = 当前／下一个匹配
 editor-search-help = F3：下一个 · Shift+F3：上一个。正则替换支持 $1 和 ${ "{" }name{ "}" }。匹配保留完整字素边界。
-editor-search-preview-count = { $count } 处替换。提交应用，Esc 取消；一次撤销可还原整批修改。
+editor-search-preview-count = { $count } 处替换。提交应用，Esc 取消。一次撤销可还原整批修改。
 editor-search-preview-truncated = 仅显示前 40 处预览，应用将处理全部匹配。
 editor-search-count = 匹配 { $current } / { $count } · F3 / Shift+F3
 
@@ -139,7 +139,7 @@ ui-editor-indent-spaces = { $count } 个空格
 ui-editor-indent-tabs = 制表符（宽度 { $count }）
 config-editor-path = 配置文件的绝对路径
 config-editor-permissions = 文件权限（八进制，如 0644）
-config-editor-open-help = 输入要编辑的系统配置文件的绝对路径，例如 /etc/hosts。读取后会在编辑器中显示内容；保存前会预览修改，并在需要时请求系统授权。
+config-editor-open-help = 输入要编辑的系统配置文件的绝对路径，例如 /etc/hosts。读取后会显示在编辑器中，保存前会预览修改并在需要时请求系统授权。
 management-form-apply = 应用
 management-value-yes = 是
 management-value-no = 否

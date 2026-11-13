@@ -1,4 +1,4 @@
-management-winget-no-reconnect = Windows package operations do not support reconnecting by task ID. Keep Tundra running until the operation finishes.
+management-winget-no-reconnect = Windows package operations do not support reconnecting. Keep Tundra running until the operation finishes.
 management-winget-invalid-command = The Windows package operation is missing or invalid.
 management-winget-noninteractive = WinGet requires interaction outside Tundra. Complete source agreements in a terminal and try again.
 management-winget-missing = Windows Package Manager (winget.exe) was not found. Install or update App Installer.
@@ -6,7 +6,7 @@ management-winget-invalid = Invalid winget request or package identifier.
 management-winget-stale = The package changed. Refresh the list before continuing.
 management-winget-timeout = The winget query timed out.
 management-winget-failed = Windows Package Manager failed.
-management-winget-output = WinGet output could not be read safely. English and Simplified Chinese command output are supported.
+management-winget-output = WinGet output could not be read. Only English and Simplified Chinese output are supported.
 management-winget-install = Install package
 management-winget-remove = Remove package
 management-winget-upgrade = Upgrade package

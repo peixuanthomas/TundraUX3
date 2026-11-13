@@ -7,7 +7,7 @@ ui-panic-component = Component: { $component }
 ui-panic-task = Task: { $task }
 ui-panic-location = Location: { $location }
 ui-panic-report = Full report: { $path }
-ui-panic-report-unavailable = Full report: unavailable (could not confirm it was saved)
+ui-panic-report-unavailable = Full report: unavailable (could not be saved)
 
 ui-panic-help-scroll = R: Restart | Q: Exit | Up/Down: Scroll
 

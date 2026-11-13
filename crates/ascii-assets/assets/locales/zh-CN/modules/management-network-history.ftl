@@ -34,5 +34,5 @@ platform-network-history-transaction-id = 网络修改任务：{ $id }
 platform-network-history-waiting-confirmation = 网络修改任务 { $id } 等待确认，期限为 120 秒。检查连接后，请使用此编号执行 network confirm。
 platform-network-history-external-change = 配置被其他程序修改：{ $path }
 platform-network-history-no-applied-changes = 尚未应用网络修改
-platform-network-history-recovery-completed = 已恢复旧网络配置；配置文件与备份一致，后端已完成加载
-platform-network-history-recovery-failed = 恢复失败：{ $error }。备份保留在 { $directory }
+platform-network-history-recovery-completed = 已恢复旧网络配置。
+platform-network-history-recovery-failed = 恢复失败：{ $error }。备份：{ $directory }

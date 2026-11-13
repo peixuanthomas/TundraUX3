@@ -1,12 +1,12 @@
-management-winget-no-reconnect = Windows 软件包操作不支持按任务编号重新连接。请保持 Tundra 运行，直到操作结束。
+management-winget-no-reconnect = Windows 软件包操作不支持重新连接。请保持 Tundra 运行，直到操作结束。
 management-winget-invalid-command = Windows 软件包操作缺失或无效。
 management-winget-noninteractive = WinGet 需要在 Tundra 之外交互。请先在终端完成软件源协议确认，再重试。
 management-winget-missing = 未找到 Windows 软件包管理器（winget.exe）。请安装或更新“应用安装程序”（App Installer）。
 management-winget-invalid = winget 请求或软件包标识无效。
-management-winget-stale = 软件包已发生变化。请刷新列表后再继续。
+management-winget-stale = 软件包已变化，请刷新列表后再继续。
 management-winget-timeout = winget 查询超时。
 management-winget-failed = Windows 软件包管理器执行失败。
-management-winget-output = 无法可靠读取 WinGet 输出。目前支持英文和简体中文的命令输出。
+management-winget-output = 无法读取 WinGet 输出。目前仅支持英文和简体中文输出。
 management-winget-install = 安装软件包
 management-winget-remove = 卸载软件包
 management-winget-upgrade = 升级软件包

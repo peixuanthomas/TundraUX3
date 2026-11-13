@@ -40,8 +40,8 @@ ui-help-logs-back = 返回
 
 ui-help-settings-title = 设置
 ui-help-settings-open = 打开或修改值
-ui-help-settings-adjust = 分类区上下切类；内容区上下选择项目，左右切换应用列表与设置
-ui-help-settings-section = 遍历分类区、操作系统入口和当前页控件
+ui-help-settings-adjust = 上下切换分类或设置项，左右在应用列表和设置之间移动
+ui-help-settings-section = 在分类、操作系统入口和当前页控件之间移动
 ui-help-settings-number = 数值弹窗内调整或输入，回车确认
 
 ui-help-users-title = 用户管理
@@ -58,20 +58,20 @@ ui-help-management-focus = 切换区域
 ui-help-management-details = 查看详情
 ui-help-management-pages = 切换页面
 ui-help-packages-title = 软件包管理器
-ui-help-selection-range = 从上次选择的位置连续选择到当前项
-ui-help-selection-toggle = 选中或取消当前一项，保留其他已选项
-ui-help-packages-apply = 安装、卸载或更新全部已选包；仅全部已选包都支持时可用
-ui-help-selection-move = 移动当前位置，保留多选；普通点击恢复单选
+ui-help-selection-range = 从上次选择处连续选到当前项
+ui-help-selection-toggle = 选中或取消此项，保留其他选择
+ui-help-packages-apply = 安装、卸载或更新全部已选包。只有全部软件包都支持的操作才可用。
+ui-help-selection-move = 移动当前项并保留多选；普通点击只选一项
 ui-help-selection-actions = 进入操作区或执行选中的按钮
-ui-help-selection-lifecycle = 排序和刷新保留仍存在的选择；切换列表或更改筛选清除多选。操作可能部分完成，失败后请刷新查看结果；已完成的修改保留。
+ui-help-selection-lifecycle = 排序或刷新后，仍存在的项目保持选中；切换列表或筛选会清除多选。批量操作可能只完成一部分，失败后请刷新查看结果。
 ui-help-services-batch-state = 启动、停止或重启全部已选服务
 ui-help-services-batch-startup = 启用或禁用全部已选服务的开机启动
 ui-help-services-batch-more = 更多操作中还可批量重载服务配置。查看日志和编辑配置时请只选择一个服务。
 ui-help-processes-batch-state = 暂停或继续全部已选进程
 ui-help-processes-batch-stop = 终止或强制终止全部已选进程
 ui-help-processes-batch-priority = 为全部已选进程设置同一主线程优先级，数值越小优先级越高
-ui-help-scheduled-batch-actions = 使用操作按钮暂停、恢复或立即执行全部已选任务；仅全部任务都支持的操作可用。
-ui-help-packages-pages = 切换已安装、更新、搜索，清除多选
+ui-help-scheduled-batch-actions = 使用操作按钮暂停、恢复或立即执行全部已选任务。只有全部任务都支持的操作才可用。
+ui-help-packages-pages = 切换已安装、更新和搜索，并清除多选
 
 ui-help-system-status-title = 系统状态
 ui-help-system-status-edit = 编辑仪表板
@@ -128,7 +128,7 @@ ui-help-editor-settings = 调整编辑器设置
 
 ui-help-logs-level = 按最低等级筛选，默认全部；故障是最高等级
 ui-help-logs-folder = 在文件浏览器中打开 UX 日志根目录
-ui-help-logs-source = 切换 UX / Linux 日志；Tab 不切换日志视图
+ui-help-logs-source = 切换 UX / Linux 日志
 ui-help-home-edit = 编辑主界面 / 完成编辑
 ui-help-home-reorder = 在编辑模式下移动选中图标
 ui-help-home-edit-cancel = 取消拖拽 / 完成编辑

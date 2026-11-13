@@ -1,5 +1,5 @@
 app-launcher-added = 已添加 { $count } 个启动器项目
-app-launcher-order-unchanged = 启动器项目顺序未更改
+app-launcher-order-unchanged = 启动器项目顺序未变化
 app-launcher-moved = 启动器项目已移动
 app-launcher-removed = 已移除 { $count } 个启动器项目
 app-launcher-permission-denied = 权限不足：{ $reason }

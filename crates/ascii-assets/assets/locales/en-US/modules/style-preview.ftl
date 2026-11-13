@@ -11,5 +11,5 @@ preview-back = Back to preview
 preview-glacier = Native widgets + tachyonfx sweep.
 preview-tea = Model -> Message -> Update -> View.
 preview-spring = A spring retains position, velocity and target.
-preview-unsaved = Rust / Ratatui preview. No preferences are saved.
+preview-unsaved = Style preview. Settings are not saved.
 preview-user-text = Your text: { $text }

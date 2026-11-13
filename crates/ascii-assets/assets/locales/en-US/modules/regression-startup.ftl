@@ -16,7 +16,7 @@ startup-shell-ui-automation-help = UI automation (for agents):
     { "  " }tundra-cli ui click --id TARGET_ID
     { "  " }tundra-cli ui text "TEXT"
     Replace TARGET_ID with an ID from snapshot; text goes to the focused control.
-    After user operations, read snapshot or wait again; animations and automatic updates are ignored.
+    After user operations, run snapshot or wait again. Automatic updates do not invalidate the snapshot.
     Run tundra-cli ui wake to close idle weather or the weather lockscreen.
     See tundra-cli ui --help for click, drag, scroll, key, text, and wait commands.
 startup-cli-help = TundraUX3 CLI
@@ -77,14 +77,14 @@ startup-cli-config-help = Usage: tundra-cli config [get [field] | set <field> <v
     { "  " }timezone / address timezone ID or city label; config options timezone lists choices
     { "  " }weather-location   English address in quotes (max 120 chars) | auto (follow timezone location)
     { "  " }update-mode        release | beta (Linux only; saves choice, does not start an update)
-    address changes the timezone. weather-location changes only weather; it does not change system time.
+    address changes the timezone. weather-location changes only the weather location.
     Examples:
     { "  " }tundra-cli config set motion reduced
     { "  " }tundra-cli config set animation-speed 125
     { "  " }tundra-cli config set weather-location "Shanghai, China"
     { "  " }tundra-cli config reset weather-location
     { "  " }tundra-cli config set accent-color "#38bdf8"
-    Changes use the current OS user's config. Restart a running TundraUX3 UI to apply them. Identity/password fields are not exposed.
+    Changes use the current OS user's config. Restart a running TundraUX3 UI to apply them.
 startup-cli-packages-help = list [--scope installed|search|updates]; search TEXT; source-add --name NAME --url URL [APT: --suite SUITE --components main --signed-by /key; DNF: --gpgkey URL]. sources add/enable/disable/remove are aliases. Source changes output drafts; --apply --expected-version saves. Script changes retain current config; --config-policy replace is APT-only. Arch install/upgrade always upgrades the full system.
 
 startup-cli-doctor-help = Usage: tundra-cli doctor

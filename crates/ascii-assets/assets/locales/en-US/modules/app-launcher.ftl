@@ -1,5 +1,5 @@
 app-launcher-added = { $count } Launcher item(s) added
-app-launcher-order-unchanged = Launcher item order unchanged
+app-launcher-order-unchanged = Launcher order unchanged
 app-launcher-moved = Launcher item moved
 app-launcher-removed = { $count } Launcher item(s) removed
 app-launcher-permission-denied = Permission denied: { $reason }

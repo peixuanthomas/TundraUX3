@@ -14,7 +14,7 @@ settings-accent-distinct = 强调色不能与边框颜色相同
 settings-full-motion-reset = 请启用完整动效后再恢复动画速度
 settings-choose-value = 请选择一个值
 settings-no-options = 没有匹配的选项
-settings-images-unavailable = 此终端不支持图像图标，继续使用 ASCII 图标
+settings-images-unavailable = 此终端不支持图像图标，将使用 ASCII 图标
 settings-invalid-color-option = 无效的颜色选项
 settings-saved-region = 已保存区域与时间设置
 settings-enter-weather = 请输入英文天气地点
@@ -35,7 +35,7 @@ settings-update-cancelled = 已取消更新
 settings-update-check-expired = 更新检查结果已失效
 settings-installation-unavailable = 无法找到当前运行的 TundraUX 安装目录
 settings-update-downloading = 正在下载选定的 GitHub 更新…
-settings-update-started = 更新已开始；TundraUX 将自动重启
+settings-update-started = 更新已开始，TundraUX 将自动重启
 settings-sync-test-failed = 时间同步测试失败
 settings-sync-review-error = 同步失败，请查看错误对话框
 settings-update-restarting = 更新已准备就绪，正在重启 TundraUX…
@@ -96,7 +96,7 @@ settings-animation = 动画
 settings-motion = 动效
 settings-full = 完整
 settings-reduced = 减少
-settings-motion-help = 选择“减少”可关闭界面过渡动画，同时保留必要刷新。
+settings-motion-help = 选择“减少”可关闭界面过渡动画，只保留必要刷新。
 settings-animation-speed = 动画速度
 settings-animation-speed-help = 以 25% 为步长，在 50% 到 200% 之间调整过渡动画速度。
 settings-restore-speed = 恢复动画默认值
@@ -115,9 +115,9 @@ settings-time-source = 时间来源
 settings-time-source-help = 使用网络时间服务器或操作系统时钟。
 settings-sync-server = 同步服务器
 settings-automatic-servers = 自动使用默认服务器
-settings-time-server-help = 设置 HTTP(S) 服务器；必须同步成功后才能保存。
+settings-time-server-help = 设置 HTTP(S) 服务器。必须同步成功后才能保存。
 settings-system-timezone-help = 通过共用地图和列表选择时区，保存后修改 Linux 系统时区。
-settings-system-time-help = 跟随 Linux 系统时间；在这里开启或关闭系统自动校时。
+settings-system-time-help = 跟随 Linux 系统时间，并在这里开启或关闭系统自动校时。
 settings-system-time-server-help = 编辑 Linux 校时服务器，可修改现有地址、添加地址和设置备用地址。F5 刷新系统时间设置。
 settings-system-time-refresh = 刷新系统时间设置 [F5]
 settings-system-time-refresh-help = 重新读取当前系统时区和自动校时设置。
@@ -246,8 +246,8 @@ settings-value-cells = { $value } 格
 settings-value-lines = { $value } 行
 settings-value-gib = { $value } GiB
 settings-value-percent = { $value }%
-settings-update-replace-body = 当前构建非标准、有本地修改、领先、已分叉或来源未知。TundraUX 将下载刚刚检查的确切 GitHub 提交，在本地编译，仅替换 Shell 和 CLI 程序，然后立即重启。本地资源将保持不变。若启动失败，将恢复到之前的本地版本。
-settings-update-install-body = TundraUX 将下载刚刚检查的确切 GitHub 提交，在本地编译，仅替换 Shell 和 CLI 程序，然后立即重启。本地资源将保持不变。若启动失败，将恢复到之前的本地版本。
+settings-update-replace-body = 当前构建有本地修改、领先、已分叉或来源未知。TundraUX 会下载刚刚检查的 GitHub 提交并在本地编译，只替换 Shell 和 CLI 程序，然后重启。本地资源不受影响。启动失败时会恢复之前的版本。
+settings-update-install-body = TundraUX 会下载刚刚检查的 GitHub 提交并在本地编译，只替换 Shell 和 CLI 程序，然后重启。本地资源不受影响。启动失败时会恢复之前的版本。
 settings-invalid-custom-color = 请输入有效颜色，例如 #RRGGBB
 settings-saved-field = 已保存{ settings-field-name }
 settings-saved-icon-mode = 已保存{ settings-default-icon-mode }
@@ -345,12 +345,12 @@ settings-device-card-wifi-status = 无线网络
 settings-device-wifi-enabled = Wi-Fi 开关
 settings-device-wifi-enabled-help = 开启或关闭无线网络。
 settings-device-wifi-connection = 当前连接
-settings-device-wifi-connection-help = 尚未获取当前 Wi-Fi 连接状态。
+settings-device-wifi-connection-help = 暂无 Wi-Fi 连接信息。
 settings-device-card-wifi-networks = 网络列表
 settings-device-wifi-available-networks = 可用网络
-settings-device-wifi-available-networks-help = 无法获取可用网络列表，尚未执行扫描。
+settings-device-wifi-available-networks-help = 尚未扫描附近的网络。
 settings-device-wifi-saved-networks = 已保存网络
-settings-device-wifi-saved-networks-help = 无法获取已保存网络列表。
+settings-device-wifi-saved-networks-help = 暂无已保存的网络。
 settings-device-card-wifi-actions = 网络操作
 settings-device-wifi-refresh = 刷新网络
 settings-device-wifi-refresh-help = 扫描附近的 Wi-Fi 网络。
@@ -367,11 +367,11 @@ settings-device-bluetooth-discoverable = 设备可发现性
 settings-device-bluetooth-discoverable-help = 允许其他蓝牙设备发现本机。
 settings-device-card-bluetooth-devices = 设备列表
 settings-device-bluetooth-connected-devices = 已连接设备
-settings-device-bluetooth-connected-devices-help = 无法获取已连接蓝牙设备列表。
+settings-device-bluetooth-connected-devices-help = 暂无已连接的蓝牙设备。
 settings-device-bluetooth-paired-devices = 已配对设备
-settings-device-bluetooth-paired-devices-help = 无法获取已配对蓝牙设备列表。
+settings-device-bluetooth-paired-devices-help = 暂无已配对的蓝牙设备。
 settings-device-bluetooth-nearby-devices = 附近设备
-settings-device-bluetooth-nearby-devices-help = 无法获取附近设备列表，尚未执行搜索。
+settings-device-bluetooth-nearby-devices-help = 尚未搜索附近的设备。
 settings-device-card-bluetooth-actions = 设备操作
 settings-device-bluetooth-search = 搜索设备
 settings-device-bluetooth-search-help = 搜索附近的蓝牙设备。
@@ -384,20 +384,20 @@ settings-device-bluetooth-disconnect-help = 断开选定设备的连接。
 settings-device-bluetooth-unpair = 取消配对
 settings-device-bluetooth-unpair-help = 移除选定设备的配对信息。
 settings-device-unsupported = 当前平台暂不支持此功能
-settings-device-not-integrated = 此功能尚未接入系统服务
+settings-device-not-integrated = 此功能暂不可用
 settings-device-unavailable = 不可用
-settings-device-not-obtained = 未获取
+settings-device-not-obtained = 暂无
 
 settings-update-mode = 更新模式
 settings-update-mode-release = 正式版（Release）
 settings-update-mode-beta = 测试版（master）
 settings-update-mode-help = 按回车或左右键切换。正式版下载已发布的便携包；测试版使用 Rust 在本机编译 master 最新提交。
 settings-release-latest = GitHub 最新正式版
-settings-release-install-body = 下载并校验 Linux 便携包，替换 Shell 和 CLI 后重启。首次启动失败时恢复旧版本。个人文件和主题保持不变。
+settings-release-install-body = 下载并校验 Linux 便携包，替换 Shell 和 CLI 后重启。首次启动失败时会恢复旧版本，个人文件和主题不受影响。
 
 settings-check-mode-description = 检查所选更新模式，显示发布说明或 master 提交记录。
 settings-release-available = 有更新的正式版可用
-settings-release-different = 当前构建与正式版不同，可选择替换为此正式版
+settings-release-different = 当前构建与正式版不同，可替换为此版本
 
 settings-animation-advanced = 动画时长（ms）
 settings-animation-open = 调整时长
@@ -423,7 +423,7 @@ ui-control-invalid-boolean = 请使用 true 或 false。
 ui-control-config-saved = 已保存外部 CLI 控制设置。通过 CLI 修改后，需重启正在运行的 Shell。
 ui-control-unavailable = 无法连接 Shell 控制接口：{ $reason }
 ui-control-not-ready = Shell 界面尚未就绪。
-ui-control-stale = Shell 内容已因用户操作发生变化，请重新执行 tundra-cli ui snapshot 获取界面信息后再操作。
+ui-control-stale = 界面已变化，请重新执行 tundra-cli ui snapshot 获取快照后再操作。
 ui-control-target = 目标不存在或不能接收此输入。
 ui-control-protocol = 不支持此控制协议版本。
 ui-control-timeout = 等待 Shell 或目标超时。
@@ -437,9 +437,9 @@ ui-control-help = 用法：tundra-cli ui <sessions|snapshot|wake|click|move|drag
     wait --id ID：--state present|absent|actionable（默认 actionable）
     wake：关闭空闲天气或天气锁屏，返回进入 Shell 后的快照。
     drag 也支持 --button；时长范围为 16..10000 毫秒，滚动次数为 1..1000。
-    多会话必须指定 --session。超时不会重放输入。
-    用户操作后需重新执行 snapshot 或 wait 获取信息，使用 --snapshot 时也一样。
-    单纯移动鼠标、动画和控件自动更新不会使快照失效；天气画面不参与此检查。
+    多会话必须指定 --session。超时后不会重放输入。
+    用户操作后需重新执行 snapshot 或 wait，使用 --snapshot 时也一样。
+    移动鼠标或界面自动刷新不会使快照失效。
     text -- 文字 可输入以短横线开头的文字；sessions 不接受选项。
     坐标从 (0,0) 开始。输出为 JSON，协议版本为 1。
     在“设置 → 系统”开启，或启动前执行 config set automation.enabled true。
@@ -456,4 +456,4 @@ settings-screen-timeout = 屏幕超时时间
 settings-screen-timeout-never = 永不
 settings-screen-timeout-seconds = { $value } 秒
 settings-screen-timeout-minutes = { $value } 分钟
-settings-screen-timeout-help = 无操作后显示天气；按键或点按返回原页面，已登录时无需密码。
+settings-screen-timeout-help = 无操作后显示天气。按键或点按返回原页面，已登录时无需密码。

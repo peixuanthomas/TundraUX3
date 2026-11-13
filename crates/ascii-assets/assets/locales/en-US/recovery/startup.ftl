@@ -1,4 +1,4 @@
-language-reload-failed = Could not reload the language: { $reason }. The previous language is still active.
+language-reload-failed = Could not reload the language: { $reason }. Continuing with the current language.
 resources-recovery-title = Resource recovery
 resources-recovery-ok = OK
 resources-recovery-repair-restart = Auto repair and restart
@@ -17,7 +17,7 @@ resources-fallback = Some resources could not be repaired. Built-in resources ar
     Files using built-in resources:
     { $failed_files }
 startup-theme-reload-title = Theme reload failed
-startup-theme-reload-failed = Could not reload the active user's theme: { $reason }. The last valid theme is still active.
+startup-theme-reload-failed = Could not reload the active user's theme: { $reason }. Continuing with the current theme.
 startup-lifecycle-failed = Desktop lifecycle monitoring failed: { $reason }
 startup-session-refresh-failed = Desktop session refresh failed: { $reason }
 startup-reboot-failed = Restart computer failed: { $reason }

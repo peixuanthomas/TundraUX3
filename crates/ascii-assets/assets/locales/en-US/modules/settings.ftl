@@ -14,7 +14,7 @@ settings-accent-distinct = Accent color must differ from the border color
 settings-full-motion-reset = Enable Full motion to restore animation speed
 settings-choose-value = Choose a value
 settings-no-options = No matching options
-settings-images-unavailable = Image icons are unavailable in this terminal; ASCII icons remain active
+settings-images-unavailable = Image icons are unavailable in this terminal; using ASCII icons
 settings-invalid-color-option = Invalid color option
 settings-saved-region = Saved region and time
 settings-enter-weather = Enter an English weather location
@@ -35,7 +35,7 @@ settings-update-cancelled = Update cancelled
 settings-update-check-expired = The update check result is no longer available
 settings-installation-unavailable = Could not locate the running TundraUX installation
 settings-update-downloading = Downloading the selected GitHub update…
-settings-update-started = Update started; TundraUX will restart automatically
+settings-update-started = Update started. TundraUX will restart automatically.
 settings-sync-test-failed = Time synchronization test failed
 settings-sync-review-error = Synchronization failed; review the error dialog
 settings-update-restarting = Update prepared; restarting TundraUX…
@@ -96,7 +96,7 @@ settings-animation = Animation
 settings-motion = Motion
 settings-full = Full
 settings-reduced = Reduced
-settings-motion-help = Use Reduced to disable interface transitions while preserving essential refreshes.
+settings-motion-help = Use Reduced to disable interface transitions and keep only essential refreshes.
 settings-animation-speed = Animation speed
 settings-animation-speed-help = Adjust transition speed from 50% to 200% in 25% steps.
 settings-restore-speed = Restore animation defaults
@@ -115,9 +115,9 @@ settings-time-source = Time source
 settings-time-source-help = Use a network time server or the operating system clock.
 settings-sync-server = Synchronization server
 settings-automatic-servers = Automatic default servers
-settings-time-server-help = Set an HTTP(S) server; it must synchronize successfully before saving.
+settings-time-server-help = Set an HTTP(S) server. It must synchronize successfully before saving.
 settings-system-timezone-help = Select a timezone on the shared map and list; saving changes the Linux system timezone.
-settings-system-time-help = Follow Linux system time. Toggle the system's automatic time synchronization here.
+settings-system-time-help = Follow Linux system time and toggle automatic time synchronization here.
 settings-system-time-server-help = Edit Linux time servers, including existing, added and fallback sources. F5 refreshes system time settings.
 settings-system-time-refresh = Refresh system time settings [F5]
 settings-system-time-refresh-help = Read the current system timezone and automatic synchronization settings again.
@@ -246,8 +246,8 @@ settings-value-cells = { $value } cells
 settings-value-lines = { $value } lines
 settings-value-gib = { $value } GiB
 settings-value-percent = { $value }%
-settings-update-replace-body = This is a non-standard, dirty, ahead, diverged, or unknown build. TundraUX will download the exact checked GitHub commit, compile it locally, replace only the Shell and CLI programs, then restart immediately. Local assets will be kept unchanged. If startup fails, the previous local version will be restored.
-settings-update-install-body = TundraUX will download the exact checked GitHub commit, compile it locally, replace only the Shell and CLI programs, then restart immediately. Local assets will be kept unchanged. If startup fails, the previous local version will be restored.
+settings-update-replace-body = This build has local changes, is ahead, diverged, or of unknown origin. TundraUX will download the checked GitHub commit, compile it locally, replace only the Shell and CLI programs, then restart. Local assets are not changed. If startup fails, the previous version is restored.
+settings-update-install-body = TundraUX will download the checked GitHub commit, compile it locally, replace only the Shell and CLI programs, then restart. Local assets are not changed. If startup fails, the previous version is restored.
 settings-invalid-custom-color = Enter a valid color such as #RRGGBB
 settings-saved-field = Saved { settings-field-name }
 settings-saved-icon-mode = Saved { settings-default-icon-mode }
@@ -345,12 +345,12 @@ settings-device-card-wifi-status = Wireless network
 settings-device-wifi-enabled = Wi-Fi enabled
 settings-device-wifi-enabled-help = Enable or disable Wi-Fi.
 settings-device-wifi-connection = Current connection
-settings-device-wifi-connection-help = The current Wi-Fi connection has not been obtained.
+settings-device-wifi-connection-help = No Wi-Fi connection information yet.
 settings-device-card-wifi-networks = Network lists
 settings-device-wifi-available-networks = Available networks
-settings-device-wifi-available-networks-help = Available networks cannot be obtained; no scan has been performed.
+settings-device-wifi-available-networks-help = No nearby networks yet. Scan to refresh.
 settings-device-wifi-saved-networks = Saved networks
-settings-device-wifi-saved-networks-help = Saved networks cannot be obtained.
+settings-device-wifi-saved-networks-help = No saved networks.
 settings-device-card-wifi-actions = Network actions
 settings-device-wifi-refresh = Refresh networks
 settings-device-wifi-refresh-help = Scan for nearby Wi-Fi networks.
@@ -367,11 +367,11 @@ settings-device-bluetooth-discoverable = Discoverable
 settings-device-bluetooth-discoverable-help = Allow other Bluetooth devices to discover this computer.
 settings-device-card-bluetooth-devices = Device lists
 settings-device-bluetooth-connected-devices = Connected devices
-settings-device-bluetooth-connected-devices-help = Connected Bluetooth devices cannot be obtained.
+settings-device-bluetooth-connected-devices-help = No connected Bluetooth devices.
 settings-device-bluetooth-paired-devices = Paired devices
-settings-device-bluetooth-paired-devices-help = Paired Bluetooth devices cannot be obtained.
+settings-device-bluetooth-paired-devices-help = No paired Bluetooth devices.
 settings-device-bluetooth-nearby-devices = Nearby devices
-settings-device-bluetooth-nearby-devices-help = Nearby devices cannot be obtained; no search has been performed.
+settings-device-bluetooth-nearby-devices-help = No nearby devices yet. Search to refresh.
 settings-device-card-bluetooth-actions = Device actions
 settings-device-bluetooth-search = Search devices
 settings-device-bluetooth-search-help = Search for nearby Bluetooth devices.
@@ -384,20 +384,20 @@ settings-device-bluetooth-disconnect-help = Disconnect the selected device.
 settings-device-bluetooth-unpair = Unpair device
 settings-device-bluetooth-unpair-help = Remove pairing information for the selected device.
 settings-device-unsupported = This feature is not supported on this platform yet.
-settings-device-not-integrated = This feature is not connected to system services yet.
+settings-device-not-integrated = This feature is not available yet.
 settings-device-unavailable = Unavailable
-settings-device-not-obtained = Not obtained
+settings-device-not-obtained = None
 
 settings-update-mode = Update mode
 settings-update-mode-release = Release
 settings-update-mode-beta = Beta (master)
 settings-update-mode-help = Switch with Enter or the arrow keys. Release downloads a published portable build; Beta builds the latest master commit locally with Rust.
 settings-release-latest = Latest GitHub release
-settings-release-install-body = Download and verify the Linux portable release, replace Shell and CLI, then restart. If the first startup fails, restore the previous version. Personal files and themes stay in place.
+settings-release-install-body = Download and verify the Linux portable release, replace Shell and CLI, then restart. If the first startup fails, the previous version is restored. Personal files and themes are not affected.
 
 settings-check-mode-description = Refresh the selected update mode and its release notes or master commits.
 settings-release-available = A newer release is available
-settings-release-different = The installed build differs; you can replace it with this release
+settings-release-different = The installed build differs; you can replace it with this version
 
 settings-animation-advanced = Animation timing (ms)
 settings-animation-open = Adjust timing
@@ -423,7 +423,7 @@ ui-control-invalid-boolean = Expected true or false.
 ui-control-config-saved = Saved external CLI control setting. Restart a running Shell to load CLI configuration changes.
 ui-control-unavailable = Shell control is unavailable: { $reason }
 ui-control-not-ready = The Shell interface is not ready.
-ui-control-stale = Shell content changed after user input. Run tundra-cli ui snapshot again before acting.
+ui-control-stale = The interface changed. Run tundra-cli ui snapshot again before acting.
 ui-control-target = The target does not exist or cannot receive this input.
 ui-control-protocol = Unsupported control protocol version.
 ui-control-timeout = Timed out waiting for the Shell or target.
@@ -438,8 +438,8 @@ ui-control-help = Usage: tundra-cli ui <sessions|snapshot|wake|click|move|drag|s
     wake: close idle weather or the weather lockscreen; return the resulting Shell snapshot.
     drag also accepts --button; duration is 16..10000 ms, scroll count is 1..1000.
     Multiple sessions require --session. Timeouts never replay input.
-    User operations require a new snapshot or wait, including when using --snapshot.
-    Pointer movement, animations and automatic updates do not invalidate snapshots; weather screens are exempt.
+    After user operations, run snapshot or wait again, including with --snapshot.
+    Pointer movement or automatic updates do not invalidate snapshots.
     text -- TEXT accepts text starting with a dash; sessions takes no options.
     Coordinates start at (0,0). Output is JSON, protocol version 1.
     Enable in Settings > System or config set automation.enabled true before starting Shell.

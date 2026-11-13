@@ -35,7 +35,7 @@ ui-settings-leave-empty-to-always-use-the-system-default-enter-save-esc-cancel =
 ui-settings-explorer-files-opened-in-editor-padded = { " " }在编辑器中打开的文件类型{ " " }
 ui-settings-synchronizing-with-this-server = 正在与此服务器同步…
 ui-settings-enter-an-http-s-endpoint-that-returns-a-valid-date-response-header = 请输入返回有效 Date 响应头的 HTTP(S) 地址。
-ui-settings-the-address-is-saved-only-after-a-successful-synchronization-test = 仅在同步测试成功后保存地址。
+ui-settings-the-address-is-saved-only-after-a-successful-synchronization-test = 地址会在同步测试成功后保存。
 ui-settings-enter-test-and-save-esc-cancel = Enter：测试并保存    Esc：取消
 ui-settings-time-synchronization-server-padded = { " " }时间同步服务器{ " " }
 
@@ -52,7 +52,7 @@ ui-settings-bluetooth-description = 蓝牙设备、配对与连接
 ui-settings-touch-apply = Enter 应用
 ui-settings-touch-cancel = Esc 取消
 ui-settings-system-time-server-help = 输入服务器名称或 IP 地址。新增和备用服务器可用空格分隔；留空可删除条目。
-ui-settings-system-time-server-save-help = 修改会先显示差异，经过授权后再保存到 Linux 系统配置。
+ui-settings-system-time-server-save-help = 保存前会显示差异并请求授权。
 ui-settings-enter-save-esc-cancel = Enter：保存    Esc：取消
 ui-settings-applications = 应用设置
 ui-settings-applications-description = 选择应用，修改对应设置。

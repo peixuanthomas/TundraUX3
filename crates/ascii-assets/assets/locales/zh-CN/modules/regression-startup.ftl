@@ -1,4 +1,4 @@
-startup-time-sync-fallback = { $reason }。正在使用上次校准的时间；尚未校准时使用系统时间。可在“设置 → 日期与时间”中重试。
+startup-time-sync-fallback = { $reason }。将使用上次校准的时间，未校准时使用系统时间。可在“设置 → 日期与时间”中重试。
 startup-update-error-explanation = { $details }
 startup-account-source = 账户来源
 startup-check-pass = 通过/PASS
@@ -16,7 +16,7 @@ startup-shell-ui-automation-help = UI automation（供 agent 使用）：
     { "  " }tundra-cli ui click --id TARGET_ID
     { "  " }tundra-cli ui text "TEXT"
     将 TARGET_ID 替换为 snapshot 中的控件 ID；文字会输入到当前焦点控件。
-    用户操作后需重新执行 snapshot 或 wait 获取信息；动画和控件自动更新不影响此检查。
+    用户操作后需重新执行 snapshot 或 wait。界面自动刷新不会使快照失效。
     用 tundra-cli ui wake 关闭空闲天气或天气锁屏。
     点击、拖动、滚动、按键、文字输入和等待的完整用法见 tundra-cli ui --help。
 startup-cli-help = TundraUX3 命令行
@@ -73,14 +73,14 @@ startup-cli-config-help = 用法：tundra-cli config [get [field] | set <field> 
     timezone / address：时区 ID 或城市名；config options timezone 列出选项。
     weather-location：带引号的英文地址（最多 120 字符）| auto（跟随时区位置）
     update-mode：release | beta（仅 Linux；保存选项，不启动更新）
-    address 更改时区；weather-location 只更改天气位置，不更改系统时间。
+    address 用于更改时区，weather-location 仅更改天气位置。
     示例：
     tundra-cli config set motion reduced
     tundra-cli config set animation-speed 125
     tundra-cli config set weather-location "Shanghai, China"
     tundra-cli config reset weather-location
     tundra-cli config set accent-color "#38bdf8"
-    修改当前操作系统用户的配置；运行中的 TundraUX3 需重启后生效。不提供身份或密码字段。
+    修改当前操作系统用户的配置；运行中的 TundraUX3 需重启后生效。
 startup-cli-packages-help = list [--scope installed|search|updates] 列出已安装、搜索或可更新的软件包；search TEXT 搜索。
     source-add --name NAME --url URL 添加软件源；APT 另需 --suite SUITE --components main --signed-by /key，DNF 使用 --gpgkey URL。
     sources add/enable/disable/remove 为添加、启用、禁用、删除软件源的别名。修改软件源先生成草稿，经审阅后使用 --apply --expected-version 保存。

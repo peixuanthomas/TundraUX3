@@ -4,13 +4,13 @@ ui-test-help = 用法：tundra-cli debug ui-test
     F1-F6 或 PageUp/PageDown 切换页面；鼠标或触屏可点击底部按钮切换。
     Tab/Shift+Tab 切换焦点；方向键选择项目；输入框和命令面板支持输入与粘贴。
     Esc、Ctrl+C 或退出按钮关闭演示并恢复终端。最小尺寸：88 列 × 30 行。
-    所有数据都是临时示例，不读写配置、主题、语言文件、日志或保存的状态。
+    所有数据都是临时示例，不会读写配置或保存状态。
 ui-test-terminal-required = debug ui-test 需要交互式终端（标准输入和标准输出）。
 ui-test-title = 共享 UI 控件 — debug ui-test
 ui-test-keys = F1-F6 / PgUp / PgDn：翻页 · Tab / Shift+Tab：焦点 · 方向键：选择 · Esc：退出
 ui-test-small = 请将终端放大到至少 88 列 × 30 行。
-ui-test-safe = 仅使用示例数据，操作不会改变文件或设置。
-ui-test-activated = 已触发演示操作，没有改变文件或设置。
+ui-test-safe = 仅使用示例数据。
+ui-test-activated = 演示操作已触发。
 ui-test-basic = 基础
 ui-test-selection = 选择
 ui-test-navigation = 导航
