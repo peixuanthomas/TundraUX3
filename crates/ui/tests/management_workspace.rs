@@ -1,4 +1,5 @@
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+use std::sync::Arc;
 use ui::components::{ButtonFrame, WorkspaceFocus};
 use ui::*;
 
@@ -37,6 +38,70 @@ fn model(advanced_open: bool) -> ManagementViewModel {
         actions_focused: true,
         selected_action: 6,
         ..Default::default()
+    }
+}
+
+#[test]
+fn packages_distinguishes_navigation_table_details_and_empty_rows() {
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
+    for language in ["en-US", "zh-CN"] {
+        let snapshot = i18n::LanguageSnapshot::load(&assets, language, 1)
+            .unwrap()
+            .snapshot;
+        let _language = i18n::enter_snapshot(Arc::new(snapshot));
+        for (width, height) in [(108, 20), (120, 36), (180, 50)] {
+            for color in [
+                ColorCapability::TrueColor,
+                ColorCapability::Indexed,
+                ColorCapability::Ansi,
+            ] {
+                let main = Rect::new(0, 1, width, height - 2);
+                let mut model = model(false);
+                model.rows.truncate(4);
+                model.rows[0][0] = "宽字符 e\u{301}".into();
+                let layout = management_layout(main, &model);
+                let nav = layout.workspace.as_ref().unwrap().navigation[0];
+                let context = RenderContext::from_theme(
+                    &TundraTheme::default(),
+                    MotionFrame::reduced(std::time::Duration::ZERO),
+                    RenderCapabilities {
+                        color,
+                        ..Default::default()
+                    },
+                );
+                let tokens = context.theme;
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal
+                    .draw(|frame| render_management_content(frame, main, &model, &context))
+                    .unwrap();
+                let buffer = terminal.backend().buffer();
+                assert_eq!(buffer[(nav.x, nav.y)].bg, tokens.raised);
+                assert_eq!(
+                    buffer[(layout.details_text.x, layout.details_text.y)].bg,
+                    tokens.raised
+                );
+                assert_eq!(
+                    buffer[(layout.headers[0].1.x, layout.headers[0].1.y)].bg,
+                    tokens.raised
+                );
+                let x = layout.list_rows.right() - 1;
+                let y = layout.list_rows.y;
+                assert_eq!(buffer[(x, y)].bg, tokens.accent_soft);
+                assert_eq!(buffer[(x, y + 1)].bg, tokens.row_background(1));
+                assert_eq!(buffer[(x, y + 2)].bg, tokens.row_background(2));
+                if color != ColorCapability::Ansi {
+                    assert_ne!(buffer[(x, y + 1)].bg, buffer[(x, y + 2)].bg);
+                }
+                model.rows.clear();
+                model.empty_message = "No result".into();
+                terminal
+                    .draw(|frame| render_management_content(frame, main, &model, &context))
+                    .unwrap();
+                let buffer = terminal.backend().buffer();
+                assert_eq!(buffer[(x, y)].bg, tokens.surface);
+                assert_eq!(buffer[(layout.list_rows.x, y)].fg, tokens.muted);
+            }
+        }
     }
 }
 

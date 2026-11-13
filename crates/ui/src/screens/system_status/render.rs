@@ -96,6 +96,7 @@ pub fn render_system_status_content(
 ) {
     let l = system_status_layout(main, model);
     Surface::new()
+        .on_canvas()
         .titled(i18n::tr!("ui-system-status-system-status"))
         .bordered(false)
         .render_frame(frame, l.panel, context);

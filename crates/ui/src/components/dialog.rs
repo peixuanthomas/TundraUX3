@@ -194,7 +194,7 @@ impl Dialog {
         self.block(theme).render(area, buffer);
         self.render_body(area, buffer, theme);
 
-        let buttons = self.buttons_for_render();
+        let buttons = self.buttons_for_render(theme);
         for (index, action_area) in self.action_layout(area) {
             if let Some(button) = buttons.get(index) {
                 button.render_borderless(action_area, buffer, theme);
@@ -217,11 +217,11 @@ impl Dialog {
             Paragraph::new(self.body.join("\n"))
                 .wrap(Wrap { trim: false })
                 .alignment(HorizontalAlignment::Left)
-                .style(theme.raised_style()),
+                .style(theme.raised_style().fg(theme.muted)),
             Rect::new(inner.x, inner.y, inner.width, body_height),
         );
 
-        let buttons = self.buttons_for_render();
+        let buttons = self.buttons_for_render(theme);
         for (index, action_area) in self.action_layout(area) {
             if let Some(button) = buttons.get(index) {
                 button.render_borderless_frame(frame, action_area, theme);
@@ -361,7 +361,8 @@ impl Dialog {
         }
     }
 
-    fn buttons_for_render(&self) -> Vec<Button> {
+    fn buttons_for_render(&self, theme: &TundraTheme) -> Vec<Button> {
+        let background = theme.tokens().raised;
         self.actions
             .iter()
             .enumerate()
@@ -373,7 +374,7 @@ impl Dialog {
                     .unwrap_or_else(|| Button::new(action.id.clone(), action.label.clone()));
                 button.state.focused = self.state.focused && self.selected_action == Some(index);
                 button.state.selected = self.selected_action == Some(index);
-                button
+                button.with_background(background).with_selection_fill()
             })
             .collect()
     }
@@ -384,7 +385,7 @@ impl Dialog {
         Paragraph::new(self.body.join("\n"))
             .wrap(Wrap { trim: false })
             .alignment(HorizontalAlignment::Left)
-            .style(theme.raised_style())
+            .style(theme.raised_style().fg(theme.muted))
             .render(
                 Rect::new(inner.x, inner.y, inner.width, body_height),
                 buffer,

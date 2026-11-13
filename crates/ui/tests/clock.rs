@@ -6,7 +6,6 @@ mod support;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
-use ratatui::style::Color;
 use support::terminal_output;
 
 use ui::{
@@ -119,11 +118,10 @@ fn create_dialog_renders_time_fields_error_and_both_focusable_actions() {
     assert!(output.contains("F3 Set alarm"));
     assert!(output.contains("F4 Set timer"));
     assert!(output.contains("Esc Cancel"));
-    assert!(region_has_fg(
-        &terminal,
-        dialog.create_countdown,
+    assert_eq!(
+        terminal.backend().buffer()[(dialog.create_countdown.x, dialog.create_countdown.y)].bg,
         TundraTheme::default_dark().accent_color,
-    ));
+    );
 }
 
 #[test]
@@ -268,17 +266,6 @@ fn region_text(terminal: &Terminal<TestBackend>, area: Rect) -> String {
         .filter_map(|position| buffer.cell(position))
         .map(|cell| cell.symbol())
         .collect()
-}
-
-fn region_has_fg(terminal: &Terminal<TestBackend>, area: Rect, fg: Color) -> bool {
-    let buffer = terminal.backend().buffer();
-    (area.y..area.bottom()).any(|y| {
-        (area.x..area.right()).any(|x| {
-            buffer
-                .cell((x, y))
-                .is_some_and(|cell| cell.fg == fg && cell.symbol() != " ")
-        })
-    })
 }
 
 fn rect_contains(outer: Rect, inner: Rect) -> bool {

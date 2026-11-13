@@ -604,12 +604,12 @@ fn notification_layout_and_renderer_share_wrapped_message_and_stacked_action_rec
     assert!(region_has_bg(
         &terminal,
         layout.actions[0].area,
-        TundraTheme::default_dark().background,
+        theme.accent_color,
     ));
     assert!(region_has_fg(
         &terminal,
         layout.actions[0].area,
-        TundraTheme::default_dark().accent_color,
+        theme.tokens().filled_style(theme.accent_color).fg.unwrap(),
     ));
     assert!(region_has_fg(
         &terminal,

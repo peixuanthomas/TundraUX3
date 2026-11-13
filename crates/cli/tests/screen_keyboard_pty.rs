@@ -23,9 +23,9 @@ const ACCENT: vt100::Color = vt100::Color::Rgb(12, 34, 56);
 const PRESSED: vt100::Color = vt100::Color::Idx(15);
 const TEXT: vt100::Color = vt100::Color::Rgb(140, 160, 180);
 // The demo's surrounding AA controls retain ordinary page button colors.
-const PAGE_TEXT: vt100::Color = vt100::Color::Rgb(230, 230, 230);
+const PAGE_TEXT: vt100::Color = vt100::Color::Rgb(230, 241, 244);
 const PAGE_PRESSED: vt100::Color = vt100::Color::Rgb(97, 111, 125);
-const CANVAS: vt100::Color = vt100::Color::Rgb(16, 16, 16);
+const CANVAS: vt100::Color = vt100::Color::Rgb(7, 17, 22);
 const SEEDED_CLIPBOARD: &str = "Seed中文\nλZ\u{1}";
 const COPIED_TEXT: &str = "Seed中文\nλZ\nΩ\nTail\nPaste汉!";
 

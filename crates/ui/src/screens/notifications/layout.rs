@@ -245,9 +245,7 @@ fn horizontal_action_layouts(
         .unwrap_or(u16::MAX)
         .saturating_mul(NOTIFICATION_ACTION_GAP);
     let total_width = labels_width.saturating_add(gaps);
-    let mut x = inner
-        .x
-        .saturating_add(inner.width.saturating_sub(total_width) / 2);
+    let mut x = inner.right().saturating_sub(total_width);
 
     metrics
         .iter()

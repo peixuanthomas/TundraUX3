@@ -1,6 +1,8 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Borders, HighlightSpacing, List as RatatuiList, ListItem as RatatuiListItem,
     ListState as RatatuiListState, StatefulWidget,
@@ -298,32 +300,51 @@ impl List {
 
     fn ratatui_widget<'a>(&'a self, theme: &TundraTheme, bordered: bool) -> RatatuiList<'a> {
         let start = self.viewport_start.unwrap_or(0);
+        let tokens = theme.tokens();
         let items = self
             .items
             .iter()
             .enumerate()
             .skip(start)
             .map(|(index, item)| {
-                let label = match &item.description {
-                    Some(description) => format!("{} - {}", item.label, description),
-                    None => item.label.clone(),
-                };
                 let mut style = item_style(
                     self.state.focused && self.selected == Some(index),
                     self.hovered == Some(index),
                     false,
                     item.disabled,
                     theme,
-                );
+                )
+                .bg(tokens.row_background(index));
                 if !item.disabled && self.selected != Some(index) && self.hovered != Some(index) {
                     style = style.fg(tone_color(item.tone, theme));
                 }
-                RatatuiListItem::new(label).style(style)
+                let mut line = Line::from(item.label.as_str());
+                if let Some(description) = &item.description {
+                    line.push_span(Span::styled(
+                        format!(" {description}"),
+                        Style::default().fg(if item.disabled {
+                            theme.disabled_style().fg.unwrap_or(tokens.muted)
+                        } else {
+                            tokens.muted
+                        }),
+                    ));
+                }
+                RatatuiListItem::new(line).style(style)
             });
         let selected_disabled = self
             .selected
             .and_then(|index| self.items.get(index))
             .is_some_and(|item| item.disabled);
+        let mut highlight = if selected_disabled {
+            theme.disabled_style().bg(tokens.surface)
+        } else {
+            tokens
+                .filled_style(tokens.accent)
+                .add_modifier(Modifier::BOLD)
+        };
+        if !selected_disabled && self.state.focused && theme.keyboard_focus_visible() {
+            highlight = highlight.add_modifier(Modifier::UNDERLINED);
+        }
         let widget = RatatuiList::new(items)
             .style(theme.surface_style())
             .highlight_symbol(self.highlight_symbol.as_deref().unwrap_or(""))
@@ -332,13 +353,7 @@ impl List {
             } else {
                 HighlightSpacing::Never
             })
-            .highlight_style(item_style(
-                self.state.focused,
-                false,
-                true,
-                selected_disabled,
-                theme,
-            ));
+            .highlight_style(highlight);
 
         if !bordered && self.title.is_none() {
             return widget;

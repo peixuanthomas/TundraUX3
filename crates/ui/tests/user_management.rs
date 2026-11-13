@@ -6,7 +6,6 @@ mod support;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
-use ratatui::style::Color;
 use support::terminal_output;
 use ui::{
     HomeDisplayMode, NotificationTone, ShellChromeViewModel, StatusViewModel, TundraTheme,
@@ -158,11 +157,10 @@ fn create_form_is_a_modal_with_role_password_and_action_focus() {
     assert!(output.contains("F10 Create"));
     assert!(output.contains("Esc Cancel"));
     assert!(!output.contains("Ctrl+Enter: Create"));
-    assert!(region_has_fg(
-        &terminal,
-        form.submit,
-        TundraTheme::default_dark().accent_color
-    ));
+    assert_eq!(
+        terminal.backend().buffer()[(form.submit.x, form.submit.y)].bg,
+        TundraTheme::default_dark().accent_color,
+    );
 }
 
 #[test]
@@ -337,16 +335,6 @@ fn render(
         ui::ShellLayout::Compact(_) => panic!("test requires full layout"),
     };
     (terminal, main)
-}
-
-fn region_has_fg(terminal: &Terminal<TestBackend>, area: Rect, fg: Color) -> bool {
-    let buffer = terminal.backend().buffer();
-    (area.y..area.bottom()).any(|y| {
-        (area.x..area.right()).any(|x| {
-            let cell = &buffer[(x, y)];
-            cell.fg == fg && !cell.symbol().trim().is_empty()
-        })
-    })
 }
 
 #[test]

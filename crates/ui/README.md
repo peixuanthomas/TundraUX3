@@ -52,7 +52,7 @@ Enter moves to the next field and submits from the last field; Space or a tap to
 
 Selection dialogs keep this extended scrollbar hit area clear of option rows and the Close button, including the last row of long paths.
 
-Ordinary workspaces use headings, backgrounds, and whitespace instead of complete frames. Navigation entries and table rows use one line. Shared spacing is one row between groups, two columns between groups, and one cell between grid items; full rows remain clickable. A modal, menu, or input may retain one boundary.
+Ordinary workspaces use headings, backgrounds, and whitespace. Navigation entries and table rows use one line with alternating backgrounds and full-row targets. Detail panes and column headings use a raised background. Dialogs use the raised background, muted explanatory text, and a full-width accent fill on the active option.
 
 ### Page controls
 
@@ -68,9 +68,9 @@ Ordinary workspaces use headings, backgrounds, and whitespace instead of complet
 
 `TextInput` provides a cursor, selection, scrolling, and password masking. Button hover, pressed, focused, current-item, and disabled styles are calculated centrally by `TundraTheme` and `RenderContext`. See [UI requirements](../../docs/UI-requirements.md) for keyboard, mouse, and touchscreen rules.
 
-The default palette is canvas `#101010`, surface `#181818`, raised surface `#242424`, text `#E6E6E6`, muted text `#999999`, accent `#63D3E5`, and border `#383838`. Ordinary buttons use plain text; primary actions use accent fill, while danger actions retain semantic color. Current-item and multi-selection backgrounds remain independent of keyboard focus. Explicit saved appearance settings remain supported.
+The default palette uses the Glacier Night canvas `#071116`, surface `#0D1B22`, alternate row `#162832`, and raised surface `#192C36`. Current-item and multi-selection backgrounds remain independent of keyboard focus. Explicit saved appearance settings remain supported.
 
-Compatibility themes retain the frame's terminal color capability when rebuilding surface and semantic colors, so shared buttons and legacy renderers keep ANSI output free of RGB colors.
+Compatibility themes retain the frame's color capability. Terminals with 256 colors use a navy canvas and distinct dark shades. Terminals with 16 colors use blue and black.
 
 ## Animations
 

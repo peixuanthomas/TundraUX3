@@ -4,20 +4,22 @@ This is the shared design and acceptance contract for the complete interface: st
 
 ## Visual language and density
 
-The default dark appearance uses neutral surfaces and one accent. Theme overrides and explicit saved appearance choices remain supported.
+The default appearance uses dark blue backgrounds and one accent. Theme overrides and explicit saved appearance choices remain supported.
 
 | Token | Default | Use |
 | --- | --- | --- |
-| Canvas | `#101010` | Full-frame background |
-| Surface | `#181818` | Grouped or selected content |
-| Raised surface | `#242424` | Raised controls and overlays |
-| Text | `#E6E6E6` | Normal readable content |
-| Muted text | `#999999` | Secondary information |
+| Canvas | `#071116` | Full-frame background |
+| Surface | `#0D1B22` | Navigation, lists, and content groups |
+| Alternate row | `#162832` | Every other list or table row |
+| Raised surface | `#192C36` | Detail panes, table headers, and dialogs |
+| Text | `#E6F1F4` | Normal readable content |
+| Muted text | `#8EA7B0` | Secondary information |
 | Accent | `#63D3E5` | Focus and primary actions |
 | Border | `#383838` | Inputs and necessary overlay boundaries |
 
 - Separate ordinary pages, groups, lists, tables, and action areas with headings, whitespace, alignment, or a change of background. Do not draw complete boxes around them or nest decorative frames.
 - A modal, menu, or input may use one boundary. Temporary messages use the shared surface and the corresponding success, warning, or danger color.
+- Use a shaded backdrop and a raised panel for modal dialogs. Keep the title, message, and actions visually separate. In option lists, fill the active row across its full width and mute secondary text on the other rows.
 - Ordinary buttons use plain action text without `[]`. Primary actions use an accent fill; destructive actions use the danger color. Selection and the current item use background emphasis independently of keyboard focus.
 - Navigation entries and table rows each occupy one terminal row. Use one row between groups, two columns between adjacent groups, and one cell between grid items. Keep a complete row clickable, including its padding, for mouse and touch.
 - The title bar and status bar each occupy one row. A 108 × 20 terminal therefore retains 18 content rows. Tasks, Help, Back, and the clock remain available; use compact labels when needed. The keyboard entry sits in the status row immediately before the clock.

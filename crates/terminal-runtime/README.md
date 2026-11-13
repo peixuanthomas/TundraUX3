@@ -20,7 +20,7 @@ Shell decides when to take over or hand back the terminal; this crate applies an
 
 `TerminalGuard` manages raw mode, the alternate screen, mouse, focus, bracketed paste, and enhanced key reporting. Normal exit, temporary handoff of the terminal, and catchable failures all restore modes enabled by the program.
 
-Startup detection can read the terminal's base colors, default foreground/background, and true-color capability. Queries support fragmented replies and common terminators; rendering only reads cached results. WSL in Windows Terminal prefers win32-input-mode; other terminals use Kitty or xterm key reporting according to their capabilities.
+Startup detection can read the terminal's base colors, default foreground/background, and true-color capability. A `-256color` terminal uses indexed colors when true color is unavailable. Queries support fragmented replies and common terminators; rendering only reads cached results. WSL in Windows Terminal prefers win32-input-mode; other terminals use Kitty or xterm key reporting according to their capabilities.
 
 ## Child terminals
 

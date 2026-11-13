@@ -15,6 +15,7 @@ pub struct Surface {
     pub bordered: bool,
     pub raised: bool,
     pub border_shape: Option<crate::BorderShape>,
+    canvas: bool,
 }
 
 impl Default for Surface {
@@ -31,6 +32,7 @@ impl Surface {
             bordered: false,
             raised: false,
             border_shape: None,
+            canvas: false,
         }
     }
     pub const fn border_shape(mut self, border_shape: crate::BorderShape) -> Self {
@@ -50,6 +52,11 @@ impl Surface {
 
     pub const fn raised(mut self, raised: bool) -> Self {
         self.raised = raised;
+        self
+    }
+
+    pub const fn on_canvas(mut self) -> Self {
+        self.canvas = true;
         self
     }
 
@@ -132,11 +139,14 @@ impl Surface {
 
     fn block(&self, context: &RenderContext) -> Block<'_> {
         let tokens = context.theme;
-        let style = Style::default().fg(tokens.text).bg(if self.raised {
+        let background = if self.raised {
             tokens.raised
+        } else if self.canvas {
+            tokens.canvas
         } else {
             tokens.surface
-        });
+        };
+        let style = Style::default().fg(tokens.text).bg(background);
         let mut block = Block::default().style(style);
         if self.bordered {
             // Colour the border glyphs without painting a band around the panel.
@@ -170,7 +180,7 @@ impl Surface {
                 .bg(if self.bordered {
                     tokens.canvas
                 } else {
-                    style.bg.unwrap_or(tokens.surface)
+                    background
                 })
                 .add_modifier(Modifier::BOLD);
             if self.focused

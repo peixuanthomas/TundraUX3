@@ -907,6 +907,7 @@ pub fn render_launcher_content(
     let layout = launcher_layout(main, model);
     let theme = &context.compatibility_theme();
     Surface::new()
+        .on_canvas()
         .titled(i18n::tr!(
             "ui-launcher-title",
             mode = if model.organizing {
@@ -1236,7 +1237,7 @@ fn render_launcher_confirmation(
         .render_frame(frame, layout.area, context);
     frame.render_widget(
         Paragraph::new(dialog.message.clone())
-            .style(theme.body_style())
+            .style(theme.raised_style().fg(theme.muted))
             .alignment(HorizontalAlignment::Center)
             .wrap(Wrap { trim: true }),
         layout.message,
@@ -1244,14 +1245,18 @@ fn render_launcher_confirmation(
     let mut confirm = Button::new(
         "launcher.confirmation.confirm",
         format!("Y {}", dialog.confirm_label),
-    );
+    )
+    .with_background(context.theme.raised)
+    .with_selection_fill();
     confirm.state.selected = dialog.confirm_selected;
     confirm.render_borderless_frame(frame, layout.confirm, theme);
 
     let mut cancel = Button::new(
         "launcher.confirmation.cancel",
         format!("Esc {}", dialog.cancel_label),
-    );
+    )
+    .with_background(context.theme.raised)
+    .with_selection_fill();
     cancel.state.selected = !dialog.confirm_selected;
     cancel.render_borderless_frame(frame, layout.cancel, theme);
 }

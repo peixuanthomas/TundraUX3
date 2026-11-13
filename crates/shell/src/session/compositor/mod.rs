@@ -339,7 +339,9 @@ impl ScreenCompositor {
         state.refresh_hit_map_with_frame_layout(context.transitions, layout);
         self.motion
             .update_layout(state, &layout, context.theme, context.motion.reduced_motion);
-        ui::components::Surface::new().render_frame(frame, bounds, context);
+        ui::components::Surface::new()
+            .on_canvas()
+            .render_frame(frame, bounds, context);
         let management = matches!(prepared.page, ScreenViewModel::Management(_))
             .then(|| state.to_management_view_model());
         let script = matches!(prepared.page, ScreenViewModel::Script(_))
@@ -410,7 +412,17 @@ impl ScreenCompositor {
             ui::render_compact_home(frame, layout.main, &chrome, &context.compatibility_theme());
         }
         if visible_content {
+            let mut page_dialogs = overlays.iter().filter(|overlay| {
+                overlay.category == super::overlays::ShellOverlayCategory::PageDialog
+            });
+            let page_dialog_open = page_dialogs.next().is_some();
+            if page_dialog_open {
+                ui::dim_backdrop(frame.buffer_mut(), layout.main, context);
+            }
             content.render_overlay_underlay(frame, &layout, context);
+            if page_dialogs.next().is_some() {
+                ui::dim_backdrop(frame.buffer_mut(), layout.main, context);
+            }
         }
         let capture_after_page_overlays =
             self.motion.needs_shell_modal_base() || self.motion.needs_page_overlay_base();
@@ -457,6 +469,12 @@ impl ScreenCompositor {
         state.displayed_status = Some(displayed_status.full_message());
         if capture_after_page_overlays {
             self.motion.capture_base(frame.buffer_mut(), state);
+        }
+        if prepared.notification.is_some()
+            || prepared.help.is_some()
+            || prepared.time_sync.is_some()
+        {
+            ui::dim_backdrop(frame.buffer_mut(), layout.main, context);
         }
         if let Some(capture) = &mut capture
             && (prepared.notification.is_some()

@@ -3,7 +3,7 @@ use ratatui::{
     layout::{HorizontalAlignment, Rect},
 };
 
-use super::Button;
+use super::{Button, Surface};
 use crate::RenderContext;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -38,6 +38,7 @@ pub struct SidebarWorkspaceLayout {
     pub navigation: Vec<Rect>,
     pub content: Rect,
     pub vertical: bool,
+    sidebar: Rect,
 }
 
 impl SidebarWorkspaceLayout {
@@ -61,6 +62,7 @@ impl SidebarWorkspaceLayout {
             && capacity > 0
             && (active.is_some() || usize::from(area.height) >= labels.len());
         let mut navigation = Vec::new();
+        let mut sidebar = Rect::default();
         let content = if vertical {
             let width = labels
                 .iter()
@@ -68,6 +70,7 @@ impl SidebarWorkspaceLayout {
                 .max()
                 .unwrap_or(0)
                 .min(area.width / 3);
+            sidebar = Rect::new(area.x, area.y, width, area.height);
             let start = active
                 .unwrap_or(0)
                 .saturating_sub(capacity - 1)
@@ -109,6 +112,7 @@ impl SidebarWorkspaceLayout {
             navigation,
             content,
             vertical,
+            sidebar,
         }
     }
 
@@ -146,6 +150,9 @@ impl SidebarWorkspaceLayout {
         context: &RenderContext,
     ) {
         let theme = context.compatibility_theme();
+        if !self.sidebar.is_empty() {
+            Surface::new().render_frame(frame, self.sidebar, context);
+        }
         for (index, (button, area)) in buttons.iter().zip(&self.navigation).enumerate() {
             if area.is_empty() {
                 continue;
@@ -155,6 +162,7 @@ impl SidebarWorkspaceLayout {
                 .with_label_alignment(HorizontalAlignment::Left)
                 .with_bracketed_label(false)
                 .with_capture_name(button.label.clone())
+                .with_background(context.theme.row_background(index))
                 .with_current(index == active);
             button.label = format!(
                 "{} {}",

@@ -61,7 +61,7 @@ fn ordinary_key_legends_meet_contrast_without_losing_custom_colors_or_feedback()
         (
             TundraTheme::default_dark(),
             ui::RenderCapabilities::default(),
-            Color::Rgb(125, 125, 125),
+            Color::Rgb(123, 123, 123),
         ),
         (
             TundraTheme::default_dark().with_border_color(Color::Rgb(140, 160, 180)),
@@ -80,7 +80,7 @@ fn ordinary_key_legends_meet_contrast_without_losing_custom_colors_or_feedback()
         (
             TundraTheme::default_dark(),
             ui::RenderCapabilities::ansi(),
-            Color::DarkGray,
+            Color::White,
         ),
         (
             TundraTheme::default_dark().with_border_color(Color::Black),

@@ -9,7 +9,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Clear, Paragraph},
 };
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthStr;
 
 #[path = "management_workspace.rs"]
 mod workspace;
@@ -276,7 +276,7 @@ fn management_choice_width(form: &ManagementForm, choice: &ManagementChoices) ->
     let decoration = if management_choice_is_menu(form) {
         0
     } else {
-        4
+        2
     };
     choice
         .values
@@ -1620,13 +1620,7 @@ pub fn management_button_regions(
     }
     buttons
 }
-fn render_text(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    text: &str,
-    offset: usize,
-    context: &RenderContext,
-) {
+fn render_text(frame: &mut Frame<'_>, area: Rect, text: &str, offset: usize, style: Style) {
     let lines = management_wrapped_lines(text, area.width);
     let offset = offset.min(lines.len().saturating_sub(usize::from(area.height)));
     frame.render_widget(
@@ -1637,7 +1631,7 @@ fn render_text(
                 .map(Line::from)
                 .collect::<Vec<_>>(),
         )
-        .style(context.compatibility_theme().body_style()),
+        .style(style),
         area,
     );
 }
@@ -1659,7 +1653,7 @@ pub fn render_management_content(
     let context = &content_context;
     let theme = context.compatibility_theme();
     let layout = management_layout(main, model);
-    let selected = theme.body_style().bg(context.theme.accent_soft);
+    let tokens = context.theme;
     let list_focused = !model.filtering
         && !model.actions_focused
         && model.form.is_none()
@@ -1747,7 +1741,7 @@ pub fn render_management_content(
                 layout.output_text,
                 &model.output,
                 usize::from(model.output_scroll),
-                context,
+                theme.body_style(),
             );
         }
     } else {
@@ -1755,10 +1749,13 @@ pub fn render_management_content(
             model.workspace.as_ref().is_some_and(|workspace| {
                 workspace.focus == crate::components::WorkspaceFocus::Details
             }) && model.form.is_none();
+        if !layout.list.is_empty() {
+            Surface::new()
+                .titled(i18n::tr!("management-touch-items"))
+                .render_frame(frame, layout.list, context);
+        }
         Surface::new()
-            .titled(i18n::tr!("management-touch-items"))
-            .render_frame(frame, layout.list, context);
-        Surface::new()
+            .raised(true)
             .focused(details_focused)
             .titled(i18n::tr!("management-touch-details"))
             .render_frame(frame, layout.details, context);
@@ -1787,10 +1784,6 @@ pub fn render_management_content(
                 })
                 .collect::<String>()
         };
-        let mut lines = vec![Line::styled(
-            table_line(&model.columns),
-            theme.title_style(),
-        )];
         if crate::automation::enabled() {
             let _table = crate::automation::scope(
                 &format!("management.rows.{}", model.scope_id),
@@ -1841,6 +1834,15 @@ pub fn render_management_content(
                 }
             }
         }
+        let header = Rect::new(
+            layout.list.x,
+            pane_inner(layout.list).y,
+            layout.list.width,
+            u16::from(layout.list.height > 1),
+        );
+        frame
+            .buffer_mut()
+            .set_style(header, Style::default().bg(tokens.raised));
         for (index, row) in model
             .rows
             .iter()
@@ -1848,30 +1850,36 @@ pub fn render_management_content(
             .skip(model.scroll)
             .take(layout.list_capacity)
         {
-            let mut style = if model
+            let selected = model
                 .selected_rows
                 .as_ref()
-                .map_or(index == model.selected, |rows| rows.contains(&index))
-            {
-                selected
+                .map_or(index == model.selected, |rows| rows.contains(&index));
+            let style = theme.body_style().bg(if selected {
+                tokens.accent_soft
+            } else if index == model.selected {
+                tokens.raised
             } else {
-                theme.body_style()
-            };
-            if index == model.selected && list_focused && theme.keyboard_focus_visible() {
-                style = style.add_modifier(Modifier::UNDERLINED);
-            }
-            lines.push(Line::styled(table_line(row), style));
+                tokens.row_background(index)
+            });
+            let line_style =
+                if index == model.selected && list_focused && theme.keyboard_focus_visible() {
+                    style.add_modifier(Modifier::UNDERLINED)
+                } else {
+                    style
+                };
+            let area = Rect::new(
+                layout.list_rows.x,
+                layout.list_rows.y + (index - model.scroll) as u16,
+                layout.list_rows.width,
+                1,
+            );
+            frame.render_widget(
+                Paragraph::new(Line::styled(table_line(row), line_style))
+                    .style(style)
+                    .scroll((0, model.table_scroll.min(u16::MAX as usize) as u16)),
+                area,
+            );
         }
-        let area = Rect::new(
-            layout.list_rows.x,
-            layout.list_rows.y.saturating_sub(1),
-            layout.list_rows.width,
-            layout.list_rows.height.saturating_add(1),
-        );
-        frame.render_widget(
-            Paragraph::new(lines).scroll((0, model.table_scroll.min(u16::MAX as usize) as u16)),
-            area.intersection(main),
-        );
         if model.rows.is_empty() {
             let message = if model.loading {
                 format!(
@@ -1884,7 +1892,13 @@ pub fn render_management_content(
             } else {
                 model.empty_message.clone()
             };
-            render_text(frame, layout.list_rows, &message, 0, context);
+            render_text(
+                frame,
+                layout.list_rows,
+                &message,
+                0,
+                Style::default().fg(tokens.muted),
+            );
         }
         for (index, area) in &layout.headers {
             let label = model.sort.map_or_else(
@@ -1894,20 +1908,13 @@ pub fn render_management_content(
             let hidden = model
                 .table_scroll
                 .saturating_sub(layout.column_widths[..*index].iter().sum());
-            let mut cells = 0;
-            let label = label
-                .chars()
-                .filter(|c| {
-                    let visible = cells >= hidden;
-                    cells += c.width().unwrap_or(0);
-                    visible
-                })
-                .collect::<String>();
+            let label = management_clipped_line(&label, hidden, area.width);
             Button::new(
                 management_header_id(model, *index),
                 crate::table_sort::table_header_text(&label, area.width),
             )
             .with_bracketed_label(false)
+            .with_background(tokens.raised)
             .render_borderless_frame(frame, *area, &theme);
         }
         if model.workspace.is_some() && model.details_only {
@@ -1947,7 +1954,7 @@ pub fn render_management_content(
                         })
                         .collect::<Vec<_>>(),
                 )
-                .style(theme.body_style()),
+                .style(Style::default().fg(tokens.text)),
                 layout.details_text,
             );
         } else {
@@ -1985,7 +1992,7 @@ pub fn render_management_content(
                         })
                         .collect::<Vec<_>>(),
                 )
-                .style(theme.body_style()),
+                .style(Style::default().fg(tokens.text)),
                 layout.details_text,
             );
         }
@@ -2118,21 +2125,12 @@ pub fn render_management_overlay(
                     }
                 )
             };
-            let mut columns = 0;
-            let text = text
-                .chars()
-                .skip_while(|c| {
-                    if columns < choice.columns {
-                        columns += c.width().unwrap_or(0);
-                        true
-                    } else {
-                        false
-                    }
-                })
-                .collect::<String>();
+            let text = management_clipped_line(&text, choice.columns, area.width);
             let mut button = Button::new(management_choice_id(form, *index), text)
-                .with_current(!is_menu && *index == choice.selected);
-            button.bracketed_label = !is_menu;
+                .with_background(context.theme.raised)
+                .with_selection_fill()
+                .with_label_alignment(ratatui::layout::HorizontalAlignment::Left)
+                .with_capture_name(value);
             button.set_disabled(choice.disabled.get(*index).copied().unwrap_or(false));
             button.state.selected = *index == choice.selected;
             button.render_borderless_frame(frame, *area, &theme);
@@ -2141,6 +2139,7 @@ pub fn render_management_overlay(
             management_form_control_id(form, "choice.cancel"),
             i18n::tr!("management-form-close"),
         )
+        .with_background(context.theme.raised)
         .render_borderless_frame(frame, layout.choice_cancel, &theme);
         for bar in &layout.scrollbars {
             if matches!(
@@ -2157,7 +2156,7 @@ pub fn render_management_overlay(
         text_area(layout.message),
         &form.message,
         usize::from(form.message_scroll),
-        context,
+        theme.raised_style().fg(theme.muted),
     );
     for (index, area) in &layout.fields {
         let field = &form.fields[*index];
@@ -2184,9 +2183,12 @@ pub fn render_management_overlay(
                         .collect::<Vec<_>>(),
                 )
                 .style(if form.selected == *index {
-                    theme.title_style().fg(theme.accent_color)
+                    theme
+                        .raised_style()
+                        .fg(theme.accent_color)
+                        .add_modifier(Modifier::BOLD)
                 } else {
-                    theme.body_style()
+                    theme.raised_style()
                 }),
                 *area,
             );
@@ -2227,6 +2229,7 @@ pub fn render_management_overlay(
                             format!("{}.{}", management_field_id(form, *index), suffix),
                             label,
                         )
+                        .with_background(context.theme.raised)
                         .with_bracketed_label(area.width >= 3);
                         button.set_disabled(field.disabled);
                         button.render_borderless_frame(frame, area, &theme);
@@ -2244,7 +2247,7 @@ pub fn render_management_overlay(
                         .map(Line::from)
                         .collect::<Vec<_>>(),
                 )
-                .style(theme.body_style()),
+                .style(theme.raised_style()),
                 *area,
             );
             for (cell, area) in management_permission_cells(field, *area, skip) {
@@ -2254,6 +2257,7 @@ pub fn render_management_overlay(
                     _ => "[-]",
                 };
                 let mut button = Button::new(management_permission_id(form, *index, cell), value)
+                    .with_background(context.theme.raised)
                     .with_capture_role("checkbox")
                     .with_capture_selected(field.value.as_bytes().get(cell) == Some(&b'1'));
                 button.bracketed_label = false;
@@ -2267,6 +2271,7 @@ pub fn render_management_overlay(
             management_field_id(form, *index),
             lines.into_iter().skip(skip).collect::<Vec<_>>().join("\n"),
         )
+        .with_background(context.theme.surface)
         .with_current(form.selected == *index)
         .with_capture_name(&field.label)
         .with_sensitive(field.secret)
@@ -2294,9 +2299,12 @@ pub fn render_management_overlay(
             management_form_control_id(form, &action.id),
             management_wrapped_lines(&action.label(), area.width).join("\n"),
         )
-        .with_bracketed_label(false);
+        .with_bracketed_label(false)
+        .with_background(context.theme.raised)
+        .with_selection_fill();
         button.set_disabled(action.disabled);
-        button.set_focused(form.selected == form.fields.len() + index);
+        button.state.selected = form.selected == form.fields.len() + index;
+        button.set_focused(button.state.selected);
         button.render_borderless_frame(frame, *area, &theme);
     }
     for bar in &layout.scrollbars {

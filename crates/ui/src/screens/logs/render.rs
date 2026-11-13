@@ -6,6 +6,7 @@ use crate::{DiagnosticsCheckViewModel, DiagnosticsTab, DiagnosticsViewModel, Ren
 use ratatui::{
     Frame,
     layout::Rect,
+    style::Style,
     widgets::{Clear, Paragraph, Wrap},
 };
 
@@ -205,6 +206,7 @@ pub fn render_logs_content(
 
     let layout = logs_layout(main, model);
     Surface::new()
+        .on_canvas()
         .titled(i18n::tr!("ui-logs-logs"))
         .bordered(false)
         .render_frame(frame, layout.panel, context);
@@ -294,7 +296,9 @@ pub fn render_logs_content(
             )),
         );
         frame.render_widget(Clear, layout.detail_text);
-        Surface::new().render_frame(frame, layout.detail_text, context);
+        Surface::new()
+            .raised(true)
+            .render_frame(frame, layout.detail_text, context);
         let lines =
             crate::management_wrapped_lines(&logs_detail_text(model), layout.detail_text.width);
         let start = model.detail_scroll.min(
@@ -310,7 +314,7 @@ pub fn render_logs_content(
                     .map(ratatui::text::Line::from)
                     .collect::<Vec<_>>(),
             )
-            .style(theme.body_style()),
+            .style(Style::default().fg(context.theme.text)),
             layout.detail_text,
         );
         if let Some(bar) = layout.detail_scrollbar {
@@ -342,7 +346,8 @@ pub fn render_logs_overlay(
                 .find(|(_, item)| item.0 == control.target)
             {
                 let mut button = Button::new(logs_control_id(model, control.target), label.clone())
-                    .with_centered_label(true);
+                    .with_background(context.theme.raised)
+                    .with_selection_fill();
                 button.state.selected = index == selected;
                 button.set_focused(index == selected);
                 button.set_disabled(!logs_control_enabled(model, control.target));

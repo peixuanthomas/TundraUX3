@@ -90,6 +90,7 @@ fn render_user_main(
 ) {
     let theme = &context.compatibility_theme();
     Surface::new()
+        .on_canvas()
         .titled(i18n::tr!("ui-home-home"))
         .bordered(false)
         .render_frame(frame, area, context);

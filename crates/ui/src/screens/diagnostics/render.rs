@@ -38,6 +38,7 @@ pub fn render_diagnostics_page_content(
     let theme = &context.compatibility_theme();
     let layout = diagnostics_layout(main, model);
     Surface::new()
+        .on_canvas()
         .titled(i18n::tr!("ui-diagnostics-system-status-diagnostics"))
         .bordered(false)
         .render_frame(frame, layout.panel, context);
@@ -173,6 +174,7 @@ pub(crate) fn render_diagnostics_content_titled(
         .titled(title)
         .render_frame(frame, layout.list_panel, context);
     Surface::new()
+        .raised(true)
         .titled(i18n::tr!("ui-diagnostics-details"))
         .render_frame(frame, layout.detail_panel, context);
     crate::render_table_headers(
@@ -187,13 +189,13 @@ pub(crate) fn render_diagnostics_content_titled(
         if let Some((list_message, detail_message)) = empty_content {
             frame.render_widget(
                 Paragraph::new(list_message)
-                    .style(theme.muted_style())
+                    .style(Style::default().fg(context.theme.muted))
                     .wrap(Wrap { trim: true }),
                 layout.list_rows_area,
             );
             frame.render_widget(
                 Paragraph::new(detail_message)
-                    .style(theme.muted_style())
+                    .style(Style::default().fg(context.theme.muted))
                     .wrap(Wrap { trim: true }),
                 Surface::new().titled("").inner(layout.detail_panel),
             );
@@ -254,7 +256,7 @@ fn render_diagnostics_rows(
                 u16::from(layout.list_rows_area.height > 0),
             ),
             text.to_string(),
-            theme.muted_style(),
+            Style::default().fg(theme.muted),
             HorizontalAlignment::Left,
         );
         return;
@@ -330,7 +332,7 @@ fn render_diagnostics_detail(
     );
     frame.render_widget(
         Paragraph::new(lines.into_iter().skip(offset).collect::<Vec<_>>())
-            .style(theme.body_style()),
+            .style(Style::default().fg(theme.foreground)),
         content,
     );
     let context = crate::RenderContext::from_theme(theme, Default::default(), Default::default());

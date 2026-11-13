@@ -186,7 +186,7 @@ pub fn render_shell_chrome_with_status_focus(
         frame.render_widget(
             Paragraph::new(Line::styled(
                 truncate_status_text(&message, title_area.width),
-                style,
+                style.bg(context.theme.surface),
             )),
             title_area,
         );
@@ -203,6 +203,7 @@ pub fn render_shell_chrome_with_status_focus(
             ),
         )
         .with_bracketed_label(false)
+        .with_background(context.theme.surface)
         .with_centered_label(true);
         button.state.hovered = chrome.back_button_hovered;
         button.render_borderless_frame(frame, area, &theme);
@@ -210,6 +211,7 @@ pub fn render_shell_chrome_with_status_focus(
     if let Some(area) = layout.help_button {
         let mut button = Button::new("shell.help", i18n::tr!("ui-shell-help-button"))
             .with_bracketed_label(false)
+            .with_background(context.theme.surface)
             .with_centered_label(true);
         button.state.hovered = chrome.help_button_hovered;
         button.state.focused = chrome.help_button_focused;
@@ -218,6 +220,7 @@ pub fn render_shell_chrome_with_status_focus(
     if let (Some(area), Some(label)) = (layout.tasks_button, &chrome.tasks_label) {
         let mut button = Button::new("shell.tasks", label)
             .with_bracketed_label(false)
+            .with_background(context.theme.surface)
             .with_centered_label(true);
         button.state.focused = chrome.tasks_button_focused;
         button.state.hovered = chrome.tasks_button_hovered;
@@ -243,7 +246,10 @@ fn render_top(
         .unwrap_or(area.width)
         .min(area.width);
     frame.render_widget(
-        Paragraph::new(Line::styled(title, theme.title_style())),
+        Paragraph::new(Line::styled(
+            title,
+            theme.title_style().bg(context.theme.surface),
+        )),
         Rect::new(area.x, area.y, title_width, 1),
     );
     let info_width = area.width.saturating_sub(title_width.saturating_add(2));
@@ -262,8 +268,11 @@ fn render_top(
         path = candidate;
     }
     frame.render_widget(
-        Paragraph::new(Line::styled(path, theme.muted_style()))
-            .alignment(HorizontalAlignment::Right),
+        Paragraph::new(Line::styled(
+            path,
+            theme.muted_style().bg(context.theme.surface),
+        ))
+        .alignment(HorizontalAlignment::Right),
         Rect::new(
             area.right().saturating_sub(info_width),
             area.y,
@@ -292,6 +301,7 @@ fn render_status(
         message_theme.foreground = style.fg.unwrap_or(theme.foreground);
         let mut button = Button::new("shell.status", truncate_status_text(&text, message.width))
             .with_bracketed_label(false)
+            .with_background(context.theme.surface)
             .with_label_alignment(HorizontalAlignment::Left);
         button.set_focused(status_focused);
         button.render_borderless_frame(frame, message, &message_theme);
@@ -299,6 +309,7 @@ fn render_status(
     if let (Some(label), Some(area)) = (&chrome.status.time_button_label, layout.time_button) {
         let mut button = Button::new("shell.status.time", label)
             .with_bracketed_label(false)
+            .with_background(context.theme.surface)
             .with_centered_label(true);
         button.state.selected = chrome.status.time_button_selected;
         button.render_borderless_frame(frame, area, &theme);
