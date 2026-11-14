@@ -84,6 +84,14 @@ impl WindowSelection {
         self.switch(id);
     }
 
+    pub(super) fn restore(&mut self, id: SessionId, capacity: usize) {
+        if self.adding {
+            self.show(id);
+        } else {
+            self.activate(id, capacity);
+        }
+    }
+
     pub(super) fn focus(&mut self, id: SessionId) {
         if self.includes(id) {
             self.focused = Some(id);

@@ -2,8 +2,90 @@ mod edit;
 mod input;
 mod settings;
 pub(in crate::session) mod tasks;
+use crate::session::window_launch::{WindowApplication, WindowOwner};
 use crate::session::*;
 impl ShellSession {
+    pub(in crate::session) fn current_launcher_entry(
+        &self,
+        id: &str,
+    ) -> Option<&storage::LauncherEntryRecord> {
+        self.app
+            .storage_config()
+            .launcher
+            .entries
+            .iter()
+            .find(|entry| entry.id == id)
+    }
+
+    pub(in crate::session) fn sync_launcher_entries(
+        &mut self,
+        old_config: &storage::LauncherConfig,
+    ) {
+        let pages = self.pages.launcher.ids();
+        if pages.is_empty() {
+            return;
+        }
+        let config = self.app.storage_config().launcher.clone();
+        let builtins = self.built_in_launcher_applications();
+        let builtin_count = builtins.len();
+        for page in pages {
+            self.with_page_context(page, |state| {
+                let Some(previous) = state.app.launcher_state() else {
+                    return;
+                };
+                let selected = state
+                    .pages
+                    .launcher
+                    .launcher_selected_index
+                    .checked_sub(builtin_count)
+                    .and_then(|index| previous.items.get(index));
+                let mut next = LauncherState::from_config(&config);
+                for item in &mut next.items {
+                    if let Some(previous) = previous.items.iter().find(|old| {
+                        old.record.id == item.record.id
+                            && old.record.path == item.record.path
+                            && old.record.executable_kind == item.record.executable_kind
+                            && old.record.custom.is_some() == item.record.custom.is_some()
+                    }) {
+                        item.status = previous.status;
+                    }
+                }
+                next.error = previous.error.clone();
+                next.message = previous.message.clone();
+                if let Some(selected) = selected {
+                    let index = next
+                        .items
+                        .iter()
+                        .position(|item| item.record.id == selected.record.id);
+                    state.pages.launcher.launcher_selected_index = index.map_or_else(
+                        || {
+                            state
+                                .pages
+                                .launcher
+                                .launcher_selected_index
+                                .min((builtin_count + next.items.len()).saturating_sub(1))
+                        },
+                        |index| builtin_count + index,
+                    );
+                }
+                if let Some(menu) = &state.pages.launcher.context_menu
+                    && let Some(id) = &menu.id
+                    && !next.items.iter().any(|item| &item.record.id == id)
+                    && !builtins.iter().any(|application| application.id == id)
+                {
+                    state.pages.launcher.context_menu = None;
+                }
+                if old_config.order != config.order {
+                    state.pages.launcher.order.clone_from(&config.order);
+                }
+                state.app.dispatch_at(
+                    app::AppCommand::SetLauncherState(Some(next)),
+                    Instant::now(),
+                );
+            });
+        }
+    }
+
     pub(in crate::session) fn launcher_controller(&self) -> LauncherController {
         LauncherController::new(PermissionService::new(self.debug_policy))
     }
@@ -342,6 +424,15 @@ impl ShellSession {
         command: LauncherCommand,
         platform: &dyn Platform,
     ) {
+        self.apply_launcher_command_with_session(command, platform, false);
+    }
+
+    fn apply_launcher_command_with_session(
+        &mut self,
+        command: LauncherCommand,
+        platform: &dyn Platform,
+        new_session: bool,
+    ) {
         let Some(storage) = self.storage_manager.clone() else {
             self.pages.common.error_message = Some(i18n::LocalizedText::from(i18n::msg!(
                 "shell-storage-unavailable"
@@ -362,17 +453,15 @@ impl ShellSession {
                 }
             }
         }
+        let launcher_id = match &command {
+            LauncherCommand::RequestLaunch(id) | LauncherCommand::ConfirmLaunch(id) => {
+                Some(id.clone())
+            }
+            _ => None,
+        };
         let (_, effect) =
             self.app
                 .dispatch_launcher_at(command, platform, &storage, Instant::now());
-        self.handle_launcher_effect(effect, platform);
-    }
-
-    pub(in crate::session) fn handle_launcher_effect(
-        &mut self,
-        effect: LauncherEffect,
-        platform: &dyn Platform,
-    ) {
         match effect {
             LauncherEffect::None => {}
             LauncherEffect::OpenTerminalRequested {
@@ -381,9 +470,21 @@ impl ShellSession {
                 directory,
                 wait_for_enter,
             } => {
-                self.open_external_terminal(path, args, directory, wait_for_enter);
+                self.open_terminal_page(
+                    directory,
+                    Some(ExternalTerminalLaunch {
+                        program: path,
+                        args,
+                        wait_for_enter,
+                    }),
+                    launcher_id,
+                    new_session,
+                );
             }
             LauncherEffect::OpenRequested { path, kind } => {
+                if new_session {
+                    return;
+                }
                 let mut started = runtime_log::RuntimeLogEvent::new(
                     self.operation_log_context("ux.launcher", "launch_application"),
                     runtime_log::LogLevel::Info,
@@ -429,10 +530,20 @@ impl ShellSession {
                     }
                 })
             }
+            LauncherEffect::ConfirmationRequired { id, path, .. }
+                if new_session && self.window_owner == WindowOwner::Shell =>
+            {
+                self.confirm_taskbar_launcher_session(id, path);
+            }
             LauncherEffect::ConfirmationRequired { id, path, kind } => {
                 self.pages.launcher.launcher_confirm_selected = true;
                 self.pages.launcher.launcher_pending_confirmation =
-                    Some(LauncherPendingConfirmation::Launch { id, path, kind });
+                    Some(LauncherPendingConfirmation::Launch {
+                        id,
+                        path,
+                        kind,
+                        new_session,
+                    });
             }
             LauncherEffect::Added(results) => {
                 let added_ids = results
@@ -528,48 +639,49 @@ impl ShellSession {
         if self.pages.launcher.organizing {
             return;
         }
+        self.open_selected_launcher_item(platform, false);
+    }
+
+    fn open_selected_launcher_item(&mut self, platform: &dyn Platform, new_session: bool) {
         if let Some(application) = self.selected_built_in_launcher_application() {
-            match application.id {
-                id if id == app::COMMAND_LINE_APPLICATION.id => self.open_command_line(),
-                id if id == app::EDITOR_APPLICATION.id => self.open_editor(),
-                "builtin.script-editor" => self.open_script_editor(),
-                "builtin.logs" => self.open_logs(),
-                "builtin.users" => self.open_user_management(),
-                "builtin.services" => {
-                    self.open_management(platform::management::ManagementKind::Services)
+            let launch = match application.id {
+                id if id == app::COMMAND_LINE_APPLICATION.id => WindowLaunch::command_line(),
+                id if id == app::EDITOR_APPLICATION.id => WindowLaunch::Editor,
+                "builtin.script-editor" => WindowLaunch::Script,
+                _ => {
+                    self.notify_status(i18n::msg!(
+                        "shell-arg1-is-not-available-in-this-build",
+                        arg1 = application.localized_name()
+                    ));
+                    return;
                 }
-                "builtin.processes" => {
-                    self.open_management(platform::management::ManagementKind::Processes)
-                }
-                "builtin.packages" => {
-                    self.open_management(platform::management::ManagementKind::Packages)
-                }
-                "builtin.network" => {
-                    self.open_management(platform::management::ManagementKind::Network)
-                }
-                "builtin.disks" => {
-                    self.open_management(platform::management::ManagementKind::Disks)
-                }
-                "builtin.firewall" => {
-                    self.open_management(platform::management::ManagementKind::Firewall)
-                }
-                "builtin.ssh" => self.open_management(platform::management::ManagementKind::Ssh),
-                "builtin.backups" => {
-                    self.open_management(platform::management::ManagementKind::Backups)
-                }
-                "builtin.scheduled-tasks" => {
-                    self.open_management(platform::management::ManagementKind::ScheduledTasks)
-                }
-                "builtin.tasks" => self.toggle_tasks(),
-                _ => self.notify_status(i18n::LocalizedText::from(i18n::msg!(
-                    "shell-arg1-is-not-available-in-this-build",
-                    arg1 = application.localized_name()
-                ))),
+            };
+            if !new_session || !self.route_window_request(launch.clone(), true) {
+                launch.activate(self, platform);
             }
             return;
         }
         if let Some(id) = self.selected_launcher_id() {
-            self.apply_launcher_command(LauncherCommand::RequestLaunch(id), platform);
+            let terminal_entry = self.app.launcher_state().is_some_and(|state| {
+                state.items.iter().any(|item| {
+                    item.record.id == id
+                        && (item.record.custom.is_some() || item.record.terminal.is_some())
+                })
+            });
+            if !new_session
+                && self.window_owner == WindowOwner::App(WindowApplication::Launcher)
+                && self.can_execute_command_line()
+                && terminal_entry
+            {
+                self.window_launches
+                    .push_back(WindowRequest::LauncherEntry { id });
+            } else {
+                self.apply_launcher_command_with_session(
+                    LauncherCommand::RequestLaunch(id),
+                    platform,
+                    new_session,
+                );
+            }
         }
     }
 
@@ -577,10 +689,12 @@ impl ShellSession {
         if !self.pages.launcher.organizing {
             return;
         }
-        self.confirm_launcher_remove();
+        if let Some(id) = self.selected_launcher_id() {
+            self.confirm_launcher_remove_entry(&id);
+        }
     }
 
-    fn confirm_launcher_remove(&mut self) {
+    fn confirm_launcher_remove_entry(&mut self, id: &str) {
         if !self.can_manage_launcher() {
             self.update_launcher_state(|state| {
                 state.error = Some(i18n::LocalizedText::from(i18n::msg!(
@@ -589,13 +703,10 @@ impl ShellSession {
             });
             return;
         }
-        let Some(external_index) = self.selected_external_launcher_index() else {
-            return;
-        };
         let Some(item) = self
             .app
             .launcher_state()
-            .and_then(|state| state.items.get(external_index))
+            .and_then(|state| state.items.iter().find(|item| item.record.id == id))
         else {
             return;
         };
@@ -612,9 +723,13 @@ impl ShellSession {
             return;
         };
         match pending {
-            LauncherPendingConfirmation::Launch { id, .. } => {
-                self.apply_launcher_command(LauncherCommand::ConfirmLaunch(id), platform)
-            }
+            LauncherPendingConfirmation::Launch {
+                id, new_session, ..
+            } => self.apply_launcher_command_with_session(
+                LauncherCommand::ConfirmLaunch(id),
+                platform,
+                new_session,
+            ),
             LauncherPendingConfirmation::Remove { ids, .. } => {
                 self.apply_launcher_command(LauncherCommand::Remove(ids), platform)
             }

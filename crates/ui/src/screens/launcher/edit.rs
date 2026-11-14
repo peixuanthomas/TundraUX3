@@ -4,6 +4,8 @@ use crate::components::{ButtonEmphasis, TextInput};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LauncherEntryAction {
     Toolbar(LauncherToolbarAction),
+    NewSession,
+    Move,
     Name,
     Command,
     Icon,
@@ -12,22 +14,16 @@ pub enum LauncherEntryAction {
 }
 
 impl LauncherEntryAction {
-    pub const ALL: [Self; 5] = [
-        Self::Name,
-        Self::Command,
-        Self::Icon,
-        Self::WaitForEnter,
-        Self::Remove,
-    ];
-
     pub fn label(self) -> String {
         match self {
             Self::Toolbar(action) => action.label(),
+            Self::NewSession => i18n::tr!("ui-workspace-new-session"),
+            Self::Move => i18n::tr!("shell-move"),
             Self::Name => i18n::tr!("ui-launcher-change-name"),
             Self::Command => i18n::tr!("ui-launcher-change-command"),
             Self::Icon => i18n::tr!("ui-launcher-change-icon"),
             Self::WaitForEnter => i18n::tr!("ui-launcher-keep-screen"),
-            Self::Remove => i18n::tr!("ui-launcher-delete-icon"),
+            Self::Remove => i18n::tr!("shell-delete"),
         }
     }
 }
@@ -35,6 +31,8 @@ impl LauncherEntryAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LauncherContextMenu {
     pub editable: bool,
+    pub new_session: bool,
+    pub move_item: Option<bool>,
     pub toolbar: Vec<LauncherToolbarButtonViewModel>,
     pub anchor: (u16, u16),
     pub selected: usize,
@@ -44,14 +42,15 @@ pub struct LauncherContextMenu {
 
 impl LauncherContextMenu {
     pub fn actions(&self) -> impl Iterator<Item = LauncherEntryAction> + '_ {
+        use LauncherEntryAction::*;
         self.toolbar
             .iter()
-            .map(|button| LauncherEntryAction::Toolbar(button.action))
-            .chain(LauncherEntryAction::ALL.into_iter().filter(|action| {
-                self.editable
-                    && (*action != LauncherEntryAction::WaitForEnter
-                        || self.wait_for_enter.is_some())
-            }))
+            .map(|button| Toolbar(button.action))
+            .chain(self.new_session.then_some(NewSession))
+            .chain(self.move_item.map(|_| Move))
+            .chain(self.editable.then_some(Remove))
+            .chain([Name, Command, Icon].into_iter().filter(|_| self.editable))
+            .chain((self.editable && self.wait_for_enter.is_some()).then_some(WaitForEnter))
     }
 
     pub fn enabled(&self, action: LauncherEntryAction) -> bool {
@@ -60,6 +59,11 @@ impl LauncherContextMenu {
                 .toolbar
                 .iter()
                 .any(|button| button.action == action && button.enabled),
+            LauncherEntryAction::NewSession => {
+                self.new_session
+                    && self.enabled(LauncherEntryAction::Toolbar(LauncherToolbarAction::Open))
+            }
+            LauncherEntryAction::Move => self.move_item == Some(true),
             LauncherEntryAction::Command => self.command_enabled,
             _ => self.editable,
         }
@@ -152,7 +156,10 @@ pub fn launcher_context_menu_layout(main: Rect, menu: &LauncherContextMenu) -> (
         .unwrap_or(0)
         .saturating_add(6)
         .min(usize::from(main.width)) as u16;
-    let height = (menu.actions().count() as u16 + 4).min(main.height);
+    let height = (menu.actions().count() as u16 + 2).min(main.height);
+    let first = menu
+        .selected
+        .saturating_sub(usize::from(height.saturating_sub(2)).saturating_sub(1));
     let area = Rect::new(
         menu.anchor
             .0
@@ -165,15 +172,15 @@ pub fn launcher_context_menu_layout(main: Rect, menu: &LauncherContextMenu) -> (
         width,
         height,
     );
-    let rows = (0..menu.actions().count() as u16)
+    let rows = (0..menu.actions().count())
         .map(|index| {
-            Rect::new(
-                area.x.saturating_add(3),
-                area.y.saturating_add(2 + index),
-                area.width.saturating_sub(6),
-                u16::from(2 + index < area.height.saturating_sub(1)),
-            )
-            .intersection(area)
+            let Some(row) = index
+                .checked_sub(first)
+                .filter(|&row| row < usize::from(height.saturating_sub(2)))
+            else {
+                return Rect::default();
+            };
+            Rect::new(area.x, area.y + 1 + row as u16, area.width, 1).intersection(area)
         })
         .collect();
     (area, rows)

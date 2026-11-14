@@ -25,7 +25,12 @@ fn launcher_context_menu_fits_complete_button_labels_in_both_languages() {
         {
             let menu = ui::LauncherContextMenu {
                 editable: true,
-                toolbar: vec![],
+                new_session: wait_for_enter.is_some(),
+                move_item: Some(true),
+                toolbar: vec![ui::LauncherToolbarButtonViewModel::new(
+                    LauncherToolbarAction::Open,
+                    true,
+                )],
                 anchor: (main.right(), main.bottom()),
                 selected: 0,
                 command_enabled: true,
@@ -46,8 +51,11 @@ fn launcher_context_menu_fits_complete_button_labels_in_both_languages() {
                 .draw(|frame| ui::render_launcher_overlay(frame, main, &model, &context))
                 .unwrap();
             assert_eq!(area.intersection(main), area);
-            assert_eq!(rows.len(), 4 + usize::from(wait_for_enter.is_some()));
+            assert_eq!(rows.len(), 6 + 2 * usize::from(wait_for_enter.is_some()));
             for (action, row) in menu.actions().zip(rows) {
+                if row.is_empty() {
+                    continue;
+                }
                 assert_eq!(row.intersection(area), row);
                 let label = if action == ui::LauncherEntryAction::WaitForEnter {
                     format!(
@@ -80,6 +88,8 @@ fn launcher_entry_overlays_keep_wide_characters_inside_fixed_frames() {
     for main in [Rect::new(2, 3, 108, 14), Rect::new(2, 3, 42, 9)] {
         let menu = ui::LauncherContextMenu {
             editable: true,
+            new_session: false,
+            move_item: None,
             toolbar: vec![],
             anchor: (main.right(), main.bottom()),
             selected: 0,

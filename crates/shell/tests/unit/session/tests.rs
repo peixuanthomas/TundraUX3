@@ -3532,6 +3532,7 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
             id: "app-1".into(),
             path: "/first/display/path".into(),
             kind: LauncherExecutableKind::NativeBinary,
+            new_session: false,
         });
     let launch = launcher
         .active_overlay_descriptor()
@@ -3547,6 +3548,7 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
             id: "app-1".into(),
             path: "/changed/display/path".into(),
             kind: LauncherExecutableKind::NativeBinary,
+            new_session: false,
         });
     assert_eq!(
         launcher
@@ -3709,6 +3711,7 @@ fn newly_tracked_overlay_groups_keep_keyboard_mouse_focus_ready_during_entry() {
             id: "app-1".into(),
             path: "/app".into(),
             kind: LauncherExecutableKind::NativeBinary,
+            new_session: false,
         });
 
     let mut editor = ShellSession::new_for_home_mode(
@@ -7174,6 +7177,7 @@ fn launcher_confirmation_buttons_support_keyboard_and_mouse_cancellation() {
             id: "app".into(),
             path: "/app".into(),
             kind: LauncherExecutableKind::NativeBinary,
+            new_session: false,
         },
         LauncherPendingConfirmation::Remove {
             ids: vec!["app".into()],

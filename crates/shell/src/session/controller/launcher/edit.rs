@@ -1,8 +1,89 @@
 use crate::session::*;
 use ui::LauncherEntryAction;
 use ui::components::{ButtonRegion, TextInput};
+use workspace_protocol::SessionId;
 
 impl ShellSession {
+    pub(in crate::session) fn open_taskbar_launcher_session(
+        &mut self,
+        command: LauncherCommand,
+        platform: &dyn Platform,
+    ) {
+        self.apply_launcher_command_with_session(command, platform, true);
+        if let Some(error) = self
+            .app
+            .launcher_state()
+            .and_then(|state| state.error.clone())
+        {
+            self.notify_alert_with_tone(error, ui::NotificationTone::Error);
+        }
+    }
+
+    pub(in crate::session) fn remove_taskbar_launcher_entry(&mut self, entry_id: String) {
+        let platform = platform::native_platform();
+        self.apply_launcher_command(LauncherCommand::Remove(vec![entry_id]), platform.as_ref());
+        let Some(state) = self.app.launcher_state() else {
+            return;
+        };
+        if let Some(error) = state.error.clone() {
+            self.notify_alert_with_tone(error, ui::NotificationTone::Error);
+        } else if let Some(message) = state.message.clone() {
+            self.notify_toast(message);
+        }
+    }
+
+    pub(in crate::session) fn confirm_taskbar_launcher_removal(
+        &mut self,
+        id: SessionId,
+        entry_id: &str,
+    ) {
+        if !self.can_manage_launcher() {
+            return;
+        }
+        let Some(entry) = self.current_launcher_entry(entry_id) else {
+            return;
+        };
+        let label = app::launcher::launcher_entry_name(entry).to_owned();
+        self.notify_modal_with_options(
+            ShellNotification::modal(
+                i18n::msg!("shell-remove-from-launcher"),
+                i18n::msg!("workspace-delete-launcher-window", name = label),
+                ui::NotificationTone::Warning,
+                vec![
+                    ShellNotificationAction::new("delete", i18n::msg!("shell-delete"))
+                        .with_follow_up(ShellCommand::DeleteLauncherWindow(id)),
+                    ShellNotificationAction::new("cancel", i18n::msg!("shell-cancel"))
+                        .with_shortcut(InputKey::Escape)
+                        .cancel(),
+                ],
+            )
+            .for_session()
+            .with_cancel_default(),
+        );
+    }
+
+    pub(super) fn confirm_taskbar_launcher_session(&mut self, id: String, path: PathBuf) {
+        self.notify_modal_with_options(
+            ShellNotification::modal(
+                i18n::msg!("shell-confirm-launch"),
+                i18n::msg!(
+                    "workspace-confirm-launcher-session",
+                    path = path.display().to_string()
+                ),
+                ui::NotificationTone::Warning,
+                vec![
+                    ShellNotificationAction::new("launch", i18n::msg!("ui-workspace-new-session"))
+                        .with_follow_up(ShellCommand::ConfirmLauncherWindowSession(id)),
+                    ShellNotificationAction::new("cancel", i18n::msg!("shell-cancel"))
+                        .with_shortcut(InputKey::Escape)
+                        .cancel(),
+                ],
+            )
+            .for_session()
+            .with_cancel_default(),
+        );
+    }
+
     fn launcher_main_area(&self) -> Option<Rect> {
         match self.shell_layout_for(Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1)) {
             ui::ShellLayout::Full { main, .. } => Some(main),
@@ -23,22 +104,30 @@ impl ShellSession {
             Some(ui::LauncherHitTarget::EmptyContent) => None,
             _ => return,
         };
-        let editable = self.can_manage_launcher() && item.is_some_and(|item| !item.is_builtin());
+        let can_manage = self.can_manage_launcher();
+        let editable = can_manage && item.is_some_and(|item| !item.is_builtin());
         let id = item.map(|item| item.id.clone());
-        let mut toolbar = Vec::new();
-        if !editable {
-            let selected_model = self.to_launcher_view_model();
-            toolbar.extend(selected_model.toolbar.into_iter().filter(
-                |button| match button.action {
-                    ui::LauncherToolbarAction::Open => item.is_some(),
-                    ui::LauncherToolbarAction::RunSettings | ui::LauncherToolbarAction::Remove => {
-                        false
-                    }
-                    _ => true,
-                },
-            ));
-            if item.is_none()
-                && self.can_manage_launcher()
+        let toolbar = if let Some(item) = item {
+            vec![ui::LauncherToolbarButtonViewModel::new(
+                ui::LauncherToolbarAction::Open,
+                matches!(
+                    item.status,
+                    LauncherItemStatus::Ready
+                        | LauncherItemStatus::Changed
+                        | LauncherItemStatus::NeedsApproval
+                ),
+            )]
+        } else {
+            let mut toolbar = model.toolbar;
+            toolbar.retain(|button| {
+                !matches!(
+                    button.action,
+                    ui::LauncherToolbarAction::Open
+                        | ui::LauncherToolbarAction::RunSettings
+                        | ui::LauncherToolbarAction::Remove
+                )
+            });
+            if can_manage
                 && !toolbar
                     .iter()
                     .any(|button| button.action == ui::LauncherToolbarAction::Add)
@@ -48,36 +137,43 @@ impl ShellSession {
                     ui::LauncherToolbarButtonViewModel::new(ui::LauncherToolbarAction::Add, true),
                 );
             }
-        }
+            toolbar
+        };
         self.pages.launcher.search.set_focused(false);
         self.pages.launcher.launcher_drag = None;
-        let wait_for_enter = id
-            .as_ref()
-            .and_then(|id| {
-                self.app
-                    .launcher_state()
-                    .and_then(|state| state.items.iter().find(|item| &item.record.id == id))
-            })
-            .and_then(|item| {
-                item.record
-                    .custom
-                    .as_ref()
-                    .map(|custom| custom.wait_for_enter)
-                    .or_else(|| {
-                        item.record
-                            .terminal
-                            .as_ref()
-                            .map(|settings| settings.wait_for_enter.unwrap_or(false))
-                    })
-            });
+        let wait_for_enter = id.as_ref().and_then(|id| {
+            let record = &self
+                .app
+                .launcher_state()?
+                .items
+                .iter()
+                .find(|item| &item.record.id == id)?
+                .record;
+            record
+                .custom
+                .as_ref()
+                .map(|custom| custom.wait_for_enter)
+                .or_else(|| {
+                    record
+                        .terminal
+                        .as_ref()
+                        .map(|settings| settings.wait_for_enter.unwrap_or(false))
+                })
+        });
+        let command_enabled = self.can_execute_command_line();
+        let new_session = item
+            .is_some_and(|item| item.is_builtin() || (command_enabled && wait_for_enter.is_some()));
         self.pages.launcher.context_menu = Some(page_state::LauncherContextMenuState {
             id,
             menu: ui::LauncherContextMenu {
                 editable,
+                new_session,
+                move_item: item
+                    .map(|_| can_manage && self.pages.launcher.search.value().is_empty()),
                 toolbar,
                 anchor: point,
                 selected: 0,
-                command_enabled: self.can_execute_command_line(),
+                command_enabled,
                 wait_for_enter,
             },
         });
@@ -95,8 +191,13 @@ impl ShellSession {
             return;
         }
         if let LauncherEntryAction::Toolbar(action) = action {
+            let open_item = state.id.is_some() && action == ui::LauncherToolbarAction::Open;
             self.pages.launcher.context_menu = None;
-            self.activate_launcher_toolbar(action, platform);
+            if open_item {
+                self.open_selected_launcher_item(platform, false);
+            } else {
+                self.activate_launcher_toolbar(action, platform);
+            }
             return;
         }
         let Some(id) = state.id.clone() else {
@@ -128,8 +229,26 @@ impl ShellSession {
             return;
         }
         self.pages.launcher.context_menu = None;
+        if action == LauncherEntryAction::NewSession {
+            self.open_selected_launcher_item(platform, true);
+            return;
+        }
+        if action == LauncherEntryAction::Move {
+            if !self.pages.launcher.organizing {
+                self.toggle_launcher_organize();
+            }
+            if let Some(index) = self
+                .to_launcher_view_model()
+                .items
+                .iter()
+                .position(|item| item.id == id)
+            {
+                self.select_launcher_index(index);
+            }
+            return;
+        }
         if action == LauncherEntryAction::Remove {
-            self.confirm_launcher_remove();
+            self.confirm_launcher_remove_entry(&id);
             return;
         }
         let Some(item) = self
@@ -183,6 +302,8 @@ impl ShellSession {
                     .collect()
             }
             LauncherEntryAction::Toolbar(_)
+            | LauncherEntryAction::NewSession
+            | LauncherEntryAction::Move
             | LauncherEntryAction::WaitForEnter
             | LauncherEntryAction::Remove => unreachable!(),
         };
@@ -459,6 +580,8 @@ impl ShellSession {
                 })
             }
             LauncherEntryAction::Toolbar(_)
+            | LauncherEntryAction::NewSession
+            | LauncherEntryAction::Move
             | LauncherEntryAction::WaitForEnter
             | LauncherEntryAction::Remove => unreachable!(),
         };

@@ -58,12 +58,17 @@ impl SessionServicesClient {
 
         let (_, config) = self.read_config()?;
         if state.app.storage_config() != &config {
+            let launcher_previous = (state.app.storage_config().launcher != config.launcher)
+                .then(|| state.app.storage_config().launcher.clone());
             if state.language_code() != config.language
                 && let Ok((catalog, loaded)) = state.prepare_language(&config.language)
             {
                 state.publish_language(catalog, loaded);
             }
             state.replace_storage_config(config);
+            if let Some(previous) = launcher_previous {
+                state.sync_launcher_entries(&previous);
+            }
         }
 
         let local_profile = SessionProfile {

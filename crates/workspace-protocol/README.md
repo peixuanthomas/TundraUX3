@@ -5,7 +5,7 @@ Private IPC messages and framing for the workspace guardian, Shell, app hosts, a
 | Connection | Messages |
 | --- | --- |
 | Guardian and workers | Identity handshake, event-loop progress, probes, process state, shutdown, and Windows desktop opens |
-| Shell and app host | Window initialization, viewport, input, close, and rendered frames |
+| Shell and app host | Window initialization, viewport, input, Launcher open requests, close, and rendered frames |
 | Worker and shared services | Request IDs, configuration, profile, authorization policy, file operations, and system status |
 | Embedded Linux CLI and guardian | Ancestry-checked resource registration and retirement |
 

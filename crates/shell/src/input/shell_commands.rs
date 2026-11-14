@@ -124,6 +124,8 @@ pub enum ShellCommand {
     LauncherActivate,
     LauncherToggleView,
     LauncherRemove,
+    DeleteLauncherWindow(workspace_protocol::SessionId),
+    ConfirmLauncherWindowSession(String),
     LauncherRefresh,
     LauncherRunSettings,
     LauncherContextMenu(CellPosition),

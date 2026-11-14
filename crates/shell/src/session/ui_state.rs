@@ -517,6 +517,7 @@ pub(super) enum LauncherPendingConfirmation {
         id: String,
         path: std::path::PathBuf,
         kind: LauncherExecutableKind,
+        new_session: bool,
     },
     Remove {
         ids: Vec<String>,
@@ -573,7 +574,8 @@ pub(super) struct TimedClick {
 pub struct UiSessionState {
     pub(super) pages: ShellPages,
     pub(super) window_owner: super::window_launch::WindowOwner,
-    pub(super) window_launches: VecDeque<super::window_launch::WindowLaunch>,
+    pub(super) window_launches: VecDeque<WindowRequest>,
+    pub(super) window_delete_launcher: Option<workspace_protocol::SessionId>,
     pub(super) window_close: super::app_host::WindowClose,
     pub(super) window_global_request: Option<ShellCommand>,
     pub(super) windows_active: bool,

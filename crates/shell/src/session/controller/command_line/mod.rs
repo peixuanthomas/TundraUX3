@@ -6,30 +6,15 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn open_command_line_at(&mut self, directory: Option<PathBuf>) {
-        self.open_terminal_page(directory, None);
+        self.open_terminal_page(directory, None, None, false);
     }
 
-    pub(in crate::session) fn open_external_terminal(
-        &mut self,
-        program: PathBuf,
-        args: Vec<String>,
-        directory: Option<PathBuf>,
-        wait_for_enter: Option<bool>,
-    ) {
-        self.open_terminal_page(
-            directory,
-            Some(ExternalTerminalLaunch {
-                program,
-                args,
-                wait_for_enter,
-            }),
-        );
-    }
-
-    fn open_terminal_page(
+    pub(in crate::session) fn open_terminal_page(
         &mut self,
         directory: Option<PathBuf>,
         external: Option<ExternalTerminalLaunch>,
+        launcher_id: Option<String>,
+        new_session: bool,
     ) {
         let authorization = PermissionService::new(self.debug_policy).authorize(
             self.app.auth_session(),
@@ -50,10 +35,14 @@ impl ShellSession {
             return;
         }
 
-        if self.route_window_launch(WindowLaunch::CommandLine {
-            directory: directory.clone().map(PathBuf::into_os_string),
-            external: external.clone(),
-        }) {
+        if self.route_window_request(
+            WindowLaunch::CommandLine {
+                directory: directory.clone().map(PathBuf::into_os_string),
+                external: external.clone(),
+                launcher_id,
+            },
+            new_session,
+        ) {
             return;
         }
         let (width, height) = self.terminal_size;

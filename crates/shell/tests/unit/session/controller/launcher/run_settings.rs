@@ -79,6 +79,21 @@ impl Fixture {
         }
     }
 
+    fn make_custom(&mut self) {
+        let storage = self.state.storage_manager.clone().unwrap();
+        let mut config = storage.load_config().unwrap();
+        config.launcher.entries[0].custom = Some(storage::LauncherCustomCommand {
+            name: "custom tool".into(),
+            command: "printf done".into(),
+            ..Default::default()
+        });
+        storage.save_config(&config).unwrap();
+        self.state.app.dispatch_at(
+            app::AppCommand::SetLauncherState(Some(LauncherState::from_config(&config.launcher))),
+            Instant::now(),
+        );
+    }
+
     fn input(&mut self, input: InputEvent) {
         self.state.apply_input_with_platform(input, &self.platform);
     }
@@ -161,12 +176,56 @@ impl Fixture {
             .clone()
     }
 
-    fn choose_context_action(&mut self, index: usize, hover: bool) {
+    fn choose_context_action(&mut self, action: ui::LauncherEntryAction, hover: bool) {
         let menu = self.open_context_menu();
+        let index = menu.actions().position(|item| item == action).unwrap();
         let (_, rows) = ui::launcher_context_menu_layout(self.main_area(), &menu);
         self.draw();
         self.click(rows[index], hover);
     }
+}
+
+#[test]
+fn custom_icon_open_reuses_its_entry_and_new_session_launches_independently() {
+    use crate::session::window_launch::{WindowApplication, WindowOwner};
+    let mut fixture = Fixture::new();
+    fixture.make_custom();
+    fixture.state.window_owner = WindowOwner::App(WindowApplication::Launcher);
+    fixture.input(InputEvent::key(InputKey::Enter));
+    assert!(matches!(
+        fixture.state.window_launches.pop_front(),
+        Some(WindowRequest::LauncherEntry { id }) if id == "tui"
+    ));
+    fixture.choose_context_action(ui::LauncherEntryAction::NewSession, false);
+    assert!(matches!(
+        fixture.state.window_launches.pop_front(),
+        Some(WindowRequest::Open {
+            launch: WindowLaunch::CommandLine { launcher_id: Some(id), .. },
+            new_session: true,
+        }) if id == "tui"
+    ));
+}
+
+#[test]
+fn new_terminal_session_reads_the_current_launcher_command() {
+    let mut fixture = Fixture::new();
+    fixture.make_custom();
+    fixture.state.window_owner = crate::session::window_launch::WindowOwner::Shell;
+    let storage = fixture.state.storage_manager.clone().unwrap();
+    let mut config = storage.load_config().unwrap();
+    config.launcher.entries[0].custom.as_mut().unwrap().command = "printf updated".into();
+    storage.save_config(&config).unwrap();
+    fixture.state.open_taskbar_launcher_session(
+        LauncherCommand::RequestLaunch("tui".into()),
+        &fixture.platform,
+    );
+    assert!(matches!(
+        fixture.state.window_launches.pop_front(),
+        Some(WindowRequest::Open {
+            launch: WindowLaunch::CommandLine { external: Some(launch), .. },
+            new_session: true,
+        }) if launch.args.last().is_some_and(|arg| arg == "printf updated")
+    ));
 }
 
 #[test]
@@ -176,7 +235,11 @@ fn context_exit_switch_persists_for_custom_and_embedded_programs_and_is_hidden_f
             let mut fixture = Fixture::new();
             let menu = fixture.open_context_menu();
             assert_eq!(menu.wait_for_enter, None);
-            assert_eq!(menu.actions().count(), 4);
+            assert!(
+                !menu
+                    .actions()
+                    .any(|action| action == ui::LauncherEntryAction::NewSession)
+            );
             fixture.input(InputEvent::from_key_label("Esc"));
             let storage = fixture.state.storage_manager.clone().unwrap();
             let mut config = storage.load_config().unwrap();
@@ -197,7 +260,7 @@ fn context_exit_switch_persists_for_custom_and_embedded_programs_and_is_hidden_f
                 ))),
                 Instant::now(),
             );
-            fixture.choose_context_action(3, hover);
+            fixture.choose_context_action(ui::LauncherEntryAction::WaitForEnter, hover);
             let menu = &fixture
                 .state
                 .pages
@@ -207,23 +270,25 @@ fn context_exit_switch_persists_for_custom_and_embedded_programs_and_is_hidden_f
                 .unwrap()
                 .menu;
             assert_eq!(menu.wait_for_enter, Some(true));
-            assert_eq!(menu.actions().count(), 5);
+            assert!(
+                menu.actions()
+                    .any(|action| action == ui::LauncherEntryAction::NewSession)
+            );
             fixture.input(InputEvent::from_key_label("Esc"));
             assert_eq!(fixture.open_context_menu().wait_for_enter, Some(true));
             fixture.input(InputEvent::from_key_label("Up"));
+            let menu = &fixture
+                .state
+                .pages
+                .launcher
+                .context_menu
+                .as_ref()
+                .unwrap()
+                .menu;
             assert_eq!(
-                fixture
-                    .state
-                    .pages
-                    .launcher
-                    .context_menu
-                    .as_ref()
-                    .unwrap()
-                    .menu
-                    .selected,
-                4
+                menu.actions().nth(menu.selected),
+                Some(ui::LauncherEntryAction::WaitForEnter)
             );
-            fixture.input(InputEvent::from_key_label("Up"));
             fixture.input(InputEvent::key(InputKey::Space));
             assert_eq!(
                 fixture
@@ -277,7 +342,7 @@ fn context_menu_edits_and_deletes_user_entries_in_both_views() {
         let original_id = storage.load_config().unwrap().launcher.entries[0]
             .id
             .clone();
-        fixture.choose_context_action(0, hover);
+        fixture.choose_context_action(ui::LauncherEntryAction::Name, hover);
         fixture.input(InputEvent::key_with_modifiers(
             InputKey::Char('a'),
             InputModifiers::CTRL,
@@ -300,7 +365,7 @@ fn context_menu_edits_and_deletes_user_entries_in_both_views() {
                 .name,
             "中文 renamed"
         );
-        fixture.choose_context_action(0, hover);
+        fixture.choose_context_action(ui::LauncherEntryAction::Name, hover);
         fixture.input(InputEvent::Paste("discarded".into()));
         fixture.input(InputEvent::from_key_label("Esc"));
         assert_eq!(
@@ -309,7 +374,7 @@ fn context_menu_edits_and_deletes_user_entries_in_both_views() {
                 .as_deref(),
             Some("中文 renamed")
         );
-        fixture.choose_context_action(1, hover);
+        fixture.choose_context_action(ui::LauncherEntryAction::Command, hover);
         fixture.input(InputEvent::key_with_modifiers(
             InputKey::Char('a'),
             InputModifiers::CTRL,
@@ -333,7 +398,7 @@ fn context_menu_edits_and_deletes_user_entries_in_both_views() {
         let record = storage.load_config().unwrap().launcher.entries.remove(0);
         assert_eq!(record.id, original_id);
         assert_eq!(record.custom.unwrap().command, "printf 'changed command'");
-        fixture.choose_context_action(2, hover);
+        fixture.choose_context_action(ui::LauncherEntryAction::Icon, hover);
         assert!(fixture.state.page_keyboard_identity().is_some());
         fixture.input(InputEvent::Paste("中文x\n★ e\u{301}".into()));
         let draft = fixture.state.pages.launcher.entry_editor.clone().unwrap();
@@ -364,7 +429,7 @@ fn context_menu_edits_and_deletes_user_entries_in_both_views() {
             Some("中文x\n★ e\u{301}")
         );
         assert!(!fixture.state.pages.launcher.organizing);
-        fixture.choose_context_action(4, hover);
+        fixture.choose_context_action(ui::LauncherEntryAction::Remove, hover);
         assert!(
             fixture
                 .state
@@ -375,7 +440,7 @@ fn context_menu_edits_and_deletes_user_entries_in_both_views() {
         );
         fixture.input(InputEvent::from_key_label("Esc"));
         assert_eq!(storage.load_config().unwrap().launcher.entries.len(), 1);
-        fixture.choose_context_action(4, hover);
+        fixture.choose_context_action(ui::LauncherEntryAction::Remove, hover);
         fixture.input(InputEvent::from_key_label("Enter"));
         assert!(storage.load_config().unwrap().launcher.entries.is_empty());
         assert_eq!(fixture.state.active_screen(), ShellScreen::Launcher);
@@ -912,6 +977,7 @@ fn confirmation_entry_keeps_covered_search_unfocused_and_cancel_ready() {
             id: "tui".into(),
             path: fixture.root.join("program.exe"),
             kind: LauncherExecutableKind::NativeBinary,
+            new_session: false,
         });
     fixture
         .state
@@ -1084,6 +1150,7 @@ fn confirmation_press_waits_for_release_and_launches_once() {
             id: "tui".into(),
             path: path.clone(),
             kind: LauncherExecutableKind::NativeBinary,
+            new_session: false,
         });
     fixture
         .state

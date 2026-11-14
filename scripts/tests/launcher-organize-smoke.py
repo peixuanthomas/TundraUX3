@@ -283,10 +283,10 @@ def main():
                 current = until(lambda current: current["page"] == "Launcher" and marker.exists())
                 assert marker.read_text() == "done"
             print("PASS: the default returns immediately after successful and failed custom commands")
-            context_action("Delete this icon")
+            context_action("Delete")
             key("Escape")
             assert any(entry["id"] == custom_id for entry in tomllib.loads(config_file.read_text())["launcher"]["entries"])
-            context_action("Delete this icon")
+            context_action("Delete")
             key("Enter")
             assert not any(entry["id"] == custom_id for entry in tomllib.loads(config_file.read_text())["launcher"]["entries"])
             key("Home")
@@ -295,7 +295,7 @@ def main():
                             and any("launcher.menu." in node["id"] for node in current["nodes"]))
             menu_labels = [node["name"] for node in current["nodes"] if "launcher.menu." in node["id"]]
             assert menu_labels and not any(label in menu_labels for label in
-                ("Change name", "Change launch command", "Change icon", "Delete this icon"))
+                ("Change name", "Change launch command", "Change icon", "Delete"))
             key("Escape")
             print("PASS: deletion confirms or cancels; built-in entries retain their restrictions")
         except Exception:

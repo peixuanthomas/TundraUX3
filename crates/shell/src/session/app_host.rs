@@ -507,6 +507,15 @@ impl AppHostSession {
                 self.state.window_task_ids = ids.into_iter().collect();
                 self.redraw.request_redraw();
             }
+            ShellToApp::OpenLauncherEntry { id }
+                if self.focused && self.state.active_screen() == ShellScreen::Launcher =>
+            {
+                self.state.apply_launcher_command(
+                    LauncherCommand::RequestLaunch(id),
+                    self.platform.as_ref(),
+                );
+                self.redraw.request_redraw();
+            }
             _ => {}
         }
         Ok(())

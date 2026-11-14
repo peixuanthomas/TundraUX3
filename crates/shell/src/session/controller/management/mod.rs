@@ -594,11 +594,7 @@ impl ShellSession {
         )
     }
     pub(in crate::session) fn open_management(&mut self, kind: ManagementKind) {
-        let mut query = ManagementQuery::new(kind);
-        if kind == ManagementKind::Packages {
-            query.scope = "installed".into();
-        }
-        self.open_management_query(query);
+        self.open_management_query(WindowLaunch::management_query(kind));
     }
 
     pub(in crate::session) fn open_management_query(&mut self, mut query: ManagementQuery) {

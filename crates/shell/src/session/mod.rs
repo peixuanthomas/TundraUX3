@@ -68,7 +68,7 @@ mod workspace;
 pub(crate) use compositor::ScreenCompositor;
 #[cfg(test)]
 use compositor::sync_shell_toast;
-use window_launch::WindowLaunch;
+use window_launch::{WindowLaunch, WindowRequest};
 mod construction;
 mod controller;
 mod localization;

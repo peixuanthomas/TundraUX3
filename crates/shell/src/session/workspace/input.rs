@@ -4,22 +4,28 @@ impl Workspace {
     pub(in crate::session) fn input(
         &mut self,
         input: &InputEvent,
-        global_modal: bool,
+        state: &mut ShellSession,
     ) -> io::Result<bool> {
         if matches!(input, InputEvent::FocusGained | InputEvent::FocusLost) {
             self.terminal_focused = matches!(input, InputEvent::FocusGained);
             self.cancel_capture();
             self.close_split_menu();
+            self.taskbar_menu = None;
             self.prefix.clear();
             self.last_pointer = None;
             self.pointer_hovered = false;
             return Ok(false);
         }
-        if global_modal {
+        if !state.interactive_overlays().is_empty() {
             self.cancel_capture();
             self.close_split_menu();
+            self.taskbar_menu = None;
             self.prefix.clear();
             return Ok(false);
+        }
+        if self.taskbar_menu.is_some() {
+            self.handle_taskbar_menu(input, state)?;
+            return Ok(true);
         }
         if let InputEvent::Key(key) = input {
             let command = self.prefix.route(key);
@@ -66,7 +72,7 @@ impl Workspace {
             }
         }
         if let InputEvent::Mouse(mouse) = input {
-            return self.mouse(*mouse);
+            return self.mouse(*mouse, state);
         }
         if matches!(input, InputEvent::Paste(_))
             && !self.has_overlay()
@@ -261,7 +267,7 @@ impl Workspace {
         }
     }
 
-    fn mouse(&mut self, mouse: MouseInput) -> io::Result<bool> {
+    fn mouse(&mut self, mouse: MouseInput, state: &ShellSession) -> io::Result<bool> {
         let point = mouse.coordinates();
         match mouse.kind {
             ui::MouseEventKind::Moved if self.last_pointer != Some(point) => {
@@ -283,6 +289,14 @@ impl Workspace {
                 self.prefix.clear();
                 self.cancel_capture();
                 self.suppress_release = None;
+                if button == PointerButton::Right
+                    && let Some(PointerTarget::Taskbar(
+                        WorkspaceTaskbarAction::Activate(id) | WorkspaceTaskbarAction::Close(id),
+                    )) = hit
+                {
+                    self.open_taskbar_menu(id, point, state);
+                    return Ok(true);
+                }
                 if self.split_window.is_some()
                     && self
                         .split_menu

@@ -160,6 +160,7 @@ impl ShellSession {
             pages: ShellPages::default(),
             window_owner: runtime_services.window_owner,
             window_launches: VecDeque::new(),
+            window_delete_launcher: None,
             window_close: Default::default(),
             window_global_request: None,
             windows_active: false,

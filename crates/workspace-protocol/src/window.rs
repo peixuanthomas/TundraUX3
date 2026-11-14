@@ -70,6 +70,9 @@ pub enum ShellToApp {
     TaskCatalog {
         ids: Vec<String>,
     },
+    OpenLauncherEntry {
+        id: String,
+    },
     Back {
         layout: LayoutGeneration,
     },

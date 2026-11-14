@@ -49,7 +49,7 @@ flowchart LR
     Jobs[Background task results] --> Controller
 ```
 
-Opening an application creates an AppHost and a window. Opening a subpage within an application creates a new `PageInstanceId`. Covered pages retain their state, and task results are checked against their owner.
+Opening a managed application restores a running window or creates an AppHost if needed. **New session** starts a separate AppHost. Opening a subpage within an application creates a new `PageInstanceId`. Covered pages retain their state, and task results are checked against their owner.
 
 When closing a page with running work, users can continue in the background, cancel and close, or stay on the page. watchdog handles task execution and process supervision; Shell handles the page a task belongs to, cancellation choices, and result presentation.
 
@@ -57,7 +57,7 @@ Logged-in non-guest users can open Tasks from the global title bar. Background q
 
 ## Windows
 
-Every app has a frame with its title and **Minimize**, **Full screen** or **Restore**, **Split**, and **Close** controls. Click a title in the bottom bar to focus or restore that window. Click its minus button to close it normally. A minimized window returns to its previous position when the split has room. When the split is full, restoring it uses the focused slot.
+Every app has a frame with its title and **Minimize**, **Full screen** or **Restore**, **Split**, and **Close** controls. Click a title in the bottom bar to focus or restore that window. Click its minus button to close it normally. Right-click for **Open**, **New session**, and **Move**. New embedded sessions use the current Launcher settings. Taskbar moves change the taskbar order for the current run. **Delete** is limited to user-added Launcher entries and removes the entry after its selected window closes successfully. A minimized window returns to its previous position when the split has room. When the split is full, restoring it uses the focused slot.
 
 **Split** opens a menu beside the window. Choose side by side, stacked, or grid, then choose a background window or **Add window** to open another app from Home. The side-by-side and stacked layouts fit two windows. Grid adjusts to the available cells. A regular app launch uses the focused slot and moves the previous app to the background.
 
@@ -89,7 +89,7 @@ Floating toasts preserve keyboard focus and block pointer input in the area they
 ## Interface hosting
 
 - **Home:** The minimum terminal size is 108×20, shared by startup, runtime resizing, the lockscreen, and Command Line. Supported Home entries fit on one page, using name-only tiles when icons would force scrolling; smaller terminals show an error. Larger windows center the title, account, and grid while keeping the action footer at the bottom. F2 or the Edit icons button enters edit mode. Pointer drops and Shift+Left/Right save icon order in each user’s `home.order.<user_id>` state entry. Esc cancels a drag first, then finishes editing; focus loss, resizing, overlays, and navigation cancel pending drops.
-- **Home and Launcher:** show supported system tasks directly on Home and exclude those entries from Launcher. Home uses plain names; open entries by clicking or selecting with arrows and pressing Enter/Space, without letter shortcuts. Search Launcher by name, path/command, or type, and organize its remaining built-in applications, custom commands, and external programs. Built-in and blank-area context menus expose page actions without permitting edits or deletion of built-in entries.
+- **Home and Launcher:** show supported system tasks directly on Home. Home uses plain names and opens entries by click or Enter/Space. Search Launcher by name, path/command, or type. Right-click an icon to open it or enter organize mode with **Move**. **New session** is available for built-in apps and embedded terminals. User-added entries offer editing and deletion.
 - **Files:** share copied/cut files across Explorer pages and undo safe moves or renames through the shared application service. First save and Save As keep directory browsing, filename, Save, and Cancel together.
 - **Editor and scripts:** keep common editing tools visible, preserve the text selection when opening the standard editor's context menu, manage multi-document pages and Vim, and host script execution and debugging. F8 switches Vim mode for the current editor window. New editor windows start with the configured default. macOS text editing follows Command and Option conventions.
 - **System management and logs:** present platform operations with AA authorization, shared focus and selection controls, and persistent expert areas opened with F3. UX logs keep expert filters and related actions visible while changing rows or filters; F10 still opens the menu.

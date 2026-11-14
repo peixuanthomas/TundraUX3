@@ -142,6 +142,40 @@ fn launcher_filtered_organize_never_overwrites_the_full_order() {
 }
 
 #[test]
+fn launcher_context_move_selects_the_clicked_icon_in_organize_mode() {
+    let mut fixture = Fixture::new();
+    fixture.state.select_launcher_index(0);
+    let id = fixture.state.to_launcher_view_model().items[0].id.clone();
+    fixture.choose_context_action(ui::LauncherEntryAction::Move, false);
+    assert!(fixture.state.pages.launcher.organizing);
+    fixture.input(InputEvent::key_with_modifiers(
+        InputKey::Right,
+        InputModifiers::SHIFT,
+    ));
+    assert_eq!(fixture.state.to_launcher_view_model().items[1].id, id);
+    let mut config = fixture
+        .state
+        .storage_manager
+        .as_ref()
+        .unwrap()
+        .load_config()
+        .unwrap();
+    assert_eq!(config.launcher.order[1], id);
+    let previous = config.launcher.clone();
+    config.launcher.entries.clear();
+    fixture.state.replace_storage_config(config);
+    fixture.state.sync_launcher_entries(&previous);
+    assert!(
+        fixture
+            .state
+            .to_launcher_view_model()
+            .items
+            .iter()
+            .all(|item| item.is_builtin())
+    );
+}
+
+#[test]
 fn launcher_builtin_context_opens_the_clicked_item_and_blank_context_adds_directly() {
     let mut fixture = Fixture::new();
     let index = fixture
@@ -154,9 +188,13 @@ fn launcher_builtin_context_opens_the_clicked_item_and_blank_context_adds_direct
     fixture.state.select_launcher_index(index);
     let menu = fixture.open_context_menu();
     assert!(!menu.editable);
-    assert!(
-        menu.actions()
-            .all(|action| matches!(action, ui::LauncherEntryAction::Toolbar(_)))
+    assert_eq!(
+        menu.actions().collect::<Vec<_>>(),
+        vec![
+            ui::LauncherEntryAction::Toolbar(ui::LauncherToolbarAction::Open),
+            ui::LauncherEntryAction::NewSession,
+            ui::LauncherEntryAction::Move,
+        ],
     );
     let open = menu
         .actions()

@@ -18,6 +18,7 @@ use workspace_protocol::{
 
 mod input;
 mod render;
+mod taskbar;
 mod windows;
 
 const CLOSE_WAIT: Duration = Duration::from_secs(2);
@@ -125,6 +126,9 @@ pub(super) struct Workspace {
     taskbar: Option<WorkspaceTaskbar>,
     taskbar_scroll: usize,
     taskbar_focus: Option<SessionId>,
+    taskbar_order: Vec<SessionId>,
+    taskbar_menu: Option<taskbar::TaskbarMenu>,
+    deleting_launcher: HashSet<SessionId>,
     chrome_layout: Option<ui::ShellFrameLayout>,
     toast_area: Option<Rect>,
     pending_global: Option<ShellCommand>,
@@ -179,6 +183,9 @@ impl Workspace {
             taskbar: None,
             taskbar_scroll: 0,
             taskbar_focus: None,
+            taskbar_order: Vec::new(),
+            taskbar_menu: None,
+            deleting_launcher: HashSet::new(),
             chrome_layout: None,
             toast_area: None,
             pending_global: None,
@@ -249,6 +256,7 @@ impl Workspace {
         self.toast_area = None;
         self.taskbar = None;
         self.close_split_menu();
+        self.taskbar_menu = None;
         self.input_focus = None;
         self.layout.panes.clear();
         self.generation.0 += 1;
@@ -399,6 +407,7 @@ impl Workspace {
             || self.layout.available != available;
         if modal || dimensions_changed {
             self.close_split_menu();
+            self.taskbar_menu = None;
         }
         let mut overlay_changed = false;
         if let Some(id) = self.wait_for
@@ -489,6 +498,7 @@ impl Workspace {
 
     fn show_close_wait(&mut self, id: SessionId) {
         self.close_split_menu();
+        self.taskbar_menu = None;
         self.cancel_capture();
         self.wait_for = Some(id);
         self.modal_focus = Some(Action::Dismiss);

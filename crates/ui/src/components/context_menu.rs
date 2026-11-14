@@ -5,8 +5,8 @@ use ratatui::layout::Rect;
 
 use super::foundation::terminal_width;
 use super::{
-    Button, ComponentEvent, ComponentId, ComponentState, DialogLayout, InputEvent, Key, List,
-    ListItem, MouseButton, MouseKind, contains_point,
+    Button, ComponentEvent, ComponentId, ComponentState, ComponentTone, DialogLayout, InputEvent,
+    Key, List, ListItem, MouseButton, MouseKind, contains_point,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,6 +14,7 @@ pub struct ContextMenuItem {
     pub id: ComponentId,
     pub label: String,
     pub disabled: bool,
+    pub tone: ComponentTone,
 }
 
 impl ContextMenuItem {
@@ -22,11 +23,17 @@ impl ContextMenuItem {
             id: id.into(),
             label: label.into(),
             disabled: false,
+            tone: ComponentTone::Default,
         }
     }
 
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    pub fn tone(mut self, tone: ComponentTone) -> Self {
+        self.tone = tone;
         self
     }
 }
@@ -328,7 +335,9 @@ impl ContextMenu {
             items
                 .iter()
                 .map(|item| {
-                    ListItem::new(item.id.clone(), item.label.clone()).disabled(item.disabled)
+                    ListItem::new(item.id.clone(), item.label.clone())
+                        .disabled(item.disabled)
+                        .tone(item.tone)
                 })
                 .collect(),
         )

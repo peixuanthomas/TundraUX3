@@ -4,6 +4,17 @@ use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::path::Path;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) enum WindowRequest {
+    Open {
+        launch: WindowLaunch,
+        new_session: bool,
+    },
+    LauncherEntry {
+        id: String,
+    },
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) enum WindowOwner {
     #[default]
@@ -38,6 +49,8 @@ pub(super) enum WindowLaunch {
     CommandLine {
         directory: Option<OsString>,
         external: Option<ExternalTerminalLaunch>,
+        #[serde(default)]
+        launcher_id: Option<String>,
     },
     Editor,
     EditorPath(OsString),
@@ -70,6 +83,68 @@ pub(super) enum WindowLaunch {
 }
 
 impl WindowLaunch {
+    pub(super) fn command_line() -> Self {
+        Self::CommandLine {
+            directory: None,
+            external: None,
+            launcher_id: None,
+        }
+    }
+
+    pub(super) fn management_query(kind: ManagementKind) -> ManagementQuery {
+        let mut query = ManagementQuery::new(kind);
+        if kind == ManagementKind::Packages {
+            query.scope = "installed".into();
+        }
+        if kind == ManagementKind::Backups {
+            query.options.insert("page_size".into(), "50".into());
+        }
+        query
+    }
+
+    pub(super) fn launcher_id(&self) -> Option<&str> {
+        match self {
+            Self::CommandLine { launcher_id, .. } => launcher_id.as_deref(),
+            _ => None,
+        }
+    }
+
+    pub(super) fn can_reuse(&self, running: &Self) -> bool {
+        if let Some(id) = self.launcher_id() {
+            return running.launcher_id() == Some(id);
+        }
+        let regular_open = match self {
+            Self::CommandLine {
+                directory,
+                external,
+                ..
+            } => directory.is_none() && external.is_none(),
+            Self::Launcher { select } => select.is_none(),
+            Self::EditorPath(_)
+            | Self::EditorReport { .. }
+            | Self::ExplorerPath { .. }
+            | Self::ServiceLogs { .. } => false,
+            Self::Management(query) => *query == Self::management_query(query.kind),
+            _ => true,
+        };
+        // Requests for a specific file, directory, or view must deliver their arguments.
+        regular_open && self.id() == running.id()
+    }
+
+    pub(super) fn for_new_session(&self) -> Self {
+        match self {
+            Self::CommandLine { external: None, .. } => Self::command_line(),
+            Self::EditorPath(_) | Self::EditorReport { .. } => Self::Editor,
+            Self::ExplorerPath { .. } => Self::Explorer,
+            Self::Launcher { .. } => Self::Launcher { select: None },
+            Self::ServiceLogs { .. } => Self::Logs,
+            Self::Management(query) if query.kind != ManagementKind::Tasks => {
+                Self::Management(Self::management_query(query.kind))
+            }
+            launch => launch.clone(),
+        }
+    }
+
     pub(super) fn application(&self) -> WindowApplication {
         match self {
             Self::Clock => WindowApplication::Clock,
@@ -138,18 +213,9 @@ impl WindowLaunch {
             Self::CommandLine {
                 directory,
                 external,
+                launcher_id,
             } => {
-                let directory = directory.map(PathBuf::from);
-                if let Some(external) = external {
-                    state.open_external_terminal(
-                        external.program,
-                        external.args,
-                        directory,
-                        external.wait_for_enter,
-                    );
-                } else {
-                    state.open_command_line_at(directory);
-                }
+                state.open_terminal_page(directory.map(PathBuf::from), external, launcher_id, false)
             }
             Self::Editor => state.open_editor(),
             Self::EditorPath(path) => {
@@ -233,10 +299,19 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn route_window_launch(&mut self, launch: WindowLaunch) -> bool {
+        self.route_window_request(launch, false)
+    }
+
+    pub(in crate::session) fn route_window_request(
+        &mut self,
+        launch: WindowLaunch,
+        new_session: bool,
+    ) -> bool {
         use WindowApplication::*;
         let route = match self.window_owner {
             WindowOwner::Local => false,
             WindowOwner::Shell => true,
+            WindowOwner::App(_) if new_session => true,
             WindowOwner::App(owner) if owner == launch.application() => false,
             WindowOwner::App(Settings)
                 if launch.application() == Management(ManagementKind::SystemSettings) =>
@@ -247,10 +322,15 @@ impl ShellSession {
             WindowOwner::App(_) => true,
         };
         if route {
-            if launch.application() == WindowApplication::Management(ManagementKind::Tasks) {
+            if !new_session
+                && launch.application() == WindowApplication::Management(ManagementKind::Tasks)
+            {
                 self.window_tasks_requested = true;
             } else {
-                self.window_launches.push_back(launch);
+                self.window_launches.push_back(WindowRequest::Open {
+                    launch,
+                    new_session,
+                });
             }
         }
         route

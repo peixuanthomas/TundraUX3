@@ -763,20 +763,24 @@ fn command_line_app_host_launches_a_live_pty_at_the_minimum_window_size() {
         })),
         Instant::now(),
     );
-    state.open_external_terminal(
-        "/bin/sh".into(),
-        vec![
-            "-c".into(),
-            concat!(
-                "stty -echo; stty size; ",
-                "IFS= read -r input; printf 'TYPED:%s\\n' \"$input\"; ",
-                "printf '\\033]1337;SetUserVar=TUNDRA_MIN_SIZE=MTEweDE3\\007'; ",
-                "IFS= read -r done",
-            )
-            .into(),
-        ],
+    state.open_terminal_page(
         Some(fixture.root.clone()),
-        Some(true),
+        Some(ExternalTerminalLaunch {
+            program: "/bin/sh".into(),
+            args: vec![
+                "-c".into(),
+                concat!(
+                    "stty -echo; stty size; ",
+                    "IFS= read -r input; printf 'TYPED:%s\\n' \"$input\"; ",
+                    "printf '\\033]1337;SetUserVar=TUNDRA_MIN_SIZE=MTEweDE3\\007'; ",
+                    "IFS= read -r done",
+                )
+                .into(),
+            ],
+            wait_for_enter: Some(true),
+        }),
+        None,
+        false,
     );
     assert_eq!(state.content_screen(), crate::ShellScreen::CommandLine);
     let viewport = state.command_line_input_area().unwrap();

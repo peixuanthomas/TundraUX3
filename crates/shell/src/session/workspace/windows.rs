@@ -45,12 +45,12 @@ impl Workspace {
                         if status == ProcessState::Unresponsive {
                             self.input_fences.remove(&id);
                         }
-                        if matches!(status, ProcessState::Exited { .. }) {
+                        if let ProcessState::Exited { code, forced } = status {
                             let launching = window.frame.is_none()
                                 && matches!(window.close, CloseProgress::Idle)
                                 && !window.force_when_started
                                 && !window.launch_error;
-                            self.remove(id);
+                            self.finish_window_exit(id, code, forced, state);
                             if launching {
                                 report_launch_failure(
                                     state,
@@ -194,18 +194,78 @@ impl Workspace {
         let mut launches = std::mem::take(&mut state.window_launches);
         let toggle_tasks = std::mem::take(&mut state.window_tasks_requested)
             | std::mem::take(&mut self.toggle_tasks_requested);
-        let redraw = !launches.is_empty() || toggle_tasks;
+        let delete = state.window_delete_launcher.take();
+        let redraw = !launches.is_empty() || toggle_tasks || delete.is_some();
+        if let Some(id) = delete
+            && let Some(entry) = self
+                .windows
+                .get(&id)
+                .filter(|window| window.close == CloseProgress::Idle)
+                .and_then(|window| window.launch.launcher_id())
+            && state.can_manage_launcher()
+            && state.current_launcher_entry(entry).is_some()
+        {
+            self.deleting_launcher.insert(id);
+            self.request_close(id);
+        }
         if toggle_tasks && self.pending_global.is_none() {
             self.toggle_tasks(state)?;
         }
-        for launch in launches.drain(..) {
+        for request in launches.drain(..) {
             if self.pending_global.is_some() {
                 break;
             }
-            self.open(launch, state.auth_session())?;
+            if let WindowRequest::Open {
+                launch,
+                new_session,
+            } = request
+            {
+                self.open_requested(launch, new_session, state.auth_session())?;
+            }
         }
         state.windows_active = self.active();
         Ok(redraw)
+    }
+
+    pub(super) fn open_requested(
+        &mut self,
+        launch: WindowLaunch,
+        new_session: bool,
+        auth: Option<&AuthSession>,
+    ) -> io::Result<()> {
+        if !new_session && self.restore_running_window(|running| launch.can_reuse(running)) {
+            return Ok(());
+        }
+        self.open(launch, auth)?;
+        Ok(())
+    }
+
+    pub(super) fn restore_running_window(
+        &mut self,
+        matches_launch: impl Fn(&WindowLaunch) -> bool,
+    ) -> bool {
+        let matches = |id: SessionId| {
+            let window = &self.windows[&id];
+            !matches!(
+                window.close,
+                CloseProgress::Cleaning(_) | CloseProgress::Waiting | CloseProgress::Exiting
+            ) && !matches!(
+                window.state,
+                ProcessState::ForceStopping | ProcessState::Exited { .. }
+            ) && matches_launch(&window.launch)
+        };
+        // Prefer the focused instance, then the newest live session for this app.
+        let id = self
+            .selection
+            .focused()
+            .filter(|id| matches(*id))
+            .or_else(|| self.windows.keys().rev().copied().find(|&id| matches(id)));
+        let Some(id) = id else {
+            return false;
+        };
+        self.cancel_capture();
+        self.selection.restore(id, self.layout.capacity);
+        true
     }
 
     fn open(&mut self, launch: WindowLaunch, auth: Option<&AuthSession>) -> io::Result<SessionId> {
@@ -229,6 +289,7 @@ impl Workspace {
             })?;
         self.cancel_capture();
         self.selection.open(id);
+        self.taskbar_order.push(id);
         self.windows.insert(
             id,
             Window {
@@ -256,7 +317,16 @@ impl Workspace {
         self.input_fences.remove(&id);
         self.input_recipients.remove(&id);
         self.task_catalogs.remove(&id);
+        self.deleting_launcher.remove(&id);
         self.windows.remove(&id);
+        self.taskbar_order.retain(|&window| window != id);
+        if self
+            .taskbar_menu
+            .as_ref()
+            .is_some_and(|menu| menu.window == id)
+        {
+            self.taskbar_menu = None;
+        }
         self.layout.panes.retain(|pane| pane.id != id);
         if let Some(taskbar) = &mut self.taskbar {
             taskbar
@@ -305,18 +375,42 @@ impl Workspace {
         self.cancel_capture();
     }
 
+    pub(super) fn finish_window_exit(
+        &mut self,
+        id: SessionId,
+        code: Option<i32>,
+        forced: bool,
+        state: &mut ShellSession,
+    ) {
+        if self.deleting_launcher.remove(&id)
+            && code == Some(0)
+            && !forced
+            && let Some(entry) = self
+                .windows
+                .get(&id)
+                .and_then(|window| window.launch.launcher_id())
+        {
+            state.remove_taskbar_launcher_entry(entry.to_owned());
+        }
+        self.remove(id);
+    }
+
     fn toggle_tasks(&mut self, state: &ShellSession) -> io::Result<()> {
         let focused = self.selection.focused();
-        if let Some((&id, _)) = self.windows.iter().find(|(_, window)| {
+        let is_tasks = |window: &Window| {
             window.launch.application()
                 == super::window_launch::WindowApplication::Management(ManagementKind::Tasks)
-        }) {
-            if focused == Some(id) {
-                self.request_close(id);
-            } else {
-                self.selection.switch(id);
-                self.tasks_return = focused.map(|previous| (id, previous));
-            }
+        };
+        if let Some(id) = focused.filter(|id| is_tasks(&self.windows[id])) {
+            self.request_close(id);
+        } else if let Some((&id, _)) = self
+            .windows
+            .iter()
+            .rev()
+            .find(|(_, window)| is_tasks(window))
+        {
+            self.selection.switch(id);
+            self.tasks_return = focused.map(|previous| (id, previous));
         } else {
             let id = self.open(
                 WindowLaunch::Management(state.tasks_query()),
@@ -439,7 +533,26 @@ impl Workspace {
             AppToShell::Status(status) => window.update_status(status),
             AppToShell::OpenApp(launch) => {
                 if self.selection.focused() == Some(id) && self.pending_global.is_none() {
-                    self.open(serde_json::from_value(launch)?, state.auth_session())?;
+                    match serde_json::from_value(launch)? {
+                        WindowRequest::Open {
+                            launch,
+                            new_session,
+                        } => {
+                            self.open_requested(launch, new_session, state.auth_session())?;
+                        }
+                        WindowRequest::LauncherEntry { id: entry }
+                            if window.launch.application()
+                                == window_launch::WindowApplication::Launcher
+                                && state.can_execute_command_line() =>
+                        {
+                            if !self.restore_running_window(|launch| {
+                                launch.launcher_id() == Some(entry.as_str())
+                            }) {
+                                self.enqueue(id, ShellToApp::OpenLauncherEntry { id: entry });
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
             AppToShell::BackgroundRequested => {
@@ -463,6 +576,7 @@ impl Workspace {
             }
             AppToShell::CloseCancelled => {
                 window.close = CloseProgress::Idle;
+                self.deleting_launcher.remove(&id);
                 self.hide_close_wait(id);
                 self.pending_global = None;
                 self.pending_update = None;
@@ -560,6 +674,7 @@ impl Workspace {
         }
         self.panel = None;
         self.close_split_menu();
+        self.taskbar_menu = None;
         self.cancel_capture();
     }
 

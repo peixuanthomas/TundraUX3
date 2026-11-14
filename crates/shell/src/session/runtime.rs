@@ -1534,7 +1534,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     let input = crossterm_event_to_input(terminal_event);
                     if let Some(windows) = workspace.as_mut()
                         && !state.screen_saver_active()
-                        && windows.input(&input, !state.interactive_overlays().is_empty())?
+                        && windows.input(&input, &mut state)?
                     {
                         state.consume_screen_saver_input(&input, received_at);
                         action = Some(ShellAction::Redraw);

@@ -156,11 +156,10 @@ impl Workspace {
         );
     }
 
-    fn taskbar_items(&self) -> Vec<WorkspaceTaskbarItem> {
+    fn taskbar_items(&self, ids: impl Iterator<Item = SessionId>) -> Vec<WorkspaceTaskbarItem> {
         let blocked_window = self.blocked_pane().map(|pane| pane.id);
-        self.windows
-            .iter()
-            .map(|(&id, window)| WorkspaceTaskbarItem {
+        ids.map(|id| (id, &self.windows[&id]))
+            .map(|(id, window)| WorkspaceTaskbarItem {
                 id,
                 title: window.launch.title(),
                 focused: self.selection.focused() == Some(id),
@@ -185,7 +184,7 @@ impl Workspace {
             self.taskbar = None;
             return;
         };
-        let items = self.taskbar_items();
+        let items = self.taskbar_items(self.taskbar_order.iter().copied());
         let focused = self.selection.focused();
         let mut taskbar = WorkspaceTaskbar::new(area, &items, self.taskbar_scroll);
         if (self.taskbar_focus != focused
@@ -238,6 +237,7 @@ impl Workspace {
     ) {
         if global_modal {
             self.close_split_menu();
+            self.taskbar_menu = None;
             return;
         }
         let available = self.layout.available;
@@ -305,7 +305,16 @@ impl Workspace {
             self.panel_hits = panel.hits;
         } else {
             self.panel_hits.clear();
-            self.render_split_menu(frame, context, capture);
+            if let Some(menu) = &self.taskbar_menu {
+                if let Some(capture) = capture {
+                    capture.set_group("workspace-taskbar-menu", "menu", menu.area, false);
+                }
+                frame.render_widget(ratatui::widgets::Clear, menu.area);
+                menu.menu
+                    .render_frame(frame, menu.area, &context.compatibility_theme());
+            } else {
+                self.render_split_menu(frame, context, capture);
+            }
         }
     }
 
@@ -331,7 +340,7 @@ impl Workspace {
         };
         self.split_model.mode = self.mode;
         self.split_model.windows = self
-            .taskbar_items()
+            .taskbar_items(self.windows.keys().copied())
             .into_iter()
             .filter(|item| item.id != id && item.minimized)
             .collect();
@@ -373,6 +382,9 @@ impl Workspace {
     }
 
     pub(in crate::session) fn has_overlay(&self) -> bool {
-        self.panel.is_some() || self.wait_for.is_some() || self.split_window.is_some()
+        self.panel.is_some()
+            || self.wait_for.is_some()
+            || self.split_window.is_some()
+            || self.taskbar_menu.is_some()
     }
 }

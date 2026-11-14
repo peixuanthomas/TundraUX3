@@ -976,6 +976,14 @@ impl ShellSession {
                 self.request_launcher_remove();
                 ShellAction::Redraw
             }
+            ShellCommand::DeleteLauncherWindow(id) => {
+                self.window_delete_launcher = Some(id);
+                ShellAction::Redraw
+            }
+            ShellCommand::ConfirmLauncherWindowSession(id) => {
+                self.open_taskbar_launcher_session(LauncherCommand::ConfirmLaunch(id), platform);
+                ShellAction::Redraw
+            }
             ShellCommand::LauncherRefresh => {
                 self.refresh_launcher(platform);
                 ShellAction::Redraw
