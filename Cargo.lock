@@ -125,6 +125,7 @@ dependencies = [
  "unicode-segmentation",
  "unicode-width 0.2.0",
  "watchdog",
+ "workspace-protocol",
  "zip",
 ]
 
@@ -798,6 +799,7 @@ dependencies = [
  "ui",
  "vt100",
  "watchdog",
+ "workspace-protocol",
  "zbus",
  "zeroize",
 ]
@@ -4924,6 +4926,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "crossterm",
+ "getrandom 0.4.3",
  "i18n",
  "identity",
  "libc",
@@ -4931,6 +4934,7 @@ dependencies = [
  "ratatui",
  "runtime-log",
  "script-runtime",
+ "serde",
  "serde_json",
  "shell-control",
  "shell-words",
@@ -4945,6 +4949,8 @@ dependencies = [
  "vt100",
  "watchdog",
  "weathr",
+ "windows-sys 0.61.2",
+ "workspace-protocol",
  "zeroize",
 ]
 
@@ -6071,9 +6077,11 @@ dependencies = [
  "image",
  "ratatui",
  "ratatui-image",
+ "serde",
  "shell-control",
  "tachyonfx",
  "unicode-width 0.2.0",
+ "workspace-protocol",
  "zip",
 ]
 
@@ -6449,11 +6457,13 @@ version = "1.5.1"
 dependencies = [
  "chrono",
  "futures-util",
+ "libc",
  "runtime-log",
  "serde",
  "serde_json",
  "tokio",
  "windows-sys 0.52.0",
+ "workspace-protocol",
 ]
 
 [[package]]
@@ -7092,6 +7102,16 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-wlr",
+]
+
+[[package]]
+name = "workspace-protocol"
+version = "1.5.1"
+dependencies = [
+ "base64",
+ "flate2",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

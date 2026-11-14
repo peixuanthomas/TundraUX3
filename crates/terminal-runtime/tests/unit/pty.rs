@@ -68,15 +68,19 @@ fn reader_eof_publishes_the_final_synchronized_frame_before_retaining_output() {
 
 #[test]
 fn recorded_output_survives_beyond_the_terminal_scrollback_without_osc_controls() {
-    let root =
-        platform::create_temp_dir(&std::env::temp_dir().join("TundraUX3"), "recorded-pty-test")
-            .unwrap();
+    let temp_root = std::env::temp_dir()
+        .canonicalize()
+        .unwrap()
+        .join("TundraUX3");
+    let root = platform::create_temp_dir(&temp_root, "recorded-pty-test").unwrap();
     let store = platform::task_history::HistoryStore::new(&root);
     let summary =
         platform::task_history::TaskSummary::new("output".into(), "script".into(), "script".into());
     let recorder = TaskRecorder::new(store.clone(), summary).unwrap();
     let mut text = "中文输出\r\n".repeat(3000).into_bytes();
-    text.extend_from_slice(b"\x1b]52;c;blocked\x07END");
+    text.extend_from_slice(
+        b"\x1b]52;c;blocked\x07\x1b]1337;SetUserVar=TUNDRA_MIN_SIZE=MTIweDQw\x07END",
+    );
     let writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(Box::new(
         CollectingWriter(Arc::new(Mutex::new(Vec::new()))),
     )));
@@ -91,7 +95,97 @@ fn recorded_output_survives_beyond_the_terminal_scrollback_without_osc_controls(
     let archived = String::from_utf8(bytes).unwrap();
     assert_eq!(archived.matches("中文输出").count(), 3000);
     assert!(!archived.contains("blocked"));
+    assert!(!archived.contains("TUNDRA_MIN_SIZE"));
     assert!(archived.ends_with("END"));
+    platform::cleanup_temp_path(&root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn pty_minimum_size_updates_without_visible_output_and_clears_on_exit() {
+    use std::time::Instant;
+    use watchdog::{AppCriticality, AppDescriptor, AppId, WatchdogConfig, WatchdogRuntime};
+
+    let root =
+        platform::create_temp_dir(&std::env::temp_dir().join("TundraUX3"), "pty-minimum").unwrap();
+    let (runtime, process) = WatchdogRuntime::start_isolated(WatchdogConfig::new(
+        root.join("reports"),
+        root.join("fallback"),
+        root.join("data"),
+        "pty-minimum-test",
+        env!("CARGO_PKG_VERSION"),
+    ))
+    .unwrap();
+    let app = process
+        .register_app(AppDescriptor::new(
+            AppId::from_static("terminal.minimum-test"),
+            "PTY minimum size test",
+            env!("CARGO_PKG_VERSION"),
+            AppCriticality::Optional,
+        ))
+        .unwrap();
+    let tasks = app.task_group("terminal");
+    let script = r#"
+stty -echo
+printf '\033]1337;SetUserVar=TUNDRA_MIN_SIZE=MTIweDQw\007'
+IFS= read -r next
+printf '\033]1337;SetUserVar=TUNDRA_MIN_SIZE=ODB4MjQ=\033\\'
+IFS= read -r next
+printf '\033]1337;SetUserVar=TUNDRA_MIN_SIZE=\007'
+IFS= read -r next
+printf '\033]1337;SetUserVar=TUNDRA_MIN_SIZE=MTIweDQw\007'
+IFS= read -r next
+"#;
+    let pty = PtyProcess::spawn(
+        PtyConfig {
+            program: "/bin/sh".into(),
+            args: vec!["-c".into(), script.into()],
+            env: Vec::new(),
+            cwd: None,
+            columns: 80,
+            rows: 24,
+            scrollback_lines: 0,
+        },
+        &tasks,
+    )
+    .unwrap();
+    let first = pty.snapshot();
+    let mut revision = 0;
+    for (index, expected) in [Some((120, 40)), Some((80, 24)), None, Some((120, 40))]
+        .into_iter()
+        .enumerate()
+    {
+        if index != 0 {
+            pty.write(b"next\n").unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some((snapshot, current_revision)) = pty.snapshot_if_changed(revision)
+                && pty.reported_minimum_size() == expected
+            {
+                assert_eq!(snapshot, first);
+                revision = current_revision;
+                break;
+            }
+            assert!(Instant::now() < deadline, "missing PTY report {expected:?}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    pty.write(b"exit\n").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = pty.try_wait().unwrap() {
+            assert!(status.success);
+            break;
+        }
+        assert!(Instant::now() < deadline, "PTY child did not exit");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(pty.reported_minimum_size(), None);
+    assert!(pty.snapshot_if_changed(revision).is_some());
+    drop(pty);
+    drop(tasks);
+    runtime.shutdown().unwrap();
     platform::cleanup_temp_path(&root).unwrap();
 }
 

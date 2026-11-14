@@ -4,7 +4,7 @@ use crate::ManagedCommand;
 use crate::management::{HelperReady, ManagementCommand, ManagementError, helper};
 use crate::service::ServiceError;
 use serde::{Deserialize, Serialize};
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
@@ -62,6 +62,7 @@ pub enum Request {
 #[derive(Serialize, Deserialize)]
 enum Response {
     Connected,
+    RegisterOperation { process: u32 },
     Done,
     Failed(String),
     ServiceFailed(ServiceError),
@@ -188,7 +189,16 @@ impl Client {
             return Err(failure("Not a connection request"));
         }
         write_packet(&mut self.channel, &request)?;
-        match read_packet::<Response>(&mut self.channel)? {
+        let response = match read_packet::<Response>(&mut self.channel)? {
+            Response::RegisterOperation { process } if matches!(request, Request::Start(_)) => {
+                let registration = watchdog::register_delegated_session(process);
+                let accepted = registration.as_ref().is_ok_and(Option::is_some);
+                write_packet(&mut self.channel, &accepted)?;
+                read_packet(&mut self.channel)?
+            }
+            response => response,
+        };
+        match response {
             Response::Connected => receive_connection(&self.channel),
             // A missing/expired task is an ordinary operation failure, not a
             // broken authorization channel. Keep the session usable.
@@ -219,16 +229,22 @@ fn start_operation(
     actor: u32,
     caller_pid: u32,
     caller_start_ticks: u64,
+    stop_on_owner_exit: bool,
+    channel: &mut UnixStream,
 ) -> Result<UnixStream, ManagementError> {
     // The portable installation directory is user-writable. Re-execute the
     // already authorized running image, never a replaceable filesystem path.
-    let mut child = Command::new("/proc/self/exe")
-        .args([
-            "__system-helper-bound",
-            &actor.to_string(),
-            &caller_pid.to_string(),
-            &caller_start_ticks.to_string(),
-        ])
+    let mut launch = Command::new("/proc/self/exe");
+    launch.args([
+        "__system-helper-bound",
+        &actor.to_string(),
+        &caller_pid.to_string(),
+        &caller_start_ticks.to_string(),
+    ]);
+    if stop_on_owner_exit {
+        launch.env("TUNDRA_WATCHDOG_OWNER", "1");
+    }
+    let mut child = launch
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -236,17 +252,49 @@ fn start_operation(
         .map_err(failure)?;
     let mut request = Zeroizing::new(serde_json::to_vec(command).map_err(failure)?);
     request.push(b'\n');
-    child
+    let mut input = child
         .stdin
         .take()
-        .ok_or_else(|| failure("Missing helper input"))?
-        .write_all(&request)
-        .map_err(failure)?;
-    let output = child.wait_with_output().map_err(failure)?;
-    if !output.status.success() {
-        return Err(failure("Operation helper failed to start"));
-    }
-    let ready: HelperReady = serde_json::from_slice(&output.stdout).map_err(failure)?;
+        .ok_or_else(|| failure("Missing helper input"))?;
+    input.write_all(&request).map_err(failure)?;
+    let ready: HelperReady = if stop_on_owner_exit {
+        let output = child
+            .stdout
+            .take()
+            .ok_or_else(|| failure("Missing helper identity"))?;
+        let mut reader = BufReader::new(output).take(16 * 1024);
+        let mut identity = Vec::new();
+        reader.read_until(b'\n', &mut identity).map_err(failure)?;
+        let ready: HelperReady = serde_json::from_slice(&identity).map_err(failure)?;
+        helper::check_attach_path(&ready.socket, actor)?;
+        write_packet(
+            channel,
+            &Response::RegisterOperation {
+                process: ready.process_id,
+            },
+        )?;
+        channel
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .map_err(failure)?;
+        let accepted = read_packet::<bool>(channel);
+        channel.set_read_timeout(None).map_err(failure)?;
+        if !accepted? {
+            return Err(ManagementError::Cancelled);
+        }
+        input.write_all(&[1]).map_err(failure)?;
+        drop(input);
+        if !child.wait().map_err(failure)?.success() {
+            return Err(failure("Operation helper failed to start"));
+        }
+        ready
+    } else {
+        drop(input);
+        let output = child.wait_with_output().map_err(failure)?;
+        if !output.status.success() {
+            return Err(failure("Operation helper failed to start"));
+        }
+        serde_json::from_slice(&output.stdout).map_err(failure)?
+    };
     helper::check_attach_path(&ready.socket, actor)?;
     helper::connect(&ready.socket, 0)
 }
@@ -275,6 +323,10 @@ fn account_operation(actor: u32, operation: &AccountOperation) -> Result<(), Ser
 
 /// Internal CLI entry: the caller must have obtained system root authorization.
 pub fn entry(actor: u32) -> Result<(), ManagementError> {
+    entry_with_owner(actor, false)
+}
+
+pub fn entry_with_owner(actor: u32, stop_on_owner_exit: bool) -> Result<(), ManagementError> {
     helper::check_actor(actor)?;
     if unsafe { libc::geteuid() } != 0 {
         return Err(failure("Session requires root"));
@@ -351,7 +403,14 @@ pub fn entry(actor: u32) -> Result<(), ManagementError> {
         };
         match request {
             Request::Start(ref command) => {
-                match start_operation(command, actor, caller_pid, caller_start_ticks) {
+                match start_operation(
+                    command,
+                    actor,
+                    caller_pid,
+                    caller_start_ticks,
+                    stop_on_owner_exit,
+                    &mut channel,
+                ) {
                     Ok(stream) => {
                         write_packet(&mut channel, &Response::Connected)?;
                         send_connection(&channel, &stream)?;

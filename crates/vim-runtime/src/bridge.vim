@@ -200,6 +200,10 @@ endfunction
 
 function! s:Receive(channel, raw) abort
   let message = json_decode(a:raw)
+  if get(message, 'op', '') ==# 'ping'
+    call s:Send({'kind': 'pong', 'ping': message.ping})
+    return
+  endif
   if get(message, 'op', '') ==# 'save_response'
     let s:responses[string(message.request)] = message
     return

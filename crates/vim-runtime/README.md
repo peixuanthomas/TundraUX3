@@ -9,6 +9,7 @@
 A full Vim build with `+eval`, `+channel`, and `+timers` is required. Release packages provide `vim/vim` (`vim/vim.exe` on Windows) and `vim/runtime`; callers use `VimConfig` to specify paths, size, user configuration, and initial buffers.
 
 Keys, paste, mouse, and focus use the shared `PtyProcess` interface. `set_cell_size` supplies the actual character-cell dimensions in pixels for image positioning and terminal queries.
+The host sends a liveness probe with `request_ping`. Vim's channel callback echoes the probe ID through `VimPoll::ping_ids` without changing editor state or the command sequence.
 
 ## Buffer synchronization
 
@@ -37,6 +38,6 @@ TUNDRA_TEST_VIM="$PWD/target/debug/vim/vim" cargo test --locked -p vim-runtime -
 cargo test --locked -p vim-runtime --test terminal_cache
 ```
 
-Tests require a real PTY and a local loopback connection. They cover buffer import, cross-buffer undo, controlled saving, `:wq`, forced discard, read-only protection, and static frames, output, resizing, and post-exit refreshes.
+Tests require a real PTY and a local loopback connection. They cover probe replies, buffer import, cross-buffer undo, controlled saving, `:wq`, forced discard, read-only protection, and static frames, output, resizing, and post-exit refreshes.
 
 See [Bundled Vim](../../docs/packaging/vim.md) for building and packaging, and [Editor and script workspace](../../docs/source-editor.md#real-vim-mode) for user operations.

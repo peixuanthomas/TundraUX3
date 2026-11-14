@@ -13,6 +13,8 @@ use crate::input_queue::InputQueue;
 pub use crate::snapshot::{
     TerminalCell, TerminalColor, TerminalCursorStyle, TerminalSnapshot, to_ui_snapshot,
 };
+#[cfg(unix)]
+use platform::pty_exec::Gate;
 pub use platform::task_history::TaskRecorder;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::ffi::OsString;
@@ -25,9 +27,6 @@ use watchdog::{ManagedTaskGroup, ManagedThreadHandle, TaskId, TaskSpec};
 #[cfg(target_os = "linux")]
 #[path = "process_tree_linux.rs"]
 mod process_tree_linux;
-#[cfg(target_os = "macos")]
-#[path = "process_tree_macos.rs"]
-mod process_tree_macos;
 
 #[cfg(test)]
 use ui::KeyModifiers as InputModifiers;
@@ -172,15 +171,14 @@ impl PtyProcess {
         let pair = pty_system.openpty(config.size()).map_err(portable_error)?;
         let mut command = CommandBuilder::new(config.program);
         command.args(config.args);
-        for (name, value) in config.env {
-            command.env(name, value);
-        }
+        let mut environment = config.env;
         #[cfg(target_os = "linux")]
         {
             let user = platform::linux::identity::LinuxUserContext::current()?;
-            for (name, value) in user.environment() {
-                command.env(name, value);
-            }
+            environment.extend(
+                user.environment()
+                    .map(|(name, value)| (name.into(), value.to_os_string())),
+            );
         }
         if let Some(cwd) = config.cwd {
             // portable-pty falls back to the user's home for an invalid cwd.
@@ -204,11 +202,19 @@ impl PtyProcess {
         }
         // The child needs a color-capable, non-host terminal.  The in-memory
         // parser, rather than the outer shell, renders all escape sequences.
-        command.env("TERM", "xterm-256color");
-        command.env("COLORTERM", "truecolor");
-        command.env("TERM_PROGRAM", "TundraUX3");
-        command.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
-        for name in [
+        environment.extend(
+            [
+                ("TERM", "xterm-256color"),
+                ("COLORTERM", "truecolor"),
+                ("TERM_PROGRAM", "TundraUX3"),
+                ("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION")),
+            ]
+            .map(|(name, value)| (name.into(), value.into())),
+        );
+        for (name, value) in &environment {
+            command.env(name, value);
+        }
+        let host_terminal_variables = [
             "KITTY_WINDOW_ID",
             "KITTY_LISTEN_ON",
             "WEZTERM_PANE",
@@ -218,13 +224,48 @@ impl PtyProcess {
             "WT_PROFILE_ID",
             "TMUX",
             "STY",
-        ] {
+        ];
+        for name in host_terminal_variables {
             command.env_remove(name);
         }
+        #[cfg(unix)]
+        let gate = watchdog::process_session_registration_enabled()
+            .then(|| {
+                let mut environment = std::env::vars_os()
+                    .chain(environment)
+                    .collect::<std::collections::BTreeMap<_, _>>();
+                for name in host_terminal_variables {
+                    environment.remove(std::ffi::OsStr::new(name));
+                }
+                Gate::wrap(&mut command, environment)
+            })
+            .transpose()?;
         let mut child = pair.slave.spawn_command(command).map_err(portable_error)?;
-        let process_tree = match ProcessTreeGuard::attach(pair.master.as_ref(), child.as_ref()) {
+        let process_tree = match ProcessTreeGuard::attach(child.as_ref()) {
             Ok(guard) => guard,
             Err(error) => {
+                let _ = child.kill();
+                let _ = wait_stopped(child.as_mut());
+                return Err(error);
+            }
+        };
+        #[cfg(unix)]
+        let child_pid = process_tree.session as u32;
+        #[cfg(unix)]
+        let supervisor_registration = if gate.is_some() {
+            watchdog::register_process_session(child_pid)
+        } else {
+            Ok(None)
+        };
+        #[cfg(windows)]
+        let supervisor_registration =
+            watchdog::register_process_job(process_tree.job as usize as u64);
+        #[cfg(not(any(unix, windows)))]
+        let supervisor_registration = Ok(None::<watchdog::ProcessResourceGuard>);
+        let mut supervisor_registration = match supervisor_registration {
+            Ok(registration) => registration,
+            Err(error) => {
+                let _ = process_tree.terminate();
                 let _ = child.kill();
                 let _ = wait_stopped(child.as_mut());
                 return Err(error);
@@ -242,24 +283,30 @@ impl PtyProcess {
         let input = Arc::new(InputQueue::default());
         let cleanup_input = input.clone();
         let process_registration = reader_tasks.manage_resource("terminal-process", move || {
+            let tree = cleanup_tree.lock().unwrap_or_else(|e| e.into_inner());
+            #[cfg(target_os = "macos")]
+            let _ = tree.macos.request_stop();
+            #[cfg(not(target_os = "macos"))]
+            let stopped = tree.terminate();
             cleanup_input.close();
-            let stopped = cleanup_tree
+            // Closing the console releases a child blocked in terminal I/O.
+            cleanup_master
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .terminate();
+                .take();
+            #[cfg(target_os = "macos")]
+            let stopped = tree.terminate();
             let mut child = cleanup_child.lock().unwrap_or_else(|e| e.into_inner());
             if stopped.is_err() {
                 let _ = child.kill();
             }
             let waited = wait_stopped(child.as_mut());
             drop(child);
-            // A view may outlive watchdog shutdown. Close the console here
-            // so its reader can reach EOF before watchdog waits for workers.
-            cleanup_master
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .take();
-            waited.and(stopped)
+            let result = waited.and(stopped);
+            if result.is_ok() {
+                supervisor_registration.take();
+            }
+            result
         });
         let process_registration = match process_registration {
             Ok(registration) => registration,
@@ -331,7 +378,7 @@ impl PtyProcess {
                 io::Error::other(format!("could not start terminal output reader: {error}"))
             })?;
 
-        Ok(Self {
+        let pty = Self {
             master,
             writer: Some(writer),
             child,
@@ -343,7 +390,12 @@ impl PtyProcess {
             writer_task: Some(writer_task),
             writer_done,
             input,
-        })
+        };
+        #[cfg(unix)]
+        if let Some(gate) = gate {
+            gate.release(child_pid)?;
+        }
+        Ok(pty)
     }
 
     pub fn write(&self, bytes: &[u8]) -> io::Result<()> {
@@ -405,6 +457,14 @@ impl PtyProcess {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         parser.input_modes()
+    }
+
+    /// The latest minimum terminal size reported by the running child, as (columns, rows).
+    pub fn reported_minimum_size(&self) -> Option<(u16, u16)> {
+        self.parser
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .reported_minimum_size()
     }
 
     /// Returns false when the child has not requested mouse input or the event
@@ -515,7 +575,13 @@ impl PtyProcess {
     pub fn try_wait(&self) -> io::Result<Option<PtyExitStatus>> {
         let mut child = lock_io(&self.child)?;
         let status = child.try_wait()?.map(PtyExitStatus::from_portable);
-        if status.is_none() {
+        drop(child);
+        if status.is_some() {
+            let mut parser = self.parser.lock().unwrap_or_else(|e| e.into_inner());
+            if parser.stop_minimum_size_reports() {
+                self.output_revision.fetch_add(1, Ordering::Release);
+            }
+        } else {
             self.input.check_error()?;
         }
         Ok(status)
@@ -677,7 +743,7 @@ unsafe impl Send for ProcessTreeGuard {}
 
 #[cfg(windows)]
 impl ProcessTreeGuard {
-    fn attach(_master: &(dyn MasterPty + Send), child: &dyn Child) -> io::Result<Self> {
+    fn attach(child: &dyn Child) -> io::Result<Self> {
         use std::mem::size_of;
         use windows_sys::Win32::Foundation::HANDLE;
         use windows_sys::Win32::System::JobObjects::{
@@ -692,8 +758,7 @@ impl ProcessTreeGuard {
         }
         let guard = Self { job };
         let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-            | windows_sys::Win32::System::JobObjects::JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         let configured = unsafe {
             SetInformationJobObject(
                 job,
@@ -736,20 +801,19 @@ impl Drop for ProcessTreeGuard {
 
 #[cfg(unix)]
 struct ProcessTreeGuard {
-    #[cfg(not(target_os = "linux"))]
-    process_group: Option<libc::pid_t>,
+    session: libc::pid_t,
     #[cfg(target_os = "linux")]
     linux: process_tree_linux::LinuxProcessTree,
+    #[cfg(target_os = "macos")]
+    macos: watchdog::OwnedProcessSession,
 }
 
 #[cfg(unix)]
 impl ProcessTreeGuard {
-    fn attach(master: &(dyn MasterPty + Send), child: &dyn Child) -> io::Result<Self> {
-        let process_group = master.process_group_leader().or_else(|| {
-            child
-                .process_id()
-                .and_then(|process_id| libc::pid_t::try_from(process_id).ok())
-        });
+    fn attach(child: &dyn Child) -> io::Result<Self> {
+        let process_group = child
+            .process_id()
+            .and_then(|process_id| libc::pid_t::try_from(process_id).ok());
         let Some(process_group) = process_group else {
             return Err(io::Error::other(
                 "portable PTY did not expose a child process group",
@@ -761,28 +825,27 @@ impl ProcessTreeGuard {
             ));
         }
         Ok(Self {
-            #[cfg(not(target_os = "linux"))]
-            process_group: Some(process_group),
+            session: process_group,
             #[cfg(target_os = "linux")]
             linux: process_tree_linux::LinuxProcessTree::attach(process_group)?,
+            #[cfg(target_os = "macos")]
+            macos: watchdog::OwnedProcessSession::attach(process_group as u32)?,
         })
     }
 
     fn terminate(&self) -> io::Result<()> {
         #[cfg(target_os = "linux")]
         return self.linux.terminate();
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "macos")]
+        return self.macos.terminate();
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
-            let Some(process_group) = self.process_group else {
-                return Err(io::Error::other("child process group is unavailable"));
-            };
+            let process_group = self.session;
             // A broken PTY backend must never cause the Shell to kill its own
             // foreground group.
             if process_group <= 0 || process_group == std::process::id() as libc::pid_t {
                 return Err(io::Error::other("child process group is unsafe"));
             }
-            #[cfg(target_os = "macos")]
-            process_tree_macos::terminate_background_groups(process_group)?;
             if unsafe { libc::kill(-process_group, libc::SIGKILL) } == 0 {
                 Ok(())
             } else {
@@ -814,24 +877,24 @@ fn read_terminal_output_recorded(
     loop {
         match reader.read(&mut buffer) {
             Ok(0) | Err(_) => {
-                if parser
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .finish_output()
-                {
+                let mut parser = parser.lock().unwrap_or_else(|e| e.into_inner());
+                if parser.finish_output() {
                     output_revision.fetch_add(1, Ordering::Release);
                 }
                 return;
             }
             Ok(count) => {
-                let recorded = parser
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .process(&buffer[..count]);
-                if let Some(history) = history {
+                let recorded = {
+                    let mut parser = parser.lock().unwrap_or_else(|e| e.into_inner());
+                    let recorded = parser.process(&buffer[..count]);
+                    output_revision.fetch_add(1, Ordering::Release);
+                    recorded
+                };
+                if let Some(history) = history
+                    && !recorded.is_empty()
+                {
                     history.output(&recorded);
                 }
-                output_revision.fetch_add(1, Ordering::Release);
             }
         }
     }

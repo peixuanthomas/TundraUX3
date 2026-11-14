@@ -95,17 +95,21 @@ pub fn run(
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
+            let supervised = watchdog::process_session_registration_enabled();
+            if supervised {
+                launch.env("TUNDRA_WATCHDOG_OWNER", "1");
+            }
             let mut child = launch.spawn_supervised_helper().map_err(failure)?;
             let mut request = Zeroizing::new(
                 serde_json::to_vec(&command)
                     .map_err(|e| ManagementError::InvalidInput(e.to_string()))?,
             );
             request.push(b'\n');
-            if let Some(mut stdin) = child.stdin.take() {
+            if let Some(stdin) = child.stdin.as_mut() {
                 stdin.write_all(&request).map_err(failure)?;
             }
             drop(request);
-            let output = wait_for_launcher(child, detached)?;
+            let output = wait_for_launcher(child, detached, supervised)?;
             if !output.status.success() {
                 return Err(ManagementError::Failed(runtime_log::sanitize_text(
                     &String::from_utf8_lossy(&output.stderr),
@@ -200,12 +204,14 @@ pub fn run(
 fn wait_for_launcher(
     mut child: crate::ManagedChild,
     detached: &AtomicBool,
+    supervised: bool,
 ) -> Result<std::process::Output, ManagementError> {
-    use std::io::Read;
+    use std::io::{Read, Write};
     use std::os::fd::AsRawFd;
     let failure = |e: std::io::Error| ManagementError::Failed(e.to_string());
     let mut stdout = child.stdout.take();
     let mut stderr = child.stderr.take();
+    let mut gate = child.stdin.take().filter(|_| supervised);
     for fd in [
         stdout.as_ref().map(AsRawFd::as_raw_fd),
         stderr.as_ref().map(AsRawFd::as_raw_fd),
@@ -259,6 +265,15 @@ fn wait_for_launcher(
                     }
                 }
             }
+        }
+        if let Some(end) = out.iter().position(|&byte| byte == b'\n')
+            && let Some(mut gate) = gate.take()
+        {
+            let ready = serde_json::from_slice::<HelperReady>(&out[..end])
+                .map_err(|_| ManagementError::Failed("Invalid operation helper identity".into()))?;
+            let _registered =
+                watchdog::register_delegated_session(ready.process_id).map_err(failure)?;
+            gate.write_all(&[1]).map_err(failure)?;
         }
         if let Some(status) = status {
             return Ok(std::process::Output {

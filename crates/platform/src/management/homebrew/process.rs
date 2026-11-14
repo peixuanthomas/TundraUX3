@@ -150,14 +150,20 @@ pub(super) fn execute(
     let mut writer = pair.master.take_writer().map_err(io_error)?;
     let mut command = CommandBuilder::new(program);
     command.args(args);
+    let mut environment = std::env::vars_os().collect::<std::collections::BTreeMap<_, _>>();
     for &(key, value) in ENVIRONMENT {
         command.env(key, value);
+        environment.insert(key.into(), value.into());
     }
     command.env("TERM", "xterm-256color");
+    environment.insert("TERM".into(), "xterm-256color".into());
     // Homebrew now enables native confirmation by default and rejects HOMEBREW_ASK.
-    command.env_remove("HOMEBREW_ASK");
-    command.env_remove("HOMEBREW_NO_ASK");
-    let mut child = ManagedChild::spawn_pty(pair.slave.as_ref(), command).map_err(io_error)?;
+    for key in ["HOMEBREW_ASK", "HOMEBREW_NO_ASK"] {
+        command.env_remove(key);
+        environment.remove(std::ffi::OsStr::new(key));
+    }
+    let mut child =
+        ManagedChild::spawn_pty(pair.slave.as_ref(), command, environment).map_err(io_error)?;
     drop(pair.slave);
     if let Some(bytes) = initial_input {
         write_input(&mut writer, &bytes).map_err(io_error)?;

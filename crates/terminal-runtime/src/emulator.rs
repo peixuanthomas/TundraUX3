@@ -3,6 +3,7 @@ use crate::input::{MouseProtocolEncoding, MouseProtocolMode};
 use crate::snapshot::{TerminalCell, TerminalColor, TerminalCursorStyle, TerminalSnapshot};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
+use std::num::NonZeroU16;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 use wezterm_cell::color::ColorAttribute;
@@ -22,6 +23,7 @@ pub(crate) type SharedWriter = Arc<Mutex<Box<dyn Write + Send>>>;
 type WriterRef = Weak<Mutex<Box<dyn Write + Send>>>;
 const SYNC_TIMEOUT: Duration = Duration::from_millis(200);
 const MARKER_PREFIX: &str = "tundra-command-status:";
+const MINIMUM_SIZE_VARIABLE: &str = "TUNDRA_MIN_SIZE";
 
 #[derive(Clone)]
 struct ChildWriter(WriterRef);
@@ -110,6 +112,8 @@ pub(crate) struct Emulator {
     writer: WriterRef,
     scrollback: usize,
     cell_size: (u16, u16),
+    reported_minimum_size: Option<(u16, u16)>,
+    minimum_size_reports_enabled: bool,
     application_cursor: bool,
     mouse_mode: MouseProtocolMode,
     mouse_encoding: MouseProtocolEncoding,
@@ -139,6 +143,8 @@ impl Emulator {
             writer,
             scrollback: 0,
             cell_size: (8, 16),
+            reported_minimum_size: None,
+            minimum_size_reports_enabled: true,
             application_cursor: false,
             mouse_mode: MouseProtocolMode::None,
             mouse_encoding: MouseProtocolEncoding::Default,
@@ -160,6 +166,15 @@ impl Emulator {
 
     pub(crate) fn cell_size(&self) -> (u16, u16) {
         self.cell_size
+    }
+
+    pub(crate) fn reported_minimum_size(&self) -> Option<(u16, u16)> {
+        self.reported_minimum_size
+    }
+
+    pub(crate) fn stop_minimum_size_reports(&mut self) -> bool {
+        self.minimum_size_reports_enabled = false;
+        self.reported_minimum_size.take().is_some()
     }
 
     pub(crate) fn set_cell_size(&mut self, width: u16, height: u16) {
@@ -274,6 +289,29 @@ impl Emulator {
         let mut history = Vec::new();
         let mut pending = Vec::new();
         for mut action in actions {
+            if let Action::OperatingSystemCommand(osc) = &action
+                && let OperatingSystemCommand::ITermProprietary(ITermProprietary::SetUserVar {
+                    name,
+                    value,
+                }) = osc.as_ref()
+                && name == MINIMUM_SIZE_VARIABLE
+            {
+                if self.minimum_size_reports_enabled {
+                    if value.is_empty() {
+                        self.reported_minimum_size = None;
+                    } else if let Some((columns, rows)) = value.split_once('x')
+                        && columns
+                            .bytes()
+                            .chain(rows.bytes())
+                            .all(|b| b.is_ascii_digit())
+                        && let (Ok(columns), Ok(rows)) =
+                            (columns.parse::<NonZeroU16>(), rows.parse::<NonZeroU16>())
+                    {
+                        self.reported_minimum_size = Some((columns.get(), rows.get()));
+                    }
+                }
+                continue;
+            }
             if !allowed_action(&action) {
                 continue;
             }
@@ -502,7 +540,7 @@ impl Emulator {
     pub(crate) fn finish_output(&mut self) -> bool {
         let synchronized = self.synchronized.is_some();
         self.release_sync();
-        synchronized
+        self.stop_minimum_size_reports() || synchronized
     }
 
     pub(crate) fn refresh_sync(&mut self) -> bool {

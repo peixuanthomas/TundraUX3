@@ -24,6 +24,8 @@ This connection accepts only fixed requests. Normal users' own profile and passw
 
 A task's `control.sock` is owned by root and accepts only root. The authorized program checks the ownership, permissions, and task identity of `/run/tundraux3-management/<actor>/<operation>/control.sock`, then passes the connected descriptor to Shell. A new Shell must authorize again before reconnecting.
 
+Tasks started by a supervised workspace worker wait for guardian registration. The authorized helper holds a pidfd for that worker and uses its own permissions to stop its children if the worker exits. The guardian observes the registered helper until it stops. Closing a page or disconnecting its operation viewer preserves the operation while the worker is alive.
+
 SSH confirmation uses the actual calling process, start time, sshd parent process, and kernel TCP state supplied through the authorization connection. It does not use caller-supplied process IDs or `SSH_CONNECTION`.
 
 The helper receives a copy of the current language resources in the request and uses it in memory, without reading user language files as root. Command arguments, action names, and object identities retain their original values; transaction IDs are returned through separate events.

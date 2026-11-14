@@ -27,6 +27,7 @@ identity = { path = "../identity" }
 platform = { path = "../platform" }
 storage = { path = "../storage" }
 watchdog = { path = "../watchdog" }
+workspace-protocol = { path = "../workspace-protocol" }
 unicode-segmentation = "1.12"
 unicode-width = "0.2"
 time = { version = "1.3.4", path = "../time" }

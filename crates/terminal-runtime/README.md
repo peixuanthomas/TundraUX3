@@ -30,10 +30,13 @@ Startup detection can read the terminal's base colors, default foreground/backgr
 - Mouse coordinates are converted from the host content area to child-terminal coordinates and sent using the Default, UTF-8, or SGR protocol.
 - The input queue is capped at 4 MiB. Its sole writer thread is managed by watchdog and writes keys, protocol replies, mouse input, and paste in order.
 - `resize` returns immediately when the size has not changed, avoiding redundant notifications and screen-revision changes.
+- A program may report its minimum viewport with `OSC 1337;SetUserVar=TUNDRA_MIN_SIZE=<base64>` followed by BEL or ST. The decoded value is `<columns>x<rows>`, both positive decimal integers up to 65535. An empty value clears the report. Invalid values leave the last report in place.
+- `PtyProcess::reported_minimum_size()` reads the current report. Report updates advance the output revision even when the screen is unchanged. The report stays out of rendered and recorded output and clears when the program exits.
 - `into_output` cleans up the process tree and drains output, returning a `TerminalOutput` that supports scrollback, resizing, and snapshots.
 - An output receiver can save the complete task history chunk by chunk in the reader thread, without the terminal's scrollback-line limit.
 
 Unix uses process groups, and Windows uses Job Objects to clean up the corresponding child-process tree. macOS also terminates background process groups in the same terminal session, without affecting other terminal instances.
+In managed sessions the independent guardian registers a separate Unix PTY session before the program starts. On Windows the guardian's Job Object contains the child at launch and retains the terminal's nested Job Object for cleanup.
 
 ## Terminal parsing and snapshots
 

@@ -10,6 +10,14 @@ Long-lived threads receive stop requests through `spawn_thread_with_cancellation
 
 Restart policies are determined by `ReplaySafety`: only `Idempotent` tasks or `Checkpointed` tasks with recovery handlers can restart. `Never + RestartTask` is rejected.
 
+## Workspace process supervision
+
+`Supervisor` associates each child with a run, role, session, and generation. Its monotonic deadlines use progress from the worker loop. The guardian may continue accepting close and force-stop requests while a child is stuck, and it delegates native process-tree cleanup to independent workers.
+
+Unix starts each guardian child in its own process group and keeps the group's leader unreaped until cleanup completes. Independent PTY sessions and command groups register before running their commands. Cleanup includes session members and descendants still linked to a registered tree. Windows starts children suspended, assigns them to a Job Object, and resumes them once containment is in place.
+
+On macOS, the audit-token signal API safeguards detached process signals against PID reuse. macOS releases without this API can still signal directly owned worker groups. A detached process that cannot be signalled or verified remains in the stopping state with a supervision error.
+
 ## Operation journals
 
 `OperationGuard` atomically maintains journals in:
@@ -34,4 +42,4 @@ Both normal exits and catchable panics should restore raw mode, mouse state, alt
 cargo test --locked -p watchdog
 ```
 
-Tests cover task cancellation, shutdown waits, panic boundaries, journals, resource cleanup, report redaction, and retention policies. Real-terminal restoration is validated by PTY/ConPTY tests on the corresponding platform.
+Tests cover task cancellation, shutdown waits, panic boundaries, journals, resource cleanup, report redaction, and retention policies. Native supervision tests exercise dropped progress, a stopped or busy Shell, an app deadlock, and child processes in separate groups and sessions. Real-terminal restoration is validated by PTY/ConPTY tests on the corresponding platform.

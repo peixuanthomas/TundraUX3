@@ -12,6 +12,35 @@ fn expired_idle_connection_is_closed_without_waiting_for_input() {
     assert!(server.clients.is_empty());
 }
 
+#[test]
+fn watchdog_discovers_a_separate_endpoint_and_expires_idle_clients_quickly() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("watchdog-discovery");
+    let session = "0123456789abcdef0123456789abcdef".to_string();
+    #[cfg(unix)]
+    let endpoint = {
+        let private = root.path().join(format!(".tux-{session}"));
+        create_private_directory(&private).unwrap();
+        private.join("watchdog").to_str().unwrap().to_owned()
+    };
+    #[cfg(windows)]
+    let endpoint = format!("tundra-watchdog-{session}");
+    let mut server = Server::start_watchdog(&directory, session, endpoint).unwrap();
+    assert!(sessions(&directory).unwrap().is_empty());
+    let discovered = watchdog_sessions(&directory).unwrap();
+    assert_eq!(discovered.len(), 1);
+    assert_eq!(discovered[0].session, server.info.session);
+    assert_eq!(discovered[0].pid, server.info.pid);
+    assert_eq!(discovered[0].endpoint, server.info.endpoint);
+
+    let _client = LocalConnection::connect(&server.info.endpoint, server.info.pid).unwrap();
+    assert!(server.poll().is_empty());
+    assert_eq!(server.clients.len(), 1);
+    server.clients.values_mut().next().unwrap().since = Instant::now() - WATCHDOG_HANDSHAKE_TIMEOUT;
+    assert!(server.poll().is_empty());
+    assert!(server.clients.is_empty());
+}
+
 #[cfg(windows)]
 #[test]
 fn windows_registry_and_pipe_grant_only_current_user_and_deny_network() {

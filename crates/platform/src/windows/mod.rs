@@ -4,6 +4,7 @@ use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::ptr;
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::{
@@ -78,6 +79,38 @@ const BI_RGB: u32 = 0;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WindowsPlatform;
 
+#[derive(Debug, Clone)]
+pub enum DesktopOpen {
+    Path(PathBuf),
+    With { path: PathBuf, application: PathBuf },
+    Uri(String),
+}
+
+static DESKTOP_OPEN: OnceLock<fn(DesktopOpen) -> Result<(), PlatformError>> = OnceLock::new();
+
+pub fn install_desktop_open(
+    open: fn(DesktopOpen) -> Result<(), PlatformError>,
+) -> std::io::Result<()> {
+    DESKTOP_OPEN
+        .set(open)
+        .map_err(|_| std::io::ErrorKind::AlreadyExists.into())
+}
+
+fn open_desktop(operation: DesktopOpen) -> Result<(), PlatformError> {
+    if let Some(open) = DESKTOP_OPEN.get() {
+        return open(operation);
+    }
+    match operation {
+        DesktopOpen::Path(path) => shell_execute("open", path.as_os_str(), None),
+        DesktopOpen::With { path, application } => shell_execute(
+            "open",
+            application.as_os_str(),
+            Some(&quote_windows_argument(path.as_os_str())),
+        ),
+        DesktopOpen::Uri(uri) => shell_execute("open", OsStr::new(&uri), None),
+    }
+}
+
 impl Platform for WindowsPlatform {
     fn create_system_monitor(&self) -> Result<Box<dyn crate::SystemMonitor>, PlatformError> {
         crate::NativeSystemMonitor::new().map(|monitor| Box::new(monitor) as Box<_>)
@@ -129,15 +162,14 @@ impl Platform for WindowsPlatform {
     }
 
     fn open_path(&self, path: &Path) -> Result<(), PlatformError> {
-        shell_execute("open", path.as_os_str(), None)
+        open_desktop(DesktopOpen::Path(path.to_owned()))
     }
 
     fn open_with(&self, path: &Path, application: &Path) -> Result<(), PlatformError> {
-        shell_execute(
-            "open",
-            application.as_os_str(),
-            Some(&quote_windows_argument(path.as_os_str())),
-        )
+        open_desktop(DesktopOpen::With {
+            path: path.to_owned(),
+            application: application.to_owned(),
+        })
     }
 
     fn open_uri(&self, uri: &str) -> Result<(), PlatformError> {
@@ -147,7 +179,7 @@ impl Platform for WindowsPlatform {
             });
         }
 
-        shell_execute("open", OsStr::new(uri), None)
+        open_desktop(DesktopOpen::Uri(uri.to_owned()))
     }
 
     fn spawn_detached(&self, spec: &ProcessSpec) -> Result<(), PlatformError> {

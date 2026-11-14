@@ -11,6 +11,7 @@
 | `file_operations` | File identity and atomic renames that never overwrite the destination |
 | `platform` | Directories, volumes, trash, opening files, and platform capabilities |
 | `process`, `managed_process` | Process arguments, output, cancellation, and child-process management |
+| `pty_exec` | Starts Unix PTY programs after the guardian registers the session |
 | `terminal` | Host terminal capabilities, colors, and fullscreen sequences |
 | `system_monitor` | CPU, memory, battery, network, and process metrics |
 | `management` | Typed system-management queries, actions, and fixed backends |
@@ -21,7 +22,7 @@
 
 Platform-specific implementations are in `src/linux/`, `src/windows/`, and `src/macos/`. Document reads reject FIFOs, devices, symbolic links, and other non-regular files, and recheck file identity after opening.
 
-Explorer moves, renames, and undo share `file_operations`: Linux uses `renameat2(RENAME_NOREPLACE)`, macOS uses `renamex_np(RENAME_EXCL)`, and Windows uses `MoveFileExW` without replacement. An existing destination preserves both files.
+Explorer moves, renames, and undo share `file_operations`: Linux uses `renameat2(RENAME_NOREPLACE)`, macOS uses `renamex_np(RENAME_EXCL)`, and Windows uses `MoveFileExW` without replacement. An existing destination preserves both files. File identities serialize over authenticated session IPC so the shared undo service can validate the same object and parent directories across app processes.
 
 ## Management interfaces
 
@@ -39,9 +40,17 @@ Current management types cover services, processes, packages, networks, disks, u
 
 ## Shell control connections
 
-`shell_control` provides local connections for the external CLI. Unix uses a socket and registration file private to the current user and checks the peer's UID/PID; Windows named pipes and directories allow only the current user's SID.
+The Shell and app hosts request larger Unix socket buffers for window frames. Guardian traffic and external CLI control use separate connections with their own limits.
+
+`shell_control` provides local connections for the external CLI and for managed Shell, application, and service processes. Unix uses private sockets and checks the peer's UID and PID. Windows named pipes and registration directories allow only the current user's SID, and clients check the server PID.
 
 Each Shell poll processes at most 16 connections, with 64 KiB of reads and writes per connection; requests are limited to 1 MiB and responses to 32 MiB. Connections are cleaned up after 30 seconds, and registration files and sockets are removed on exit. Protocol types are defined by [shell-control](../shell-control/README.md).
+
+The guardian publishes a separate `shell-watchdog` registration under the application cache directory. The watchdog endpoint accepts direct same-user requests up to 4 KiB and returns responses up to 1 MiB. On Linux the guardian also checks the embedded CLI's process descriptor and ancestry before accepting child resource registrations. Its protocol types are defined by [workspace-protocol](../workspace-protocol/README.md).
+
+Managed Windows workers send desktop opens to the guardian, which calls the platform's normal desktop launch outside the workers' job objects. Closing a managed window leaves those desktop programs running.
+
+On Unix a managed PTY starts in a separate terminal session. Its initial entry point waits on a private connection inside the guardian's run directory. The worker verifies the peer PID, registers the session with the guardian, then passes the target environment and lets the program start.
 
 ## Documentation
 

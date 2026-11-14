@@ -34,8 +34,7 @@ fn shared_shutdown_flag() -> &'static Arc<AtomicBool> {
     TERMINAL_SHUTDOWN_REQUESTED.get_or_init(|| Arc::new(AtomicBool::new(false)))
 }
 
-#[cfg(target_os = "linux")]
-pub(crate) fn request_process_shutdown() {
+pub fn request_process_shutdown() {
     shared_shutdown_flag().store(true, Ordering::SeqCst);
 }
 

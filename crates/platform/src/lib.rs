@@ -22,6 +22,8 @@ pub mod mock;
 mod paths;
 mod platform;
 mod process;
+#[cfg(unix)]
+pub mod pty_exec;
 pub use managed_process::{ManagedChild, ManagedCommand};
 mod system_monitor;
 mod terminal;
@@ -68,10 +70,10 @@ pub use terminal::{
     ENTER_FULLSCREEN_SEQUENCE, EXIT_FULLSCREEN_SEQUENCE, TerminalCellSize, TerminalColors,
     TerminalControlHandler, TerminalGraphicsCapabilities, TerminalGraphicsProbeStatus,
     TerminalGraphicsProtocol, is_windows_terminal_session, probe_terminal_graphics_capabilities,
-    terminal_colors, terminal_environment_check, terminal_environment_check_with,
-    terminal_environment_check_with_graphics_protocol, terminal_supports_true_color,
-    with_terminal_fullscreen,
+    request_process_shutdown, terminal_colors, terminal_environment_check,
+    terminal_environment_check_with, terminal_environment_check_with_graphics_protocol,
+    terminal_supports_true_color, with_terminal_fullscreen,
 };
 
 #[cfg(windows)]
-pub use windows::current_windows_build;
+pub use windows::{DesktopOpen, current_windows_build, install_desktop_open};

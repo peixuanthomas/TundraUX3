@@ -91,6 +91,16 @@ fn real_vim_owns_buffers_undo_and_acknowledged_writes() {
         poll.state.ready && poll.state.last_command >= 1
     });
 
+    let before_ping = until(&mut host, |poll| poll.state.mode == "n");
+    host.request_ping(u64::MAX).unwrap();
+    let ping = until(&mut host, |poll| poll.ping_ids.contains(&u64::MAX));
+    assert_eq!(ping.ping_ids, [u64::MAX]);
+    assert_eq!(ping.state.last_command, before_ping.state.last_command);
+    assert_eq!(ping.state.active_buffer, before_ping.state.active_buffer);
+    assert_eq!(buffer_text(&ping, 10), input.text);
+    assert!(ping.save_requests.is_empty());
+    assert!(host.poll().unwrap().ping_ids.is_empty());
+
     host.send_bytes(b"u").unwrap();
     assert_eq!(
         buffer_text(&export(&mut host), 10),

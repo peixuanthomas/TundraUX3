@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::PlatformError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FileIdentity {
     volume: u64,
     index: u64,

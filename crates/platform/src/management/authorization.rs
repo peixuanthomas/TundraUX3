@@ -133,6 +133,9 @@ impl PrivilegeSession {
             launch
         };
         launch.arg("__privilege-session").arg(actor.to_string());
+        if watchdog::process_session_registration_enabled() {
+            launch.arg("--watchdog-owner");
+        }
         self.start_command(launch, password)
     }
 

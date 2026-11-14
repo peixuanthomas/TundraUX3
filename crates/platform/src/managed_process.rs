@@ -177,22 +177,25 @@ impl ManagedChild {
     }
     fn spawn(command: &mut Command, isolated: bool, register: bool) -> io::Result<Self> {
         #[cfg(unix)]
-        if isolated {
-            use std::os::unix::process::CommandExt;
-            command.process_group(0);
-        }
+        let (child, supervisor) = if isolated {
+            watchdog::spawn_registered_process_group(command)?
+        } else {
+            (command.spawn()?, None)
+        };
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
             use windows_sys::Win32::System::Threading::{CREATE_NO_WINDOW, CREATE_SUSPENDED};
             command.creation_flags(CREATE_SUSPENDED | if isolated { CREATE_NO_WINDOW } else { 0 });
         }
-        let child = command.spawn()?;
+        #[cfg(windows)]
+        let (child, supervisor) = (command.spawn()?, None);
         Self::track(
             child,
             isolated,
             register,
             format!("child:{}", command.get_program().to_string_lossy()),
+            supervisor,
         )
     }
 
@@ -201,8 +204,10 @@ impl ManagedChild {
         isolated: bool,
         register: bool,
         label: String,
+        supervisor: Option<watchdog::ProcessResourceGuard>,
     ) -> io::Result<Self> {
         let mut tree = ChildTree::new(child, isolated)?;
+        tree.supervisor = supervisor;
         let stdin = tree.child.stdin.take();
         let stdout = tree.child.stdout.take();
         let stderr = tree.child.stderr.take();
@@ -228,14 +233,41 @@ impl ManagedChild {
     #[cfg(target_os = "macos")]
     pub(crate) fn spawn_pty(
         slave: &dyn portable_pty::SlavePty,
-        command: portable_pty::CommandBuilder,
+        mut command: portable_pty::CommandBuilder,
+        environment: std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString>,
     ) -> io::Result<Self> {
+        let gate = watchdog::process_session_registration_enabled()
+            .then(|| crate::pty_exec::Gate::wrap(&mut command, environment))
+            .transpose()?;
         let child: Box<dyn portable_pty::Child> =
             slave.spawn_command(command).map_err(io::Error::other)?;
         let child = child
             .downcast::<std::process::Child>()
             .expect("the native Unix PTY returns std::process::Child");
-        Self::track(*child, true, true, "pty".into())
+        let mut tracked = Self::track(*child, true, true, "pty".into(), None)?;
+        let pid = tracked.id();
+        tracked
+            .tree
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .terminal_session = Some(watchdog::OwnedProcessSession::attach(pid)?);
+        if let Some(gate) = gate {
+            match watchdog::register_process_session(pid).and_then(|registration| {
+                tracked
+                    .tree
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .supervisor = registration;
+                gate.release(pid)
+            }) {
+                Ok(()) => {}
+                Err(error) => {
+                    tracked.kill()?;
+                    return Err(error);
+                }
+            }
+        }
+        Ok(tracked)
     }
 
     pub fn id(&self) -> u32 {

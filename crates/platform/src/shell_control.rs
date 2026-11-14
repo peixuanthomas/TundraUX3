@@ -2,12 +2,11 @@
 #[cfg(unix)]
 use interprocess::local_socket::{Listener, ListenerNonblockingMode, ListenerOptions};
 use interprocess::local_socket::{Stream, prelude::*};
+use serde::de::DeserializeOwned;
 use shell_control::{MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, SessionInfo};
 use std::collections::BTreeMap;
 use std::fs;
-#[cfg(unix)]
-use std::io::Read;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[cfg(windows)]
@@ -20,12 +19,20 @@ const MAX_CLIENTS: usize = 16;
 const IO_CHUNK: usize = 8192;
 const IO_ROUNDS: usize = 8;
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(30);
+const WATCHDOG_REQUEST_BYTES: usize = 4096;
+const WATCHDOG_RESPONSE_BYTES: usize = 1024 * 1024;
+const WATCHDOG_HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(200);
+const WATCHDOG_RESPONSE_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub fn directory(paths: &crate::AppPaths) -> PathBuf {
     paths.cache_path().join("shell-control")
 }
 
-fn private_directory(path: &Path) -> io::Result<()> {
+pub fn watchdog_directory(paths: &crate::AppPaths) -> PathBuf {
+    paths.cache_path().join("shell-watchdog")
+}
+
+pub fn create_private_directory(path: &Path) -> io::Result<()> {
     if !path.is_absolute() {
         return Err(io::ErrorKind::InvalidInput.into());
     }
@@ -49,6 +56,129 @@ fn private_directory(path: &Path) -> io::Result<()> {
     #[cfg(windows)]
     windows::private_directory(path)?;
     crate::validate_no_follow_path(path, true).map_err(io::Error::other)
+}
+
+pub struct LocalListener(Listener);
+
+impl LocalListener {
+    pub fn bind(endpoint: &str) -> io::Result<Self> {
+        #[cfg(unix)]
+        let listener = ListenerOptions::new()
+            .name(name(endpoint)?)
+            .nonblocking(ListenerNonblockingMode::Both)
+            .create_sync()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(endpoint, fs::Permissions::from_mode(0o600))?;
+        }
+        #[cfg(windows)]
+        let listener = windows::Listener::new(endpoint)?;
+        Ok(Self(listener))
+    }
+
+    pub fn accept(&self) -> io::Result<LocalConnection> {
+        let connection = LocalConnection(self.0.accept()?);
+        same_user(&connection.0)?;
+        Ok(connection)
+    }
+}
+
+/// Nonblocking stream with operating-system credentials on both ends.
+pub struct LocalConnection(Stream);
+
+impl LocalConnection {
+    pub fn connect(endpoint: &str, expected_pid: u32) -> io::Result<Self> {
+        connect_verified(endpoint, expected_pid).map(Self)
+    }
+
+    pub fn peer_pid(&self) -> io::Result<u32> {
+        peer_pid(&self.0)?.ok_or_else(|| io::ErrorKind::PermissionDenied.into())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn peer_process(&self) -> io::Result<std::os::fd::OwnedFd> {
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+        let Stream::UdSocket(stream) = &self.0;
+        let mut fd: libc::c_int = -1;
+        let mut size = size_of::<libc::c_int>() as libc::socklen_t;
+        // SAFETY: for SO_PEERPIDFD, getsockopt returns an owned process descriptor.
+        if unsafe {
+            libc::getsockopt(
+                stream.inner().as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_PEERPIDFD,
+                (&mut fd as *mut libc::c_int).cast(),
+                &mut size,
+            )
+        } == 0
+        {
+            return Ok(unsafe { OwnedFd::from_raw_fd(fd) });
+        }
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::ENOPROTOOPT) {
+            return Err(error);
+        }
+        let pid = self.peer_pid()?;
+        // Older Linux kernels can open a pidfd for the peer PID from SO_PEERCRED.
+        let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+        if fd < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(unsafe { OwnedFd::from_raw_fd(fd as i32) })
+        }
+    }
+
+    /// Gives larger payloads room to move between polls. Kernel limits may cap the requested size.
+    #[cfg(unix)]
+    pub fn increase_buffer_capacity(&self, bytes: libc::c_int) {
+        use std::os::fd::AsRawFd;
+
+        let Stream::UdSocket(stream) = &self.0;
+        for option in [libc::SO_SNDBUF, libc::SO_RCVBUF] {
+            // SAFETY: the stream descriptor and integer option remain valid for the call.
+            unsafe {
+                libc::setsockopt(
+                    stream.inner().as_raw_fd(),
+                    libc::SOL_SOCKET,
+                    option,
+                    (&raw const bytes).cast(),
+                    size_of_val(&bytes) as libc::socklen_t,
+                );
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    pub fn into_unix_stream(self) -> std::os::unix::net::UnixStream {
+        let Stream::UdSocket(stream) = self.0;
+        let fd: std::os::fd::OwnedFd = stream.into();
+        fd.into()
+    }
+}
+
+impl Read for LocalConnection {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        read_nonblocking(&mut self.0, bytes)
+    }
+}
+
+impl Write for LocalConnection {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        write_nonblocking(&mut self.0, bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        // Named pipe flush waits for the other process to consume all bytes.
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+impl Drop for LocalConnection {
+    fn drop(&mut self) {
+        windows::cancel_flush(&self.0);
+    }
 }
 
 #[cfg(unix)]
@@ -99,26 +229,49 @@ fn peer_pid(stream: &Stream) -> io::Result<Option<u32>> {
 
 /// Tries once; a busy listener returns immediately so callers can apply their own deadline.
 pub fn connect(info: &SessionInfo) -> io::Result<Stream> {
+    #[cfg(windows)]
+    if !valid_endpoint(Path::new(""), info) {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    connect_verified(&info.endpoint, info.pid)
+}
+
+fn connect_verified(endpoint: &str, expected_pid: u32) -> io::Result<Stream> {
     #[cfg(unix)]
     let stream = interprocess::local_socket::ConnectOptions::new()
-        .name(name(&info.endpoint)?)
+        .name(name(endpoint)?)
         .wait_mode(interprocess::ConnectWaitMode::Timeout(Duration::ZERO))
         .nonblocking_stream(true)
         .connect_sync()?;
     #[cfg(windows)]
-    let stream = windows::connect(info)?;
+    let stream = windows::connect(endpoint)?;
     same_user(&stream)?;
-    if peer_pid(&stream)? != Some(info.pid) {
+    if peer_pid(&stream)? != Some(expected_pid) {
         return Err(io::ErrorKind::PermissionDenied.into());
     }
     Ok(stream)
 }
 
 pub fn sessions(directory: &Path) -> io::Result<Vec<SessionInfo>> {
+    discover(directory, |info| {
+        valid_endpoint(directory, info) && connect(info).is_ok()
+    })
+}
+
+pub fn watchdog_sessions(directory: &Path) -> io::Result<Vec<SessionInfo>> {
+    discover(directory, |info| {
+        valid_watchdog_endpoint(info) && LocalConnection::connect(&info.endpoint, info.pid).is_ok()
+    })
+}
+
+fn discover(
+    directory: &Path,
+    mut usable: impl FnMut(&SessionInfo) -> bool,
+) -> io::Result<Vec<SessionInfo>> {
     if !directory.try_exists()? {
         return Ok(Vec::new());
     }
-    private_directory(directory)?;
+    create_private_directory(directory)?;
     let mut sessions = Vec::new();
     for entry in fs::read_dir(directory)? {
         let path = entry?.path();
@@ -132,7 +285,9 @@ pub fn sessions(directory: &Path) -> io::Result<Vec<SessionInfo>> {
         let Ok(info) = serde_json::from_slice::<SessionInfo>(&data.bytes) else {
             continue;
         };
-        if valid_endpoint(directory, &info) && connect(&info).is_ok() {
+        if path.file_stem().and_then(|stem| stem.to_str()) == Some(info.session.as_str())
+            && usable(&info)
+        {
             sessions.push(info);
         }
     }
@@ -160,8 +315,33 @@ fn valid_endpoint(directory: &Path, info: &SessionInfo) -> bool {
     valid && info.pid != 0 && info.endpoint == expected
 }
 
+fn valid_watchdog_endpoint(info: &SessionInfo) -> bool {
+    if info.pid == 0
+        || info.session.len() != 32
+        || !info
+            .session
+            .bytes()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+    {
+        return false;
+    }
+    #[cfg(windows)]
+    return info.endpoint == format!("tundra-watchdog-{}", info.session);
+    #[cfg(unix)]
+    {
+        let path = Path::new(&info.endpoint);
+        path.is_absolute()
+            && path.file_name().and_then(|file| file.to_str()) == Some("watchdog")
+            && path
+                .parent()
+                .and_then(|parent| parent.file_name())
+                .and_then(|name| name.to_str())
+                == Some(format!(".tux-{}", info.session).as_str())
+    }
+}
+
 struct Client {
-    stream: Stream,
+    stream: LocalConnection,
     incoming: Vec<u8>,
     outgoing: Vec<u8>,
     sent: usize,
@@ -170,24 +350,24 @@ struct Client {
     since: Instant,
 }
 
-#[cfg(windows)]
-impl Drop for Client {
-    fn drop(&mut self) {
-        windows::cancel_flush(&self.stream);
-    }
-}
-
 pub struct Server {
-    listener: Option<Listener>,
+    listener: Option<LocalListener>,
     pub info: SessionInfo,
     registration: PathBuf,
     clients: BTreeMap<u64, Client>,
     next_client: u64,
+    limits: ServerLimits,
+}
+
+struct ServerLimits {
+    request_bytes: usize,
+    response_bytes: usize,
+    handshake_timeout: Duration,
+    response_timeout: Duration,
 }
 
 impl Server {
     pub fn start(directory: &Path) -> io::Result<Self> {
-        private_directory(directory)?;
         let pid = std::process::id();
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -201,30 +381,59 @@ impl Server {
             .into_owned();
         #[cfg(windows)]
         let endpoint = format!("tundra-shell-{session}");
-        #[cfg(unix)]
-        let listener = ListenerOptions::new()
-            .name(name(&endpoint)?)
-            .nonblocking(ListenerNonblockingMode::Both)
-            .create_sync()?;
-        #[cfg(windows)]
-        let listener = Listener::new(&endpoint)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&endpoint, fs::Permissions::from_mode(0o600))?;
-        }
-        let registration = directory.join(format!("{session}.json"));
         let info = SessionInfo {
             session,
             pid,
             endpoint,
         };
+        Self::start_with_limits(
+            directory,
+            info,
+            ServerLimits {
+                request_bytes: MAX_REQUEST_BYTES,
+                response_bytes: MAX_RESPONSE_BYTES,
+                handshake_timeout: CLIENT_TIMEOUT,
+                response_timeout: CLIENT_TIMEOUT,
+            },
+        )
+    }
+
+    pub fn start_watchdog(directory: &Path, session: String, endpoint: String) -> io::Result<Self> {
+        let info = SessionInfo {
+            session,
+            pid: std::process::id(),
+            endpoint,
+        };
+        if !valid_watchdog_endpoint(&info) {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        Self::start_with_limits(
+            directory,
+            info,
+            ServerLimits {
+                request_bytes: WATCHDOG_REQUEST_BYTES,
+                response_bytes: WATCHDOG_RESPONSE_BYTES,
+                handshake_timeout: WATCHDOG_HANDSHAKE_TIMEOUT,
+                response_timeout: WATCHDOG_RESPONSE_TIMEOUT,
+            },
+        )
+    }
+
+    fn start_with_limits(
+        directory: &Path,
+        info: SessionInfo,
+        limits: ServerLimits,
+    ) -> io::Result<Self> {
+        create_private_directory(directory)?;
+        let listener = LocalListener::bind(&info.endpoint)?;
+        let registration = directory.join(format!("{}.json", info.session));
         let server = Self {
             listener: Some(listener),
             info,
             registration,
             clients: BTreeMap::new(),
             next_client: 0,
+            limits,
         };
         crate::atomic_write_document(&server.registration, &serde_json::to_vec(&server.info)?)
             .map_err(io::Error::other)?;
@@ -233,6 +442,14 @@ impl Server {
 
     /// Polls bounded nonblocking I/O, leaving UI state on the Shell thread.
     pub fn poll(&mut self) -> Vec<(u64, Vec<u8>)> {
+        self.clients.retain(|_, client| {
+            let timeout = if client.requested {
+                self.limits.response_timeout
+            } else {
+                self.limits.handshake_timeout
+            };
+            client.since.elapsed() < timeout
+        });
         for _ in 0..MAX_CLIENTS {
             let Some(listener) = &self.listener else {
                 break;
@@ -241,7 +458,7 @@ impl Server {
                 Ok(stream) => stream,
                 Err(_) => break,
             };
-            if self.clients.len() >= MAX_CLIENTS || same_user(&stream).is_err() {
+            if self.clients.len() >= MAX_CLIENTS {
                 continue;
             }
             self.next_client += 1;
@@ -260,15 +477,12 @@ impl Server {
         }
         let mut requests = Vec::new();
         self.clients.retain(|id, client| {
-            if client.since.elapsed() >= CLIENT_TIMEOUT {
-                return false;
-            }
             let mut buffer = [0u8; IO_CHUNK];
             for _ in 0..IO_ROUNDS {
-                match read_nonblocking(&mut client.stream, &mut buffer) {
+                match client.stream.read(&mut buffer) {
                     Ok(0) => return false,
                     Ok(len) if !client.requested => {
-                        if client.incoming.len() + len > MAX_REQUEST_BYTES {
+                        if client.incoming.len() + len > self.limits.request_bytes {
                             return false;
                         }
                         if let Some(end) = buffer[..len].iter().position(|b| *b == b'\n') {
@@ -289,7 +503,7 @@ impl Server {
             }
             if client.sent < client.outgoing.len() {
                 let end = (client.sent + IO_CHUNK * IO_ROUNDS).min(client.outgoing.len());
-                match write_nonblocking(&mut client.stream, &client.outgoing[client.sent..end]) {
+                match client.stream.write(&client.outgoing[client.sent..end]) {
                     Ok(len) => client.sent += len,
                     Err(error) if pending(&error) => {}
                     Err(_) => return false,
@@ -316,12 +530,22 @@ impl Server {
         self.clients.contains_key(&id)
     }
 
+    pub fn has_pending_responses(&self) -> bool {
+        self.clients
+            .values()
+            .any(|client| !client.outgoing.is_empty() || (cfg!(windows) && client.responded))
+    }
+
     pub fn respond(&mut self, id: u64, response: &shell_control::Response) {
+        self.respond_json(id, response);
+    }
+
+    pub fn respond_json(&mut self, id: u64, response: &impl serde::Serialize) {
         if let Some(client) = self.clients.get_mut(&id) {
             if !client.requested || client.responded {
                 return;
             }
-            match encode(response, MAX_RESPONSE_BYTES) {
+            match encode(response, self.limits.response_bytes) {
                 Ok(bytes) => {
                     client.outgoing = bytes;
                     client.responded = true;
@@ -401,8 +625,44 @@ pub fn exchange(
     request: &shell_control::Request,
     timeout: Duration,
 ) -> io::Result<shell_control::Response> {
+    exchange_with_limits(
+        info,
+        request,
+        MAX_REQUEST_BYTES,
+        MAX_RESPONSE_BYTES,
+        timeout,
+        connect,
+    )
+}
+
+pub fn watchdog_exchange<Request: serde::Serialize, Reply: DeserializeOwned>(
+    info: &SessionInfo,
+    request: &Request,
+    timeout: Duration,
+) -> io::Result<Reply> {
+    if !valid_watchdog_endpoint(info) {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    exchange_with_limits(
+        info,
+        request,
+        WATCHDOG_REQUEST_BYTES,
+        WATCHDOG_RESPONSE_BYTES,
+        timeout,
+        |info| connect_verified(&info.endpoint, info.pid),
+    )
+}
+
+fn exchange_with_limits<Reply: DeserializeOwned>(
+    info: &SessionInfo,
+    request: &impl serde::Serialize,
+    max_request_bytes: usize,
+    max_response_bytes: usize,
+    timeout: Duration,
+    connect: impl Fn(&SessionInfo) -> io::Result<Stream>,
+) -> io::Result<Reply> {
     let start = Instant::now();
-    let outgoing = encode(request, MAX_REQUEST_BYTES)?;
+    let outgoing = encode(request, max_request_bytes)?;
     let mut stream = loop {
         if start.elapsed() >= timeout {
             return Err(io::ErrorKind::TimedOut.into());
@@ -417,18 +677,19 @@ pub fn exchange(
             Err(error) => return Err(error),
         }
     };
-    let result = exchange_connected(&mut stream, &outgoing, start, timeout);
+    let result = exchange_connected(&mut stream, &outgoing, max_response_bytes, start, timeout);
     #[cfg(windows)]
     windows::cancel_flush(&stream);
     result
 }
 
-fn exchange_connected(
+fn exchange_connected<Reply: DeserializeOwned>(
     stream: &mut Stream,
     outgoing: &[u8],
+    max_response_bytes: usize,
     start: Instant,
     timeout: Duration,
-) -> io::Result<shell_control::Response> {
+) -> io::Result<Reply> {
     let mut sent = 0;
     let mut incoming = Vec::new();
     loop {
@@ -447,7 +708,7 @@ fn exchange_connected(
         match read_nonblocking(stream, &mut buffer) {
             Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
             Ok(len) => {
-                if incoming.len() + len > MAX_RESPONSE_BYTES {
+                if incoming.len() + len > max_response_bytes {
                     return Err(io::ErrorKind::InvalidData.into());
                 }
                 incoming.extend_from_slice(&buffer[..len]);

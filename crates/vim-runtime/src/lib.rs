@@ -43,6 +43,7 @@ pub struct VimPoll {
     pub terminal: Arc<TerminalSnapshot>,
     pub state: Arc<VimState>,
     pub save_requests: Vec<SaveRequest>,
+    pub ping_ids: Vec<u64>,
     pub exit: Option<PtyExitStatus>,
 }
 
@@ -207,6 +208,12 @@ impl VimHost {
         self.command("close", serde_json::json!({"force": force}))
     }
 
+    /// Asks Vim's event loop for a response delivered through `VimPoll::ping_ids`.
+    pub fn request_ping(&mut self, ping_id: u64) -> io::Result<()> {
+        self.running()?;
+        self.queue(serde_json::json!({"op": "ping", "ping": ping_id.to_string()}))
+    }
+
     pub fn send_key(&self, key: &ui::KeyEvent) -> io::Result<()> {
         self.running()?.send_key(key)
     }
@@ -252,6 +259,10 @@ impl VimHost {
         self.pty.is_some() && self.exit.is_none()
     }
 
+    pub fn reported_minimum_size(&self) -> Option<(u16, u16)> {
+        self.pty.as_ref()?.reported_minimum_size()
+    }
+
     pub fn terminal_snapshot(&self) -> TerminalSnapshot {
         match &self.pty {
             Some(pty) => pty.snapshot(),
@@ -270,13 +281,15 @@ impl VimHost {
                 buffer.line_changes.clear();
             }
         }
-        let saves = self.read_messages()?;
+        let (mut saves, mut ping_ids) = self.read_messages()?;
         if let Some(pty) = &self.pty
             && let Some(exit) = pty.try_wait()?
         {
             self.exit = Some(exit);
             self.terminal = Arc::new(self.pty.take().unwrap().snapshot_after_exit());
-            let _ = self.read_messages()?;
+            let (final_saves, final_pings) = self.read_messages()?;
+            saves.extend(final_saves);
+            ping_ids.extend(final_pings);
         }
         if let Some(pty) = &self.pty
             && let Some((terminal, revision)) = pty.snapshot_if_changed(self.terminal_revision)
@@ -295,6 +308,7 @@ impl VimHost {
             terminal: self.terminal.clone(),
             state: self.state.clone(),
             save_requests: saves,
+            ping_ids,
             exit: self.exit,
         })
     }
@@ -379,10 +393,10 @@ impl VimHost {
         Ok(())
     }
 
-    fn read_messages(&mut self) -> io::Result<Vec<SaveRequest>> {
+    fn read_messages(&mut self) -> io::Result<(Vec<SaveRequest>, Vec<u64>)> {
         if self.stream.is_none() {
             if self.authenticated {
-                return Ok(Vec::new());
+                return Ok((Vec::new(), Vec::new()));
             }
             match self.listener.accept() {
                 Ok((stream, _)) => {
@@ -390,7 +404,9 @@ impl VimHost {
                     stream.set_nodelay(true)?;
                     self.stream = Some(stream);
                 }
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(Vec::new()),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    return Ok((Vec::new(), Vec::new()));
+                }
                 Err(error) => return Err(error),
             }
         }
@@ -419,6 +435,7 @@ impl VimHost {
             }
         }
         let mut saves = Vec::new();
+        let mut ping_ids = Vec::new();
         while let Some(newline) = self.incoming.iter().position(|byte| *byte == b'\n') {
             let line = self.incoming.drain(..=newline).collect::<Vec<_>>();
             let message: serde_json::Value =
@@ -450,6 +467,15 @@ impl VimHost {
                         saves.push(save);
                     }
                 }
+                Some("pong") => {
+                    if let Some(id) = message
+                        .get("ping")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(|id| id.parse().ok())
+                    {
+                        ping_ids.push(id);
+                    }
+                }
                 _ => {}
             }
         }
@@ -457,7 +483,7 @@ impl VimHost {
             self.stream = None;
         }
         self.flush_messages()?;
-        Ok(saves)
+        Ok((saves, ping_ids))
     }
 
     fn install_state(&mut self, raw: StateRecord) {

@@ -1,9 +1,9 @@
-//! A one-operation, reconnectable helper. Closing the TUI never kills a package transaction.
+//! A one-operation, reconnectable helper with an optional supervised owner.
 use super::*;
 use std::collections::VecDeque;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, Read, Write};
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::atomic::Ordering;
@@ -15,6 +15,7 @@ use watchdog::{
 
 const MAX_PACKET: usize = 2 * 1024 * 1024;
 const MAX_REPLAY: usize = 1024 * 1024;
+const OWNER_GATE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Serialize, Deserialize)]
 struct OperationMetadata {
@@ -149,6 +150,21 @@ fn start(
     caller_pid: u32,
     caller_start_ticks: u64,
 ) -> Result<(), ManagementError> {
+    let supervised_owner = if std::env::var_os("TUNDRA_WATCHDOG_OWNER").as_deref()
+        == Some(std::ffi::OsStr::new("1"))
+    {
+        let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, caller_pid, 0) };
+        if fd < 0 {
+            return Err(failure(std::io::Error::last_os_error()));
+        }
+        let owner = unsafe { OwnedFd::from_raw_fd(fd as i32) };
+        if process_start_ticks(caller_pid)? != caller_start_ticks {
+            return Err(ManagementError::Cancelled);
+        }
+        Some(owner)
+    } else {
+        None
+    };
     let mut request = String::new();
     std::io::stdin()
         .lock()
@@ -204,12 +220,38 @@ fn start(
     // Elevated operations keep a root-owned socket. A same-UID process must
     // use its private authorized session before controlling it.
     listener.set_nonblocking(true).map_err(failure)?;
+    let gate = supervised_owner
+        .as_ref()
+        .map(|_| {
+            // Wait for the client to register before it reaps the launcher.
+            let (parent, child) = UnixStream::pair()?;
+            let input = unsafe { libc::dup(libc::STDIN_FILENO) };
+            if input < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok((parent, child, unsafe { File::from_raw_fd(input) }))
+        })
+        .transpose()
+        .map_err(failure)?;
     // The early CLI entry has not started threads; fork occurs before watchdog initialization.
     let pid = unsafe { libc::fork() };
     if pid < 0 {
         return Err(failure(std::io::Error::last_os_error()));
     }
     if pid > 0 {
+        let gate = if let Some((mut ready, child, input)) = gate {
+            drop(child);
+            ready
+                .set_read_timeout(Some(OWNER_GATE_TIMEOUT))
+                .map_err(failure)?;
+            ready
+                .set_write_timeout(Some(OWNER_GATE_TIMEOUT))
+                .map_err(failure)?;
+            ready.read_exact(&mut [0]).map_err(failure)?;
+            Some((ready, input))
+        } else {
+            None
+        };
         println!(
             "{}",
             serde_json::to_string(&HelperReady {
@@ -218,10 +260,28 @@ fn start(
             })
             .map_err(failure)?
         );
+        if let Some((mut ready, mut input)) = gate {
+            std::io::stdout().flush().map_err(failure)?;
+            let mut gate_input = libc::pollfd {
+                fd: input.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            if unsafe { libc::poll(&mut gate_input, 1, OWNER_GATE_TIMEOUT.as_millis() as i32) } <= 0
+            {
+                return Err(ManagementError::Cancelled);
+            }
+            let mut accepted = [0];
+            input.read_exact(&mut accepted).map_err(failure)?;
+            if accepted != [1] {
+                return Err(ManagementError::Cancelled);
+            }
+            ready.write_all(&[1]).map_err(failure)?;
+        }
         return Ok(());
     }
-    unsafe {
-        libc::setsid();
+    if unsafe { libc::setsid() } < 0 {
+        unsafe { libc::_exit(1) }
     }
     if let Ok(null) = OpenOptions::new().read(true).write(true).open("/dev/null") {
         for fd in 0..=2 {
@@ -230,17 +290,37 @@ fn start(
             }
         }
     }
-    let result = serve(
-        listener,
-        command,
-        ExecutionContext {
-            actor_uid: actor,
-            helper_path,
-            caller_pid,
-            caller_start_ticks,
-        },
-        &private,
-    );
+    let result = (|| {
+        if let Some((parent, mut ready, input)) = gate {
+            drop(parent);
+            drop(input);
+            ready
+                .set_read_timeout(Some(OWNER_GATE_TIMEOUT))
+                .map_err(failure)?;
+            ready.write_all(&[1]).map_err(failure)?;
+            let mut accepted = [0];
+            ready.read_exact(&mut accepted).map_err(failure)?;
+            if accepted != [1] || supervised_owner.as_ref().is_some_and(owner_exited) {
+                return Err(ManagementError::Cancelled);
+            }
+            // Keep orphaned descendants inside this single operation's authority.
+            if unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) } < 0 {
+                return Err(failure(std::io::Error::last_os_error()));
+            }
+        }
+        serve(
+            listener,
+            command,
+            ExecutionContext {
+                actor_uid: actor,
+                helper_path,
+                caller_pid,
+                caller_start_ticks,
+            },
+            &private,
+            supervised_owner,
+        )
+    })();
     // Remove only this helper's own directory; no caller can write inside it.
     let _ = fs::remove_file(&socket);
     let _ = fs::remove_dir_all(&private);
@@ -493,6 +573,7 @@ fn serve(
     mut command: ManagementCommand,
     context: ExecutionContext,
     private: &std::path::Path,
+    supervised_owner: Option<OwnedFd>,
 ) -> Result<(), ManagementError> {
     let language = command
         .values
@@ -555,6 +636,7 @@ fn serve(
         private,
         history,
         !read_only,
+        supervised_owner,
         move |io, cancelled| execute(&command, &context, io, cancelled),
     )
 }
@@ -571,7 +653,7 @@ fn serve_operation(
     + Send
     + 'static,
 ) -> Result<(), ManagementError> {
-    serve_operation_recorded(listener, started, private, None, true, operation)
+    serve_operation_recorded(listener, started, private, None, true, None, operation)
 }
 
 fn record_archived_event(
@@ -594,6 +676,7 @@ fn serve_operation_recorded(
     private: &std::path::Path,
     history: Option<crate::task_history::TaskRecorder>,
     linger_finished: bool,
+    supervised_owner: Option<OwnedFd>,
     operation: impl FnOnce(
         &mut dyn OperationInteraction,
         &AtomicBool,
@@ -671,6 +754,14 @@ fn serve_operation_recorded(
     let mut force_requested = false;
     let mut last_signal_error = None;
     loop {
+        if supervised_owner.as_ref().is_some_and(owner_exited) {
+            if termination.is_none() {
+                termination =
+                    Some(super::termination::ProcessTree::helper_children().map_err(failure)?);
+            }
+            cancelled.store(true, Ordering::Release);
+            force_requested = true;
+        }
         if let Some(tree) = termination.as_mut() {
             // Also catch children created while the original request was in flight.
             match super::termination::ProcessTree::signal(tree, force_requested) {
@@ -678,6 +769,13 @@ fn serve_operation_recorded(
                     cancelled.store(true, Ordering::Release);
                     let _ = input_tx.try_send(OperationInput::Cancel);
                     if force_requested {
+                        if finished.is_some() {
+                            break;
+                        }
+                        if let Some(history) = &history {
+                            let status = crate::task_history::TaskStatus::Unknown;
+                            history.finish(status, status.label());
+                        }
                         // Never kill Shell or its retained authorization broker.
                         // Wait for the signalled children before ending this
                         // dedicated helper, including children stuck in kernel I/O.
@@ -905,6 +1003,16 @@ fn serve_operation_recorded(
     drop(worker);
     let _ = runtime.shutdown();
     Ok(())
+}
+
+fn owner_exited(owner: &OwnedFd) -> bool {
+    let mut descriptor = libc::pollfd {
+        fd: owner.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    (unsafe { libc::poll(&mut descriptor, 1, 0) }) > 0
+        && descriptor.revents & (libc::POLLIN | libc::POLLHUP) != 0
 }
 
 fn take_stop_request(incoming: &mut Vec<u8>) -> Option<bool> {

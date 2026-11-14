@@ -10,6 +10,8 @@ path = "src/lib.rs"
 
 [dependencies]
 shell-control = { path = "../shell-control" }
+workspace-protocol = { path = "../workspace-protocol" }
+serde = { version = "1", features = ["derive"] }
 animate.workspace = true
 i18n = { path = "../i18n" }
 geojson = "1.0"

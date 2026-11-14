@@ -78,6 +78,76 @@ fn clipboard_title_and_unknown_osc_cannot_escape_or_enter_history() {
 }
 
 #[test]
+fn minimum_size_reports_are_consumed_without_rendering_or_recording() {
+    let (mut terminal, _writer, replies) = terminal(4, 20);
+    let report = b"\x1b]1337;SetUserVar=TUNDRA_MIN_SIZE=MTIweDQw\x1b\\";
+    for byte in &report[..report.len() - 2] {
+        assert!(terminal.process(&[*byte]).is_empty());
+        assert_eq!(terminal.reported_minimum_size(), None);
+    }
+    assert!(terminal.process(&report[report.len() - 2..]).is_empty());
+    assert_eq!(terminal.reported_minimum_size(), Some((120, 40)));
+    assert!(terminal.process(report).is_empty());
+    assert_eq!(terminal.reported_minimum_size(), Some((120, 40)));
+
+    assert_eq!(
+        terminal.process(b"before\x1b]1337;SetUserVar=TUNDRA_MIN_SIZE=ODB4MjQ=\x07after"),
+        b"beforeafter"
+    );
+    assert_eq!(terminal.reported_minimum_size(), Some((80, 24)));
+    assert_eq!(text(&mut terminal), "beforeafter");
+    assert!(replies.lock().unwrap().is_empty());
+
+    assert!(
+        terminal
+            .process(b"\x1b]1337;SetUserVar=TUNDRA_MIN_SIZE=\x07")
+            .is_empty()
+    );
+    assert_eq!(terminal.reported_minimum_size(), None);
+    assert_eq!(text(&mut terminal), "beforeafter");
+
+    terminal.process(report);
+    assert!(terminal.stop_minimum_size_reports());
+    terminal.process(report);
+    assert_eq!(terminal.reported_minimum_size(), None);
+}
+
+#[test]
+fn invalid_minimum_size_reports_and_other_variables_preserve_the_latest_size() {
+    let (mut terminal, _writer, replies) = terminal(4, 20);
+    terminal.process(b"\x1b]1337;SetUserVar=TUNDRA_MIN_SIZE=NjU1MzV4NjU1MzU=\x07");
+    let previous = Some((u16::MAX, u16::MAX));
+    assert_eq!(terminal.reported_minimum_size(), previous);
+    for invalid in [
+        "#",            // Bad Base64.
+        "/w==",         // Invalid UTF-8.
+        "MHgyNA==",     // 0x24
+        "ODB4MA==",     // 80x0
+        "NjU1MzZ4MjQ=", // 65536x24
+        "ODB4NjU1MzY=", // 80x65536
+        "KzgweDI0",     // +80x24
+        "ODBYMjQ=",     // 80X24
+        "IDgweDI0",     // Leading space.
+        "ODB4MjQK",     // Trailing newline.
+        "ODB4MjR4NQ==", // 80x24x5
+        "ODA=",         // 80
+        "ODB4",         // 80x
+        "77yY77yQeDI0", // ８０x24
+    ] {
+        let sequence = format!("\x1b]1337;SetUserVar=TUNDRA_MIN_SIZE={invalid}\x07");
+        assert!(
+            terminal.process(sequence.as_bytes()).is_empty(),
+            "{invalid}"
+        );
+        assert_eq!(terminal.reported_minimum_size(), previous, "{invalid}");
+    }
+    assert!(terminal.process(b"\x1b]1337;SetUserVar=TUNDRA_MIN_SIZE_OTHER=ODB4MjQ=\x07\x1b]1337;SetUserVar=tundra_min_size=\x1b\\").is_empty());
+    assert_eq!(terminal.reported_minimum_size(), previous);
+    assert!(text(&mut terminal).is_empty());
+    assert!(replies.lock().unwrap().is_empty());
+}
+
+#[test]
 fn kitty_input_negotiation_preserves_phase_and_legacy_restores_after_pop() {
     let (mut terminal, _writer, replies) = terminal(4, 20);
     terminal.process(b"\x1b[>11u\x1b[?u");

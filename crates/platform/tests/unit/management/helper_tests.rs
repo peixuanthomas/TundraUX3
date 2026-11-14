@@ -170,6 +170,7 @@ fn read_only_helper_process_fixture() {
         &directory,
         None,
         false,
+        None,
         move |_, _| {
             fs::write(finished, b"complete").unwrap();
             Ok("Read complete".into())

@@ -104,7 +104,7 @@ fn production_code_uses_the_workspace_watchdog_for_hooks_and_tasks() {
             && [
                 ".spawn(",
                 ".spawn_command(",
-                ".output(",
+                ".output()",
                 "libc::fork(",
                 "command.status(",
                 "process.status(",
@@ -204,6 +204,7 @@ fn rust_code_without_comments_or_strings(source: &str) -> String {
         }
 
         if let Some((content_start, hashes)) = raw_string_start(bytes, index) {
+            output.push('X');
             index = content_start;
             let mut terminator = Vec::with_capacity(hashes + 1);
             terminator.push(b'"');
@@ -226,6 +227,7 @@ fn rust_code_without_comments_or_strings(source: &str) -> String {
             None
         };
         if let Some(prefix_len) = string_prefix {
+            output.push('X');
             index += prefix_len;
             let mut escaped = false;
             while index < bytes.len() {
@@ -427,4 +429,20 @@ fn constraint_scanner_ignores_cfg_test_items() {
     assert!(!compact.contains("thread::spawn"));
     assert!(!compact.contains("tokio::spawn"));
     assert!(compact.contains("watchdog.spawn_thread()"));
+}
+
+#[test]
+fn child_output_check_distinguishes_recorders_from_process_execution() {
+    let recorder = rust_code_without_comments_or_strings(
+        r##"fn record() { history.output(bytes); history.output(b"\n"); history.output(r#"text"#); self.output(id, offset, limit); }"##,
+    );
+    let process = rust_code_without_comments_or_strings("fn execute() { command.output( ); }");
+    let compact = |source: String| {
+        source
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+    };
+    assert!(!compact(recorder).contains(".output()"));
+    assert!(compact(process).contains(".output()"));
 }

@@ -546,6 +546,9 @@ impl<T: std::io::Read + std::os::windows::io::AsRawHandle> PollPipe for T {
 
 pub(super) struct ChildTree {
     pub(super) child: std::process::Child,
+    pub(super) supervisor: Option<watchdog::ProcessResourceGuard>,
+    #[cfg(target_os = "macos")]
+    pub(super) terminal_session: Option<watchdog::OwnedProcessSession>,
     finished: bool,
     isolated: bool,
     pub(super) shutdown_signal: Option<Box<dyn FnMut() -> std::io::Result<()> + Send>>,
@@ -631,6 +634,7 @@ impl ChildTree {
             }
             Ok(Self {
                 child,
+                supervisor: None,
                 finished: false,
                 isolated,
                 shutdown_signal: None,
@@ -644,7 +648,10 @@ impl ChildTree {
             let mut tree = Self {
                 #[cfg(target_os = "linux")]
                 descendants: None,
+                #[cfg(target_os = "macos")]
+                terminal_session: None,
                 child,
+                supervisor: None,
                 finished: false,
                 isolated,
                 shutdown_signal: None,
@@ -662,6 +669,10 @@ impl ChildTree {
     }
 
     fn stop_descendants(&self) -> std::io::Result<()> {
+        #[cfg(target_os = "macos")]
+        if let Some(session) = &self.terminal_session {
+            return session.terminate();
+        }
         #[cfg(unix)]
         if self.isolated && unsafe { libc::kill(-(self.child.id() as i32), libc::SIGKILL) } < 0 {
             let error = std::io::Error::last_os_error();
@@ -746,6 +757,7 @@ impl ChildTree {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         stopped?;
+        self.supervisor.take();
         self.finished = true;
         Ok(())
     }

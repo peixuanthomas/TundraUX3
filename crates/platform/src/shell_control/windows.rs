@@ -155,14 +155,12 @@ pub(super) fn private_directory(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-pub(super) fn connect(info: &shell_control::SessionInfo) -> io::Result<Stream> {
-    if info.session.is_empty()
-        || info.session.len() > 64
-        || !info
-            .session
+pub(super) fn connect(endpoint: &str) -> io::Result<Stream> {
+    if endpoint.is_empty()
+        || endpoint.len() > 120
+        || !endpoint
             .bytes()
-            .all(|c| c.is_ascii_hexdigit() || c == b'-')
-        || info.endpoint != format!("tundra-shell-{}", info.session)
+            .all(|c| c.is_ascii_alphanumeric() || c == b'-')
     {
         return Err(io::ErrorKind::InvalidInput.into());
     }
@@ -170,7 +168,7 @@ pub(super) fn connect(info: &shell_control::SessionInfo) -> io::Result<Stream> {
     let pipe = interprocess::os::windows::named_pipe::DuplexPipeStream::<
         interprocess::os::windows::named_pipe::pipe_mode::Bytes,
     >::connect_by_path_with_wait_mode(
-        format!(r"\\.\pipe\{}", info.endpoint),
+        format!(r"\\.\pipe\{endpoint}"),
         interprocess::ConnectWaitMode::Timeout(std::time::Duration::ZERO),
     )?;
     let stream = Stream::NamedPipe(pipe.into());
