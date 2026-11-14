@@ -54,14 +54,21 @@ const USER_MANAGEMENT_REFRESH_ALERT_KEY: &str = "user-management.refresh";
 const CLOCK_STORAGE_ALERT_KEY: &str = "clock.storage";
 const CLOCK_MANAGE_NOTIFICATION_KEY_PREFIX: &str = "clock.manage";
 const CLOCK_DUE_NOTIFICATION_KEY_PREFIX: &str = "clock.due";
+mod app_host;
 mod automation;
+mod clock_workspace;
+pub use app_host::run_app_host;
 mod command_line_runtime;
 mod compositor;
 mod script_host;
 mod vim_host;
+mod window_launch;
+mod window_state;
+mod workspace;
 pub(crate) use compositor::ScreenCompositor;
 #[cfg(test)]
 use compositor::sync_shell_toast;
+use window_launch::WindowLaunch;
 mod construction;
 mod controller;
 mod localization;
@@ -87,6 +94,7 @@ mod redraw;
 mod runtime;
 mod screen_keyboard;
 mod screen_saver;
+mod services_client;
 mod spring_progress;
 #[cfg(test)]
 #[path = "../../tests/unit/session/tests.rs"]
@@ -111,6 +119,8 @@ pub(in crate::session) struct ShellRuntimeServices {
     diagnostics: Option<ShellDiagnosticsTaskRuntime>,
     editor: ShellEditorTaskRuntime,
     settings: ShellSettingsTaskRuntime,
+    window_owner: window_launch::WindowOwner,
+    inherited_auth: Option<AuthSession>,
 }
 
 mod tasks;

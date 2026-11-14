@@ -38,6 +38,7 @@ startup-cli-help = TundraUX3 CLI
     { "  " }operations                    Operation status and authorization
     { "  " }logs [query|incidents|export|follow]  Logs and diagnostics
     { "  " }ui [sessions|snapshot|click|move|drag|scroll|key|text|wait]  Shell control
+    { "  " }watchdog [list|kill]          List or force kill managed processes
     { "  " }debug <command>               Debug tools; see debug --help
     { "  " }cls                           Clear the terminal
     { "  " }new                           Reset saved TundraUX3 data

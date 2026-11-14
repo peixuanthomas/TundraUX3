@@ -98,6 +98,70 @@ fn forward_jump_fires_alarm_and_backward_jump_does_not_duplicate_it() {
 }
 
 #[test]
+fn shared_edits_preserve_running_deadlines_and_daily_alarm_dates() {
+    let start = snapshot(2026, 7, 10, 9, 59, 0);
+    let after = snapshot(2026, 7, 10, 10, 0, 1);
+    let now = Instant::now();
+    let later = now + Duration::from_secs(61);
+    let mut shell = ClockScheduler::empty();
+    let alarm = shell.create_daily_alarm("10 00 00", &start).unwrap();
+    let countdown = shell.create_countdown("00 01 00", &start, now).unwrap();
+    let stored = shell.export_profile(&start, now);
+
+    let mut first_window = ClockScheduler::default();
+    first_window.synchronize_profile(None, &stored, &BTreeMap::new(), &after, later);
+    let previous = first_window.clone();
+    assert_eq!(first_window.toggle_strong(alarm), Some(true));
+    let changed = first_window.export_profile_mutation(&previous, &stored, &after, later);
+    assert_eq!(changed.entries[1], stored.entries[1]);
+
+    shell.synchronize_profile(Some(&stored), &changed, &BTreeMap::new(), &after, later);
+    let due = shell.advance(&after, later);
+    assert_eq!(
+        due.iter().map(|event| event.id).collect::<Vec<_>>(),
+        [alarm, countdown]
+    );
+    assert!(due[0].strong);
+    assert!(shell.advance(&after, later).is_empty());
+}
+
+#[test]
+fn a_countdown_expiring_before_its_first_shared_read_is_still_due() {
+    let before = snapshot(2026, 7, 10, 9, 59, 0);
+    let after = snapshot(2026, 7, 10, 9, 59, 2);
+    let now = Instant::now();
+    let later = now + Duration::from_secs(2);
+    let mut worker = ClockScheduler::default();
+    let countdown = worker.create_countdown("00 00 01", &before, now).unwrap();
+    let profile = worker.export_profile(&before, now);
+    let mut shell = ClockScheduler::default();
+    shell.synchronize_profile(None, &profile, &BTreeMap::new(), &after, later);
+    assert_eq!(shell.advance(&after, later)[0].id, countdown);
+    assert!(shell.advance(&after, later).is_empty());
+}
+
+#[test]
+fn a_new_daily_alarm_fires_if_the_first_shared_read_crosses_its_target() {
+    let before = snapshot(2026, 7, 10, 9, 59, 59);
+    let after = snapshot(2026, 7, 10, 10, 0, 0);
+    let now = Instant::now();
+    let mut window = ClockScheduler::default();
+    let previous = window.clone();
+    let alarm = window.create_daily_alarm("10 00 00", &before).unwrap();
+    let profile = window.export_profile(&before, now);
+    let new_dates = window.changed_alarm_dates(&previous);
+
+    let mut shell = ClockScheduler::default();
+    shell.synchronize_profile(None, &profile, &new_dates, &after, now);
+    let first_read = shell.clone();
+    assert_eq!(shell.advance(&after, now)[0].id, alarm);
+    let advanced_dates = shell.changed_alarm_dates(&first_read);
+    let mut restarted = ClockScheduler::default();
+    restarted.synchronize_profile(None, &profile, &advanced_dates, &after, now);
+    assert!(restarted.advance(&after, now).is_empty());
+}
+
+#[test]
 fn spring_dst_gap_fires_an_alarm_at_the_first_later_local_time() {
     let mut before = snapshot(2026, 3, 8, 6, 59, 59);
     before.date = NaiveDate::from_ymd_opt(2026, 3, 8).unwrap();

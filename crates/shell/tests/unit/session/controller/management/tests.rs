@@ -4100,7 +4100,7 @@ fn stable_toolbar_presses_survive_detail_and_keyboard_motion_frames() {
         );
         terminal
             .draw(|frame| {
-                compositor.render(frame, session, &prepared, None);
+                compositor.render(frame, session, &prepared, None, None);
             })
             .unwrap();
     };

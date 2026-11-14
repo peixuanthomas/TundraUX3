@@ -102,6 +102,14 @@ impl std::error::Error for TerminalSizeDetectionError {
 pub(crate) fn checked_current_terminal_size(
     requirement: ShellTerminalSizeRequirement,
 ) -> io::Result<(u16, u16)> {
+    if let Some(connection) = crate::process_host::WorkerConnection::current()
+        && connection.worker().role == workspace_protocol::WorkerRole::Shell
+    {
+        connection.progress()?;
+        if connection.shutdown_requested() {
+            return Err(io::ErrorKind::Interrupted.into());
+        }
+    }
     checked_terminal_size_with(requirement, crossterm::terminal::size)
 }
 

@@ -27,6 +27,8 @@ pub mod components;
 pub mod rainbow_text_preview;
 pub mod style_preview;
 pub mod ui_test;
+mod workspace;
+pub use workspace::*;
 
 /// Animation primitives and macros with support for Ratatui types.
 ///
@@ -62,7 +64,7 @@ pub use assets::*;
 pub use components::BusyIndicator;
 pub use editor_media::{
     EDITOR_IMAGE_MAX_PIXELS, EditorGraphicsProtocol, EditorImagePicker, EditorMediaError,
-    PreparedEditorImage, TerminalGraphicsProbe, TerminalGraphicsProbeStatus,
+    PreparedEditorImage, TerminalGraphicsProbe, TerminalGraphicsProbeStatus, WorkspaceIconCapture,
 };
 pub use foundation::*;
 pub use screens::timezone_map::{

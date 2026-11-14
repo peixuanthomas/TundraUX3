@@ -501,12 +501,26 @@ impl ShellSession {
                 if let Some(user_id) = user_id
                     && let Some(storage) = &self.storage_manager
                 {
-                    let result = storage.load_clock().and_then(|mut document| {
-                        document.profiles.remove(user_id);
-                        storage.save_clock(&document)
-                    });
+                    let result = if let Some(services) =
+                        crate::session_services::SessionServicesClient::current()
+                    {
+                        services
+                            .request(workspace_protocol::ServiceOperation::DeleteClockProfile {
+                                user_id: user_id.clone(),
+                            })
+                            .map(|_| ())
+                            .map_err(|error| error.to_string())
+                    } else {
+                        storage
+                            .load_clock()
+                            .and_then(|mut document| {
+                                document.profiles.remove(user_id);
+                                storage.save_clock(&document)
+                            })
+                            .map_err(|error| error.to_string())
+                    };
                     if let Err(error) = result {
-                        self.report_clock_storage_error(error.to_string());
+                        self.report_clock_storage_error(error);
                     }
                 }
                 current.then(|| i18n::msg!("shell-account-deleted").into())

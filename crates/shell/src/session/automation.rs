@@ -64,14 +64,18 @@ impl ControlRuntime {
         Ok(())
     }
 
-    pub fn publish(&mut self, mut snapshot: Snapshot) {
+    pub fn publish(&mut self, snapshot: Snapshot) {
+        self.publish_when_ready(snapshot, true);
+    }
+
+    pub fn publish_when_ready(&mut self, mut snapshot: Snapshot, ready: bool) {
         let Some(server) = &mut self.server else {
             return;
         };
         self.number += 1;
         snapshot.session = server.info.session.clone();
         snapshot.number = self.number;
-        if self.awaiting_frame && self.events.is_empty() {
+        if ready && self.awaiting_frame && self.events.is_empty() {
             if let Some(client) = self.active.take() {
                 self.last_observed_snapshot = Some(snapshot.number);
                 server.respond(client, &Response::success(snapshot.clone()));
@@ -272,6 +276,11 @@ impl ControlRuntime {
 
 impl weathr::DisplayControl for ControlRuntime {
     fn frame(&mut self, buffer: &ratatui::buffer::Buffer) {
+        if let Some(connection) = crate::process_host::WorkerConnection::current()
+            && (connection.progress().is_err() || connection.shutdown_requested())
+        {
+            platform::request_process_shutdown();
+        }
         if !self.enabled() {
             return;
         }
@@ -375,7 +384,12 @@ pub(super) fn action_events(
     if matches!(action, Action::Wake) && !is_weather_page(&snapshot.page) {
         return Ok(Vec::new());
     }
-    if snapshot.page == "terminal_size" {
+    if snapshot.page == "terminal_size"
+        && !snapshot.nodes.iter().any(|node| {
+            node.actionable
+                && (node.id == "chrome/shell.windows" || node.id.starts_with("workspace/"))
+        })
+    {
         return Err("target_unavailable");
     }
     let mut events = Vec::new();

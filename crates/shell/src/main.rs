@@ -2,11 +2,16 @@
 use platform::ManagedCommand;
 use std::sync::Arc;
 use watchdog::{ProcessWatchdog, WatchdogConfig, WatchdogRuntime};
+use workspace_protocol::{ShellCompletion, WorkerRole};
 
 fn main() {
+    if let Some(error) = terminal_runtime::run_pty_exec_shim() {
+        exit_with_error("shell-entry-failed", error, 1);
+    }
     let args = std::env::args().skip(1).collect::<Vec<_>>();
-    // Print built-in information before identity checks, storage, or watchdog.
-    match shell::parse_shell_args(&args) {
+    let command = shell::parse_shell_args(&args);
+    // Help and version do not need an interactive terminal or application state.
+    match &command {
         Ok(shell::ShellLaunchCommand::Help) => {
             println!(
                 "TundraUX3 Shell\n\
@@ -24,6 +29,15 @@ fn main() {
         }
         _ => {}
     }
+
+    let _language = i18n::enter_snapshot(Arc::new(i18n::LanguageSnapshot::embedded(0)));
+
+    match shell::process_host::worker_from_args(&args) {
+        Ok(Some(connection)) => std::process::exit(run_worker(connection)),
+        Ok(None) => {}
+        Err(error) => exit_with_error("shell-entry-failed", error, 2),
+    }
+
     #[cfg(target_os = "linux")]
     match shell::confirm_linux_startup() {
         Ok(user) => {
@@ -38,9 +52,6 @@ fn main() {
         }
     }
 
-    // Entry and post-run failures remain renderable without loading or repairing assets.
-    // Runtime language scopes override this fallback while the shell is running.
-    let _language = i18n::enter_snapshot(Arc::new(i18n::LanguageSnapshot::embedded(0)));
     if args.as_slice() == ["__update-probe"] {
         let identity = app::update::current_build_identity();
         println!("protocol={}", app::update::UPDATE_PROTOCOL_VERSION);
@@ -52,7 +63,7 @@ fn main() {
         println!("dirty={}", identity.dirty);
         return;
     }
-    if let Err(error) = shell::parse_shell_args(args) {
+    if let Err(error) = command {
         eprintln!(
             "{}",
             i18n::tr!("shell-entry-failed", error = error.to_string())
@@ -86,55 +97,37 @@ fn main() {
         }
     }
 
-    let (watchdog_runtime, process_watchdog) = match start_watchdog() {
-        Ok(value) => value,
-        Err(error) => {
-            eprintln!(
-                "{}",
-                i18n::tr!(
-                    "shell-entry-watchdog-start-failed",
-                    error = error.to_string()
-                )
-            );
-            std::process::exit(3);
-        }
-    };
-    let _ =
-        process_watchdog.register_emergency_cleanup(Arc::new(shell::restore_terminal_best_effort));
+    let restart_path = restart_executable
+        .as_ref()
+        .unwrap_or_else(|error| exit_with_error("shell-entry-failed", error, 1));
+    let guardian = shell::process_host::run_guardian(restart_path)
+        .unwrap_or_else(|error| exit_with_error("shell-entry-failed", error, 1));
+    if guardian.code != 0 {
+        std::process::exit(guardian.code);
+    }
 
-    let run_result = {
-        let mut stdout = std::io::stdout();
-        shell::run_shell_blocking_managed_with_outcome(&mut stdout, process_watchdog)
-    };
-    let watchdog_shutdown = watchdog_runtime.shutdown();
-
-    let exit_code = match (run_result, watchdog_shutdown) {
-        (Ok(shell::ShellRunOutcome::Exit), Ok(())) => 0,
-        (Ok(shell::ShellRunOutcome::RestartRequested), Ok(())) => {
-            match restart_current_executable(restart_executable) {
-                Ok(code) => code,
-                Err(error) => {
-                    eprintln!(
-                        "{}",
-                        i18n::tr!("shell-entry-restart-failed", error = error.to_string())
-                    );
-                    4
-                }
+    let exit_code = match guardian.completion {
+        Some(ShellCompletion::Restart) => match restart_current_executable(restart_executable) {
+            Ok(code) => code,
+            Err(error) => {
+                eprintln!(
+                    "{}",
+                    i18n::tr!("shell-entry-restart-failed", error = error.to_string())
+                );
+                4
             }
-        }
-        (Ok(shell::ShellRunOutcome::ResetRequested), Ok(())) => {
-            match reset_storage_and_restart(restart_executable) {
-                Ok(code) => code,
-                Err(error) => {
-                    eprintln!(
-                        "{}",
-                        i18n::tr!("shell-entry-reset-failed", error = error.to_string())
-                    );
-                    4
-                }
+        },
+        Some(ShellCompletion::Reset) => match reset_storage_and_restart(restart_executable) {
+            Ok(code) => code,
+            Err(error) => {
+                eprintln!(
+                    "{}",
+                    i18n::tr!("shell-entry-reset-failed", error = error.to_string())
+                );
+                4
             }
-        }
-        (Ok(shell::ShellRunOutcome::UpdatePrepared(manifest)), Ok(())) => {
+        },
+        Some(ShellCompletion::UpdatePrepared(manifest)) => {
             match app::update::launch_update_helper(&manifest, std::process::id()) {
                 Ok(()) => 0,
                 Err(error) => {
@@ -149,28 +142,52 @@ fn main() {
                 }
             }
         }
-        (_, Err(error)) => {
-            eprintln!(
-                "{}",
-                i18n::tr!(
-                    "shell-entry-watchdog-shutdown-failed",
-                    error = error.to_string()
-                )
-            );
-            3
-        }
-        (Err(error), Ok(())) => {
-            eprintln!(
-                "{}",
-                i18n::tr!("shell-entry-failed", error = error.to_string())
-            );
-            1
-        }
+        Some(ShellCompletion::Exit) | None => 0,
     };
 
     if exit_code != 0 {
         std::process::exit(exit_code);
     }
+}
+
+fn run_worker(connection: &'static shell::process_host::WorkerConnection) -> i32 {
+    #[cfg(unix)]
+    if let Some(directory) = connection.private_directory()
+        && let Err(error) = terminal_runtime::set_pty_exec_gate_directory(directory.to_path_buf())
+    {
+        exit_with_error("shell-entry-failed", error, 1);
+    }
+    let role = connection.worker().role;
+    let (watchdog_runtime, process_watchdog) = match start_watchdog(role) {
+        Ok(value) => value,
+        Err(error) => exit_with_error("shell-entry-watchdog-start-failed", error, 3),
+    };
+    if role == WorkerRole::Shell {
+        let _ = process_watchdog
+            .register_emergency_cleanup(Arc::new(shell::restore_terminal_best_effort));
+    }
+    let result = shell::process_host::run_worker(connection, process_watchdog);
+    if let Err(error) = watchdog_runtime.shutdown() {
+        exit_with_error("shell-entry-watchdog-shutdown-failed", error, 3);
+    }
+    match result {
+        Ok(completion) if role == WorkerRole::Shell => match connection.finish(completion) {
+            Ok(()) => 0,
+            Err(error) => exit_with_error("shell-entry-failed", error, 1),
+        },
+        Ok(_) => 0,
+        Err(error) => exit_with_error("shell-entry-failed", error, 1),
+    }
+}
+
+fn exit_with_error(message: &str, error: impl std::fmt::Display, code: i32) -> ! {
+    eprintln!(
+        "{}",
+        i18n::render_diagnostic(
+            &i18n::LocalizedMessage::new(message).with_arg("error", error.to_string())
+        )
+    );
+    std::process::exit(code);
 }
 
 fn reset_storage_and_restart(
@@ -236,24 +253,31 @@ fn restart_error(executable: &std::path::Path, error: std::io::Error) -> std::io
     )
 }
 
-fn start_watchdog() -> Result<(WatchdogRuntime, ProcessWatchdog), watchdog::WatchdogError> {
+fn start_watchdog(
+    role: WorkerRole,
+) -> Result<(WatchdogRuntime, ProcessWatchdog), watchdog::WatchdogError> {
     let fallback = std::env::temp_dir().join("TundraUX3").join("watchdog");
     let platform = platform::native_platform();
     let paths_result = platform.app_paths();
     let path_failure = paths_result.as_ref().err().map(ToString::to_string);
+    let process_name = match role {
+        WorkerRole::Shell => "tundra-shell",
+        WorkerRole::App(_) => "tundra-app-host",
+        WorkerRole::Services => "tundra-session-services",
+    };
     let mut config = match paths_result {
         Ok(paths) => WatchdogConfig::new(
             paths.logs_path().join("crashes"),
             fallback.join("crashes"),
             paths.data_path(),
-            "tundra-shell",
+            process_name,
             env!("CARGO_PKG_VERSION"),
         ),
         Err(_) => WatchdogConfig::new(
             fallback.join("crashes"),
             fallback.join("fallback"),
             fallback.join("state"),
-            "tundra-shell",
+            process_name,
             env!("CARGO_PKG_VERSION"),
         ),
     };
@@ -294,21 +318,23 @@ fn start_watchdog() -> Result<(WatchdogRuntime, ProcessWatchdog), watchdog::Watc
         process.record_log(event);
     }
     let process = process.install_global()?;
-    if let Err(error) = process.report_stale_runs(|pid| match platform.is_process_alive(pid) {
-        Ok(alive) => alive,
-        Err(error) => {
-            let mut event = runtime_log::RuntimeLogEvent::new(
-                process.log_context("ux.watchdog", "inspect_previous_process"),
-                runtime_log::LogLevel::Warning,
-                runtime_log::LogPhase::Degraded,
-                "Previous process state unavailable; retaining run marker",
-            );
-            watchdog::capture_error(&mut event, &error);
-            event.alert_key = Some("previous-process-inspection".into());
-            process.record_log(event);
-            true
-        }
-    }) {
+    if role == WorkerRole::Shell
+        && let Err(error) = process.report_stale_runs(|pid| match platform.is_process_alive(pid) {
+            Ok(alive) => alive,
+            Err(error) => {
+                let mut event = runtime_log::RuntimeLogEvent::new(
+                    process.log_context("ux.watchdog", "inspect_previous_process"),
+                    runtime_log::LogLevel::Warning,
+                    runtime_log::LogPhase::Degraded,
+                    "Previous process state unavailable; retaining run marker",
+                );
+                watchdog::capture_error(&mut event, &error);
+                event.alert_key = Some("previous-process-inspection".into());
+                process.record_log(event);
+                true
+            }
+        })
+    {
         let mut event = runtime_log::RuntimeLogEvent::new(
             process.log_context("ux.watchdog", "inspect_previous_runs"),
             runtime_log::LogLevel::Warning,

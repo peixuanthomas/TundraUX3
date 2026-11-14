@@ -24,6 +24,9 @@ impl ShellSession {
         if session.role == UserRole::Guest {
             return;
         }
+        if self.route_window_launch(WindowLaunch::SystemStatus) {
+            return;
+        }
         if self
             .settings_task_runtime
             .set_system_status_active(true)
@@ -396,9 +399,15 @@ impl ShellSession {
         if !matches!(
             self.pages.system_status.system_status_route,
             ui::SystemStatusRoute::Dashboard
-        ) {
+        ) || self
+            .pages
+            .system_status
+            .system_status_dashboard_draft
+            .is_some()
+        {
             return;
         }
+        self.pages.system_status.profile_draft_revision = self.workspace_profile_revision();
         self.pages.system_status.system_status_dashboard_draft =
             Some(self.system_status_dashboard_config());
         self.pages.system_status.system_status_add_picker = None;
@@ -481,17 +490,34 @@ impl ShellSession {
             );
             return;
         };
-        match UserService::with_debug_policy(storage, self.debug_policy)
-            .with_backend(self.identity_backend)
-            .update_user_system_status_dashboard(&actor, &actor.username, dashboard)
-        {
-            Ok(account) => {
-                self.app.dispatch_at(
-                    app::AppCommand::SetActiveSystemStatusDashboard(Some(
-                        account.system_status_dashboard,
-                    )),
-                    Instant::now(),
-                );
+        let saved =
+            if let Some(services) = crate::session_services::SessionServicesClient::current() {
+                services
+                    .save_workspace_profile(
+                        self,
+                        self.pages.system_status.profile_draft_revision,
+                        crate::session_services::SessionProfile {
+                            appearance: None,
+                            dashboard: Some(dashboard),
+                        },
+                    )
+                    .map_err(|error| i18n::LocalizedText::from(error.to_string()))
+            } else {
+                UserService::with_debug_policy(storage, self.debug_policy)
+                    .with_backend(self.identity_backend)
+                    .update_user_system_status_dashboard(&actor, &actor.username, dashboard)
+                    .map(|account| {
+                        self.app.dispatch_at(
+                            app::AppCommand::SetActiveSystemStatusDashboard(Some(
+                                account.system_status_dashboard,
+                            )),
+                            Instant::now(),
+                        );
+                    })
+                    .map_err(|error| format_core_error(&error))
+            };
+        match saved {
+            Ok(()) => {
                 self.pages.system_status.system_status_dashboard_draft = None;
                 self.pages.system_status.system_status_add_picker = None;
                 self.pages.system_status.system_status_size_picker = None;
@@ -511,7 +537,7 @@ impl ShellSession {
                 self.pages.system_status.system_status_dashboard_feedback =
                     Some(i18n::LocalizedText::from(i18n::msg!(
                         "shell-could-not-save-dashboard-arg1",
-                        arg1 = format_core_error(&error)
+                        arg1 = error
                     )));
             }
         }

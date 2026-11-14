@@ -451,6 +451,7 @@ impl ShellSession {
 
     /// Close an exact instance; a late terminal exit cannot close a different page.
     pub fn close_page_instance(&mut self, id: PageInstanceId) {
+        self.tasks.remove_window_page(id);
         if self.navigation.parked.remove(&id).is_some() {
             self.tasks.close_queries(id);
             self.pages.remove(id);

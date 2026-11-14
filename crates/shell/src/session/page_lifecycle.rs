@@ -113,6 +113,9 @@ impl ShellSession {
             })
             .flatten();
         self.approved_editor_closes.insert(id, (revision, discard));
+        if self.window_close == super::app_host::WindowClose::Checking {
+            return;
+        }
         self.request_page_close(id);
     }
 

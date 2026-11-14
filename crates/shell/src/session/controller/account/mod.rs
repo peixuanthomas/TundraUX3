@@ -886,10 +886,10 @@ impl ShellSession {
         &self,
         coordinates: CellPosition,
     ) -> Option<usize> {
-        let row = setup_language_list_row_at(
-            self.terminal_size,
-            self.language_catalog.options().len(),
-            coordinates,
+        let viewport = self.touch_setup_viewport();
+        let row = setup_row_at(
+            ui::setup_language_list_area(viewport.content, self.language_catalog.options().len()),
+            viewport.content_point(coordinates)?,
         )?;
         (row < self.language_options().len()).then_some(row)
     }
@@ -898,7 +898,11 @@ impl ShellSession {
         &self,
         coordinates: CellPosition,
     ) -> Option<usize> {
-        let row = setup_timezone_list_row_at(self.terminal_size, coordinates)?;
+        let viewport = self.touch_setup_viewport();
+        let row = setup_row_at(
+            ui::setup_timezone_list_area(viewport.content),
+            viewport.content_point(coordinates)?,
+        )?;
         let count = app::setup_timezone_options().len();
         if count == 0 {
             return None;
@@ -1335,6 +1339,9 @@ impl ShellSession {
             return;
         }
 
+        if self.route_window_launch(WindowLaunch::UserManagement) {
+            return;
+        }
         self.enter_new_page(ShellScreen::UserManagement);
         if self.refresh_user_management() {
             self.pages.user_management.user_management_mode = UserManagementMode::Browse;

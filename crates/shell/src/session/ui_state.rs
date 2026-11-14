@@ -572,11 +572,20 @@ pub(super) struct TimedClick {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UiSessionState {
     pub(super) pages: ShellPages,
+    pub(super) window_owner: super::window_launch::WindowOwner,
+    pub(super) window_launches: VecDeque<super::window_launch::WindowLaunch>,
+    pub(super) window_close: super::app_host::WindowClose,
+    pub(super) window_global_request: Option<ShellCommand>,
+    pub(super) windows_active: bool,
+    pub(super) window_task_ids: HashSet<String>,
+    pub(super) window_task_action: Option<(String, bool)>,
+    pub(super) window_tasks_requested: bool,
     pub(super) command_line_close_request: Option<(PageInstanceId, bool)>,
     pub(super) script_requests: VecDeque<(PageInstanceId, script_runtime::RuntimeCommand)>,
     pub(super) editor_vim_terminal: Option<Arc<ui::CommandLineTerminalSnapshot>>,
     pub(super) editor_vim_install: Option<(PageInstanceId, ui::EditorVimInstallViewModel)>,
     pub(super) editor_vim_toggle_requested: bool,
+    pub(super) editor_vim_enabled: Option<bool>,
     pub(super) editor_vim_script_export: Option<PageInstanceId>,
     pub(super) editor_vim_close_requested: bool,
 
@@ -590,6 +599,7 @@ pub struct UiSessionState {
     pub(super) storage_manager: Option<StorageManager>,
     pub(super) last_time_sync_utc: Option<DateTime<Utc>>,
     pub(super) clock_scheduler: Option<ClockScheduler>,
+    pub(super) workspace_clock: super::clock_workspace::WorkspaceClock,
 
     pub(super) clock_persist_pending: bool,
     pub(super) clock_pending_due_summary: Option<i18n::LocalizedText>,

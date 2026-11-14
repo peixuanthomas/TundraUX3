@@ -14,6 +14,12 @@ impl ShellSession {
         &mut self,
         reload: EditorReloadPolicy,
     ) -> Result<(), i18n::LocalizedText> {
+        if self.route_window_launch(WindowLaunch::EditorReport {
+            path: reload.path().as_os_str().to_owned(),
+            log: matches!(reload, EditorReloadPolicy::Log { .. }),
+        }) {
+            return Ok(());
+        }
         if self.editor_open_reuses_document()
             && self.app.editor_state().is_some_and(EditorState::is_dirty)
         {
@@ -42,6 +48,7 @@ impl ShellSession {
                 "shell-the-current-editor-document-is-still-saving"
             )));
         }
+        self.initialize_editor_vim_mode();
         let navigation = match self.active_screen() {
             ShellScreen::Explorer
                 if matches!(
@@ -728,6 +735,9 @@ impl ShellSession {
         if self.editor_open_reuses_document() && self.config_editor_active() {
             self.notify_toast(i18n::msg!("config-editor-finish-document"));
             return false;
+        }
+        if self.route_window_launch(WindowLaunch::EditorPath(path.as_os_str().to_owned())) {
+            return true;
         }
         if Self::is_system_config_path(&path) {
             self.begin_config_editor(path, None, None, None, "system".into());

@@ -32,6 +32,10 @@ impl ShellSession {
             self.return_from_screen(ShellScreen::Management);
             return;
         }
+        self.open_management_query(self.tasks_query());
+    }
+
+    pub(in crate::session) fn tasks_query(&self) -> ManagementQuery {
         let mut query = ManagementQuery::new(ManagementKind::Tasks);
         if let Some(storage) = &self.storage_manager {
             query.options.insert(
@@ -44,7 +48,7 @@ impl ShellSession {
                     .to_string(),
             );
         }
-        self.open_management_query(query);
+        query
     }
 
     fn local_task_store(&self) -> Result<HistoryStore, ManagementError> {
@@ -300,14 +304,18 @@ impl ShellSession {
                             return true;
                         }
                     }
+                    if self.window_task_ids.contains(id) {
+                        self.window_task_action = Some((id.to_owned(), false));
+                        return true;
+                    }
                     self.notify_status(i18n::msg!("task-page-closed"));
                     match row.identity.get("origin").map(String::as_str).unwrap_or("") {
                         "script" => self.open_script_editor(),
                         "editor" => self.open_editor(),
-                        "explorer" => self.enter_screen(ShellScreen::Explorer),
-                        "launcher" => self.enter_screen(ShellScreen::Launcher),
+                        "explorer" => self.open_explorer(platform::native_platform().as_ref()),
+                        "launcher" => self.open_launcher(platform::native_platform().as_ref()),
                         "command-line" => self.open_command_line(),
-                        "settings" | "update" => self.enter_screen(ShellScreen::Settings),
+                        "settings" | "update" => self.open_settings(),
                         origin => {
                             let kind = match origin {
                                 "services" => Some(ManagementKind::Services),
@@ -332,6 +340,12 @@ impl ShellSession {
             }
             "task_cancel" => {
                 if let Some(row) = row {
+                    if let Some(id) = row.identity.get("history_id")
+                        && self.window_task_ids.contains(id)
+                    {
+                        self.window_task_action = Some((id.clone(), true));
+                        return true;
+                    }
                     if let Some((domain, request, _)) = row
                         .identity
                         .get("history_id")

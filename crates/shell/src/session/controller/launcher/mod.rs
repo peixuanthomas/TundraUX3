@@ -100,6 +100,9 @@ impl ShellSession {
             )));
             return;
         };
+        if self.route_window_launch(WindowLaunch::Launcher { select: None }) {
+            return;
+        }
         match self.launcher_controller().load(&storage) {
             Ok(state) => {
                 self.enter_new_page(ShellScreen::Launcher);
@@ -639,6 +642,11 @@ impl ShellSession {
         path: std::path::PathBuf,
         platform: &dyn Platform,
     ) {
+        if self.route_window_launch(WindowLaunch::Launcher {
+            select: Some(path.as_os_str().to_owned()),
+        }) {
+            return;
+        }
         self.open_launcher(platform);
         if let Some(index) = self.app.launcher_state().and_then(|state| {
             state.items.iter().position(|item| {

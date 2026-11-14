@@ -150,7 +150,7 @@ fn script_export_owner_and_readonly_restore_survive_another_active_vim_document(
     assert_eq!(state.active_page_id(), other);
     assert!(state.pages.editor.get(owner).unwrap().script.vim_suspended);
     assert!(!state.pages.editor.get(other).unwrap().script.vim_suspended);
-    assert!(state.app.storage_config().editor.vim_mode_enabled);
+    assert!(state.editor_vim_enabled());
     assert!(
         state
             .with_page_context(owner, |state| state
@@ -198,7 +198,7 @@ fn script_export_owner_and_readonly_restore_survive_another_active_vim_document(
             std::thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(state.active_page_id(), other);
-        assert!(state.app.storage_config().editor.vim_mode_enabled);
+        assert!(state.editor_vim_enabled());
     }
     let command = adapter
         .host

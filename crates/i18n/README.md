@@ -16,6 +16,8 @@ native_name = "简体中文"
 
 The bundled Chinese and English packs include compact-interface preview descriptions, primary and danger action labels, and terminal-size messages with interpolated minimum dimensions. Keep both languages and their argument contracts in sync when changing these shared UI resources.
 
+The bundled `modules/workspace.ftl` covers the Windows panel, window states and size requirements, close and cleanup prompts, and watchdog CLI help and errors. CLI flags and JSON status values are shared across languages.
+
 ## Snapshots and messages
 
 ```rust

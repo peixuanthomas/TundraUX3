@@ -543,7 +543,7 @@ fn startup_graphics_policy_only_schedules_theme_change_for_unsupported() {
         .to_notification_view_model()
         .expect("no-response notification");
     assert_eq!(notice.title, "No terminal graphics response");
-    assert!(notice.message.contains("not changed"));
+    assert!(notice.message.contains("Continuing with the current theme"));
 
     let mut verified = new_state();
     verified.apply_terminal_graphics_startup_policy(&ui::TerminalGraphicsProbeStatus::Verified(
@@ -591,7 +591,7 @@ fn unsupported_custom_theme_warns_without_scheduling_a_change() {
     let notice = state
         .to_notification_view_model()
         .expect("custom theme warning");
-    assert!(notice.message.contains("custom theme was left unchanged"));
+    assert!(notice.message.contains("Continuing with the current theme"));
     platform::cleanup_temp_path(&root).expect("clean fixture");
 }
 

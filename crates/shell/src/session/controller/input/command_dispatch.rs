@@ -287,6 +287,21 @@ impl ShellSession {
         self.last_routed_target = Some(routed.target);
         self.last_command = Some(routed.command.clone());
 
+        if self.windows_active
+            && matches!(
+                routed.command,
+                ShellCommand::Logout
+                    | ShellCommand::LogoutToLockscreen
+                    | ShellCommand::ConfirmExit
+                    | ShellCommand::Restart
+                    | ShellCommand::PowerOff
+                    | ShellCommand::Reboot
+            )
+        {
+            self.window_global_request = Some(routed.command);
+            return ShellAction::Redraw;
+        }
+
         if (self.pending_login_reset.is_some() || self.pending_session_exit.is_some())
             && !matches!(
                 routed.command,
@@ -351,6 +366,15 @@ impl ShellSession {
             }
             ShellCommand::PageCloseStay(id) => {
                 self.stay_on_page(id);
+                ShellAction::Redraw
+            }
+            ShellCommand::ConfirmWindowClose => {
+                self.window_close = super::super::super::app_host::WindowClose::Confirmed;
+                ShellAction::Redraw
+            }
+            ShellCommand::CancelWindowClose => {
+                self.window_close = super::super::super::app_host::WindowClose::Cancelled;
+                self.approved_editor_closes.clear();
                 ShellAction::Redraw
             }
             ShellCommand::ManagementDiscardForm(id, close) => {
@@ -1104,6 +1128,10 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::EditorCancelClose => {
+                if self.window_close == crate::session::app_host::WindowClose::Checking {
+                    self.window_close = crate::session::app_host::WindowClose::Cancelled;
+                    self.approved_editor_closes.clear();
+                }
                 self.pages.editor.editor_exit_group = false;
                 if let Some(owner) = self.pages.editor.selected_id() {
                     self.stay_on_page(owner);

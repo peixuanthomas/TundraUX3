@@ -48,6 +48,7 @@ fn shell_accepts_information_flags_and_rejects_other_arguments() {
         "-editor",
         "--unknown",
         "document.md",
+        "__workspace-worker",
     ] {
         let error =
             parse_shell_args([argument]).expect_err("unsupported argument must be rejected");

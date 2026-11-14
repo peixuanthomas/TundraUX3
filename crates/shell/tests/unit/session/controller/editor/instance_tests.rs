@@ -12,6 +12,49 @@ fn insert(state: &mut ShellSession, text: &str) {
 }
 
 #[test]
+fn cancelling_save_as_cancels_the_window_close_and_keeps_the_draft() {
+    let mut state = session();
+    state.open_editor();
+    let editor = state.active_page_id();
+    insert(&mut state, "untitled draft");
+    state.window_close = crate::session::app_host::WindowClose::Checking;
+    state.pages.editor.editor_close_after_save = true;
+    state.request_page_close_after_editor_check(editor, false);
+    state.app.dispatch_at(
+        app::AppCommand::Editor(app::editor::EditorCommand::RequestSave),
+        Instant::now(),
+    );
+    let app::editor::EditorEffect::SaveFilePicker { snapshot, .. } =
+        state.app.take_editor_effects().remove(0)
+    else {
+        panic!("an untitled document should request a save picker");
+    };
+    state.enter_new_page(ShellScreen::Explorer);
+    state.pages.explorer.editor_picker_owner = Some(editor);
+    state.pages.explorer.explorer_purpose = ExplorerPurpose::EditorSaveAs {
+        snapshot,
+        input: ui::components::TextInput::new("save.filename"),
+        focus: ui::ExplorerSaveFocus::Filename,
+    };
+
+    state.apply_input_with_platform(
+        InputEvent::Key(KeyInput::new(InputKey::Escape)),
+        &platform::mock::UnsupportedPlatform,
+    );
+
+    assert_eq!(
+        state.window_close,
+        crate::session::app_host::WindowClose::Cancelled
+    );
+    assert!(state.approved_editor_closes.is_empty());
+    assert_eq!(state.active_page_id(), editor);
+    let document = state.app.editor_state().unwrap();
+    assert_eq!(document.export_text(), "untitled draft");
+    assert!(document.is_dirty());
+    assert!(!state.pages.editor.editor_close_after_save);
+}
+
+#[test]
 fn a_busy_save_picker_registers_the_save_to_its_original_editor() {
     let root = std::env::temp_dir().join(format!(
         "tundra-picker-save-owner-{}-{}",

@@ -14,6 +14,7 @@ TundraUX3 brings system tools, files, editors, and everyday utilities into one t
 - **Development tools:** run programs in an embedded terminal and debug Bash scripts with breakpoints, stepping, variables, and call stacks.
 - **System activity:** monitor resource usage, inspect logs and notifications, and track background tasks and their output.
 - **Personal workspace:** search Launcher by name or command, organize custom entries, choose themes and languages, and use the built-in clock and weather apps.
+- **Independent app windows:** keep applications running in the background and arrange them in equal splits or a grid. An independent watchdog monitors the Shell and app processes and provides direct termination when an app stops responding.
 - **Terminal interface:** OpenCode-inspired navigation, selection rows, dialogs, and loading feedback, using TundraUX3's Glacier Night blue palette.
 
 | Platform | Main support |
@@ -25,6 +26,8 @@ TundraUX3 brings system tools, files, editors, and everyday utilities into one t
 ## Get started
 
 Use an interactive terminal of at least **108 columns × 20 rows**. Mouse and touch input require a terminal that forwards pointer events.
+
+Esc backgrounds an ordinary app after dismissing its open dialog or menu. Native terminals and Vim retain Esc; use **Ctrl+B, then B** to background them. The same prefix followed by **W** opens windows, **L** changes the split layout, **Q** closes normally, and uppercase **X** kills immediately. Available panes follow the terminal size and the largest minimum reported by any running app, including background apps. Background apps belong to the current TundraUX3 run and are cleaned up when it exits.
 
 ### Run a Linux portable build
 
@@ -71,6 +74,7 @@ cargo run --locked -p cli --bin tundra-cli -- doctor
 ```sh
 tundra-cli --help
 tundra-cli doctor
+tundra-cli watchdog list
 ```
 
 To control the interface from another terminal, enable **Settings → System → External CLI control**, then use commands such as:

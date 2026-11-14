@@ -52,17 +52,13 @@ impl ScreenCompositor {
         {
             return;
         }
-        let mut button = ui::components::Button::new(
-            "input.keyboard",
-            if state.input_keyboard_open() {
-                i18n::tr!("screen-keyboard-hide")
-            } else {
-                i18n::tr!("screen-keyboard-show")
-            },
+        render_keyboard_launcher(
+            frame,
+            launcher,
+            state.input_keyboard_open(),
+            launcher_focused,
+            context,
         );
-        button.set_focused(launcher_focused);
-        frame.render_widget(ratatui::widgets::Clear, launcher);
-        button.render_borderless_frame(frame, launcher, &context.compatibility_theme());
     }
 
     pub(crate) fn keyboard_demo_layout(
@@ -134,4 +130,24 @@ impl ScreenCompositor {
         // and bounded the dialog, so this panel cannot cover any part of it.
         ui::render_screen_keyboard_panel(frame, layout, model, context);
     }
+}
+
+pub(super) fn render_keyboard_launcher(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    open: bool,
+    focused: bool,
+    context: &RenderContext,
+) {
+    let mut button = ui::components::Button::new(
+        "input.keyboard",
+        if open {
+            i18n::tr!("screen-keyboard-hide")
+        } else {
+            i18n::tr!("screen-keyboard-show")
+        },
+    );
+    button.set_focused(focused);
+    frame.render_widget(ratatui::widgets::Clear, area);
+    button.render_borderless_frame(frame, area, &context.compatibility_theme());
 }

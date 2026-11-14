@@ -1,13 +1,17 @@
+use std::cell::RefCell;
 use std::fmt;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use image::{DynamicImage, RgbaImage};
+use image::{DynamicImage, Pixel, Rgba, RgbaImage};
 use ratatui::Frame;
 use ratatui::layout::{Rect, Size};
+use ratatui::style::{Color, Modifier};
 use ratatui_image::FontSize;
 use ratatui_image::Image;
 use ratatui_image::Resize;
 use ratatui_image::protocol::Protocol;
+use ratatui_image::protocol::halfblocks::Halfblocks;
 use ratatui_image::protocol::iterm2::Iterm2;
 use ratatui_image::protocol::kitty::Kitty;
 use ratatui_image::protocol::sixel::Sixel;
@@ -78,8 +82,11 @@ impl TerminalGraphicsProbe {
     }
 
     pub fn verified(picker: EditorImagePicker) -> Self {
+        let Some(protocol) = picker.protocol() else {
+            return Self::unsupported();
+        };
         Self {
-            status: TerminalGraphicsProbeStatus::Verified(picker.protocol()),
+            status: TerminalGraphicsProbeStatus::Verified(protocol),
             picker: Some(picker),
             text_sizing_protocol: false,
         }
@@ -128,7 +135,7 @@ impl TerminalGraphicsProbe {
 #[derive(Debug, Clone)]
 pub struct EditorImagePicker {
     font_size: FontSize,
-    protocol: EditorGraphicsProtocol,
+    protocol: Option<EditorGraphicsProtocol>,
     is_tmux: bool,
 }
 
@@ -141,12 +148,21 @@ impl EditorImagePicker {
     ) -> Self {
         Self {
             font_size: FontSize::new(cell_width.max(1), cell_height.max(1)),
-            protocol,
+            protocol: Some(protocol),
             is_tmux,
         }
     }
 
-    pub fn protocol(&self) -> EditorGraphicsProtocol {
+    /// Prepares icon pixels for the app host and leaves terminal encoding to Shell.
+    pub fn for_workspace(cell_width: u16, cell_height: u16) -> Self {
+        Self {
+            font_size: FontSize::new(cell_width.max(1), cell_height.max(1)),
+            protocol: None,
+            is_tmux: false,
+        }
+    }
+
+    pub fn protocol(&self) -> Option<EditorGraphicsProtocol> {
         self.protocol
     }
 
@@ -183,7 +199,17 @@ impl EditorImagePicker {
         let resize = Resize::Fit(None);
         let size = resize.size_for(&image, self.font_size, area.as_size());
         let image = resize.resize(&image, self.font_size, size, None);
-        let protocol = match self.protocol {
+        let Some(kind) = self.protocol else {
+            return Ok(PreparedEditorImage {
+                image: PreparedImage::Workspace(WorkspaceIcon {
+                    source: image.into_rgba8(),
+                    size,
+                    cell_size: [self.font_size.width, self.font_size.height],
+                    raster: RefCell::new(None),
+                }),
+            });
+        };
+        let protocol = match kind {
             EditorGraphicsProtocol::Kitty => Protocol::Kitty(
                 Kitty::new(image, size, next_kitty_image_id(), self.is_tmux)
                     .map_err(EditorMediaError::Protocol)?,
@@ -196,8 +222,7 @@ impl EditorImagePicker {
             ),
         };
         Ok(PreparedEditorImage {
-            protocol,
-            kind: self.protocol,
+            image: PreparedImage::Native(protocol),
         })
     }
 
@@ -226,22 +251,37 @@ pub(crate) fn next_kitty_image_id() -> u32 {
         .expect("atomic image id update is infallible")
 }
 
+enum PreparedImage {
+    Native(Protocol),
+    Workspace(WorkspaceIcon),
+}
+
 pub struct PreparedEditorImage {
-    protocol: Protocol,
-    kind: EditorGraphicsProtocol,
+    image: PreparedImage,
 }
 
 impl PreparedEditorImage {
-    pub fn protocol(&self) -> EditorGraphicsProtocol {
-        self.kind
+    pub fn protocol(&self) -> Option<EditorGraphicsProtocol> {
+        match self.image {
+            PreparedImage::Native(Protocol::Kitty(_)) => Some(EditorGraphicsProtocol::Kitty),
+            PreparedImage::Native(Protocol::Sixel(_)) => Some(EditorGraphicsProtocol::Sixel),
+            PreparedImage::Native(Protocol::ITerm2(_)) => Some(EditorGraphicsProtocol::Iterm2),
+            _ => None,
+        }
     }
 
     pub fn render_size(&self) -> Size {
-        self.protocol.size()
+        match &self.image {
+            PreparedImage::Native(protocol) => protocol.size(),
+            PreparedImage::Workspace(icon) => icon.size,
+        }
     }
 
     pub fn render(&self, frame: &mut Frame<'_>, area: Rect) {
-        frame.render_widget(Image::new(&self.protocol), area);
+        match &self.image {
+            PreparedImage::Native(protocol) => frame.render_widget(Image::new(protocol), area),
+            PreparedImage::Workspace(icon) => icon.render(frame, area),
+        }
     }
 
     /// Render a fixed-size image centered inside a larger allocation.
@@ -251,8 +291,115 @@ impl PreparedEditorImage {
     /// allocate the whole tile width to an icon, so center the actual protocol
     /// footprint here.
     pub fn render_centered(&self, frame: &mut Frame<'_>, area: Rect) {
-        let centered = centered_protocol_area(area, self.protocol.size());
-        frame.render_widget(Image::new(&self.protocol), centered);
+        self.render(frame, centered_protocol_area(area, self.render_size()));
+    }
+}
+
+struct WorkspaceIcon {
+    source: RgbaImage,
+    size: Size,
+    cell_size: [u16; 2],
+    raster: RefCell<Option<WorkspaceIconRaster>>,
+}
+
+struct WorkspaceIconRaster {
+    background: Color,
+    image_id: u64,
+    rgba: Arc<[u8]>,
+    fallback: Protocol,
+}
+
+impl WorkspaceIcon {
+    fn render(&self, frame: &mut Frame<'_>, area: Rect) {
+        if self.size.width > area.width || self.size.height > area.height {
+            return;
+        }
+        let area = Rect::new(area.x, area.y, self.size.width, self.size.height);
+        if area.is_empty() || area.intersection(frame.area()) != area {
+            return;
+        }
+        let cell = &frame.buffer_mut()[(area.x, area.y)];
+        let background = if cell.modifier.contains(Modifier::REVERSED) {
+            cell.fg
+        } else {
+            cell.bg
+        };
+        let mut cached = self.raster.borrow_mut();
+        if cached
+            .as_ref()
+            .is_none_or(|cached| cached.background != background)
+        {
+            let (r, g, b) = crate::theme::color_rgb(background).unwrap_or_default();
+            let mut pixels = self.source.clone();
+            for pixel in pixels.pixels_mut() {
+                let mut base = Rgba([r, g, b, 255]);
+                base.blend(pixel);
+                base[3] = 255;
+                *pixel = base;
+            }
+            let rgba = Arc::from(pixels.as_raw().as_slice());
+            let Ok(fallback) = Halfblocks::new(DynamicImage::ImageRgba8(pixels), self.size) else {
+                return;
+            };
+            *cached = Some(WorkspaceIconRaster {
+                background,
+                image_id: (1 << 63) | u64::from(next_kitty_image_id()),
+                rgba,
+                fallback: Protocol::Halfblocks(fallback),
+            });
+        }
+        let cached = cached.as_ref().unwrap();
+        frame.render_widget(Image::new(&cached.fallback), area);
+        WORKSPACE_ICONS.with_borrow_mut(|capture| {
+            let Some((content, images)) = capture else {
+                return;
+            };
+            if content.intersection(area) != area {
+                return;
+            }
+            let area = workspace_protocol::Rect {
+                x: area.x - content.x,
+                y: area.y - content.y,
+                width: area.width,
+                height: area.height,
+            };
+            let (width, height) = self.source.dimensions();
+            images.push(workspace_protocol::Image {
+                image_id: cached.image_id,
+                width,
+                height,
+                rgba: cached.rgba.clone(),
+                source: [0, 0, width, height],
+                padding: [0; 4],
+                cell_size: self.cell_size,
+                area,
+                visible: vec![area],
+                z_index: 0,
+            });
+        });
+    }
+}
+
+thread_local! {
+    static WORKSPACE_ICONS: RefCell<Option<(Rect, Vec<workspace_protocol::Image>)>> = const { RefCell::new(None) };
+}
+
+pub struct WorkspaceIconCapture;
+
+impl WorkspaceIconCapture {
+    pub fn begin(content: Rect) -> Self {
+        WORKSPACE_ICONS.with_borrow_mut(|capture| *capture = Some((content, Vec::new())));
+        Self
+    }
+
+    pub fn finish(self) -> Vec<workspace_protocol::Image> {
+        WORKSPACE_ICONS.with_borrow_mut(|capture| capture.take().unwrap().1)
+    }
+}
+
+impl Drop for WorkspaceIconCapture {
+    fn drop(&mut self) {
+        WORKSPACE_ICONS.with_borrow_mut(|capture| *capture = None);
     }
 }
 

@@ -101,6 +101,22 @@ fn navigation() -> PageHelpSection {
     )
 }
 
+fn workspace_navigation() -> PageHelpSection {
+    section(
+        i18n::tr!("ui-workspace-title"),
+        vec![
+            row("Ctrl+B, W", i18n::tr!("ui-help-nav-windows")),
+            row("Ctrl+B, B", i18n::tr!("ui-workspace-background")),
+            row("Ctrl+B, ←→↑↓", i18n::tr!("ui-help-workspace-focus")),
+            row("Ctrl+B, L", i18n::tr!("ui-help-workspace-layout")),
+            row("Ctrl+B, Z", i18n::tr!("ui-help-workspace-maximize")),
+            row("Ctrl+B, Q", i18n::tr!("ui-workspace-close")),
+            row("Ctrl+B, Shift+X", i18n::tr!("ui-help-workspace-kill")),
+            row("Ctrl+B, Ctrl+B", i18n::tr!("ui-help-workspace-send")),
+        ],
+    )
+}
+
 fn management_selection_help(mut rows: Vec<PageHelpRow>) -> Vec<PageHelpSection> {
     rows.insert(0, row("Shift+Click", i18n::tr!("ui-help-selection-range")));
     rows.insert(0, row("Shift+Enter", i18n::tr!("ui-help-selection-toggle")));
@@ -418,6 +434,12 @@ pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
     };
     let mut sections = pages;
     sections.push(navigation());
+    if !matches!(
+        screen,
+        PageHelpScreen::Setup | PageHelpScreen::Login | PageHelpScreen::BootstrapAdmin
+    ) {
+        sections.push(workspace_navigation());
+    }
     PageHelpViewModel {
         title,
         sections,

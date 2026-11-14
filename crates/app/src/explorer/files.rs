@@ -7,6 +7,7 @@ impl ExplorerFileService {
             operations: Arc::new(std::sync::Mutex::new(
                 operations::ExplorerFileOperations::default(),
             )),
+            shared: shared_operations::shared_explorer_operations(),
         }
     }
 
@@ -280,7 +281,7 @@ impl ExplorerFileService {
         platform.rename_path_no_replace(path, &target)?;
         let movement = movement.filter(ExplorerUndoMove::target_matches);
         let undoable = movement.is_some();
-        self.record_moves(movement.map(|movement| vec![movement]));
+        self.record_moves(movement.map(|movement| vec![movement]))?;
         let message: LocalizedText =
             msg!("app-explorer-renamed", path = target.display().to_string()).into();
         state.set_success(if undoable {
@@ -895,8 +896,8 @@ impl ExplorerFileService {
 
         let undo_unavailable = clipboard.mode == ExplorerClipboardMode::Cut && undo_moves.is_none();
         if clipboard.mode == ExplorerClipboardMode::Cut {
-            self.consume_cut_paths(&succeeded_sources);
-            self.record_moves(undo_moves);
+            self.consume_cut_paths(&succeeded_sources)?;
+            self.record_moves(undo_moves)?;
         }
         state.operation = None;
         result?;

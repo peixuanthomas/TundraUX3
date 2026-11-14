@@ -38,6 +38,9 @@ pub enum AutoAdminPolicy {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StorageConfig {
+    /// The shared services revision used for conditional writes; never persisted.
+    #[serde(skip)]
+    pub session_revision: Option<u64>,
     pub schema_version: u32,
     #[serde(default = "default_screen_timeout_seconds")]
     pub screen_timeout_seconds: u64,
@@ -78,7 +81,7 @@ pub struct StorageConfig {
 }
 
 impl StorageConfig {
-    pub(crate) fn normalize(&mut self) -> bool {
+    pub fn normalize(&mut self) -> bool {
         let legacy_schema = self.schema_version < 2;
         let mut changed = self.schema_version != SCHEMA_VERSION;
         if legacy_schema {
@@ -105,6 +108,7 @@ impl StorageConfig {
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
+            session_revision: None,
             schema_version: SCHEMA_VERSION,
             screen_timeout_seconds: DEFAULT_SCREEN_TIMEOUT_SECONDS,
             automation: AutomationConfig::default(),

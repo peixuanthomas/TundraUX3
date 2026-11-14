@@ -55,7 +55,7 @@ fn native_vim_f8_queues_export_without_interfering_with_a_pending_save() {
     );
 
     assert!(state.editor_vim_toggle_requested);
-    assert!(state.app.storage_config().editor.vim_mode_enabled);
+    assert!(state.editor_vim_enabled());
     assert!(state.editor_vim_terminal.is_some());
     assert_eq!(
         state.pages.editor.editor_save_state.as_ref().unwrap().id,
@@ -86,11 +86,39 @@ fn ordinary_editor_f8_still_waits_for_a_pending_save() {
         &platform::mock::UnsupportedPlatform,
     );
 
-    assert!(!state.app.storage_config().editor.vim_mode_enabled);
+    assert!(!state.editor_vim_enabled());
     assert!(!state.editor_vim_toggle_requested);
     assert!(state.editor_vim_terminal.is_none());
     assert_eq!(
         state.pages.editor.editor_save_state.as_ref().unwrap().id,
         92
     );
+}
+
+#[test]
+fn vim_toggle_changes_only_the_current_editor_session() {
+    let mut first = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    let mut second = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    first.open_editor();
+    second.open_editor();
+    let default = first.app.storage_config().editor.vim_mode_enabled;
+
+    first.set_editor_vim_enabled(!default);
+
+    assert_eq!(first.editor_vim_enabled(), !default);
+    assert_eq!(second.editor_vim_enabled(), default);
+    assert_eq!(first.app.storage_config().editor.vim_mode_enabled, default);
+
+    let mut updated = first.app.storage_config().clone();
+    updated.editor.vim_mode_enabled = default;
+    first.replace_storage_config(updated);
+    assert_eq!(first.editor_vim_enabled(), !default);
 }

@@ -121,6 +121,9 @@ impl ShellSession {
         if !cfg!(target_os = "linux") {
             return;
         }
+        if self.route_window_launch(WindowLaunch::Script) {
+            return;
+        }
         self.new_edit_document();
         self.app.dispatch_at(
             app::AppCommand::Editor(app::editor::EditorCommand::InsertText(

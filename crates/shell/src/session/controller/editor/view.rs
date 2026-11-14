@@ -301,10 +301,7 @@ impl ShellSession {
             });
         model.selected_toolbar_action = self.pages.editor.editor_selected_toolbar_action;
         model.vim_mode = self
-            .app
-            .storage_config()
-            .editor
-            .vim_mode_enabled
+            .editor_vim_enabled()
             .then_some(ui::EditorVimMode::Normal);
         model.scroll_line = state.viewport.top_line;
         model.horizontal_scroll = state.viewport.left_column;

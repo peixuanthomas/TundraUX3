@@ -50,6 +50,12 @@ impl ShellSession {
             return;
         }
 
+        if self.route_window_launch(WindowLaunch::CommandLine {
+            directory: directory.clone().map(PathBuf::into_os_string),
+            external: external.clone(),
+        }) {
+            return;
+        }
         let (width, height) = self.terminal_size;
         if width < ui::MIN_COMMAND_LINE_TERMINAL_WIDTH
             || height < ui::MIN_COMMAND_LINE_TERMINAL_HEIGHT

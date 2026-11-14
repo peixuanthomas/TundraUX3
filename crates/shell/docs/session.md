@@ -5,13 +5,13 @@ This document describes startup, input, page lifecycles, and full-frame composit
 ## Startup sequence
 
 1. On Linux, validate real/effective UID and GID, require interactive confirmation when starting as root, then resolve the current user through NSS.
-2. Create watchdog, emergency terminal recovery, and process supervision, and check the previous run's status.
+2. Start the independent watchdog. It captures the terminal state, launches SessionServices, and hands the terminal to the Shell worker.
 3. Load default assets and calculate the minimum terminal size.
 4. `prepare_shell_startup` initializes platform permissions, storage, migrations, and recovery information.
 5. Show the startup screen and prefetch weather as needed.
 6. On Linux, enter Appearance or Home according to the setup-complete marker for the current UID; on Windows/macOS, enter local account setup, the lock screen, or login.
-7. Create a `ShellSession` containing `AppState` and `UiSessionState`, and establish the first screen, focus, and hit table.
-8. The event loop reads input and background results, updates state, constructs ViewModels, and renders.
+7. Initialize the Shell's login and Home state. Opening an application launches a separate AppHost whose `ShellSession` owns the business controllers, navigation, and task state.
+8. AppHosts render window-local frames. The Shell routes input to the selected window and paints those frames with global controls.
 
 ```mermaid
 flowchart TD
@@ -30,6 +30,8 @@ flowchart TD
 `tundra-shell --help` and `--version` only print query results; they do not enter a full-screen session.
 
 First-time setup offers F9 to use the default appearance and start once required account information is valid. Appearance can be changed later; the application administrator role does not grant operating-system privileges.
+
+Watchdog commands, application data, and shared service requests use separate local connections. Workers verify the peer process identity. Window IDs identify an opening within one run, and layout generations bind input and returned frames to the current viewport.
 
 ## Input and event loop
 
@@ -60,7 +62,7 @@ Unix input messages are assembled by the local Crossterm patch. A standalone Esc
 
 ## Page instances and background tasks
 
-`ShellSession { app, ui }` holds shared services and all page instances. `PageInstanceId` identifies one opening; `page_state.rs` and `AppPageModels` store page data, selection, scrolling, forms, dialogs, and focus under the same ID.
+`ShellSession { app, ui }` holds one AppHost's page instances. `PageInstanceId` identifies a page within that opening. `page_state.rs` and `AppPageModels` store its data, selection, scrolling, forms, dialogs, and focus. Shared configuration, profile, clock and file-operation state are accessed through SessionServices.
 
 `navigation.rs` stores the actual opening path. A covered page keeps its original instance, which is restored on return; reopening after closing creates a new instance. The task list can return to the original page if it still exists; if it has closed, it only opens the corresponding feature.
 
@@ -99,7 +101,9 @@ Compositing order:
 5. Animations and effects for the current frame;
 6. Floating Toast and the on-screen keyboard.
 
-The top-right Back button and Esc use the same return rules. Command Line asks whether to terminate a running process before returning, or returns directly when no process is running; its child terminal still receives physical Esc and Ctrl+Shift+X.
+Esc first dismisses a modal or menu. An ordinary application window moves to the background on Esc. Vim and command terminals process Esc natively. The top-right Back button can return to a local subpage. Windows panel close and Ctrl+B, Q ask about unsaved documents or running operations before cleanup.
+
+Splits add a title row per pane and a separator between adjacent panes. If a resize hides a pane, its process and state stay alive and it automatically returns when room permits. An explicit background action removes the pane from the split until it is reopened. The workspace compares all live minimum sizes before routing business inputs and keeps its management controls available below the minimum.
 
 Clicking the status message area opens the full text. The dialog retains the content from the moment of the click and supports scrolling. The clock button is handled separately.
 
@@ -108,14 +112,14 @@ Clicking the status message area opens the full text. The dialog retains the con
 | Request | Behavior |
 | --- | --- |
 | Exit | Save recovery data, finish task cleanup, and restore the terminal |
-| Restart the program | Use `exec` on Unix; wait for the new process and return its exit code on Windows |
+| Restart the program | Close AppHosts, restore the terminal, and let the watchdog start the replacement |
 | Reset | Recreate initial storage after cleanup, then restart |
 | Log out | Destroy the UI session and return to the lock screen on Windows/macOS |
 | Reboot/shut down the computer | Save recovery data and restore the terminal before calling platform interfaces |
 
 Before suspend, save editor recovery data and leave full-screen mode. On resume, reestablish the terminal, platform session, and size.
 
-If Shell or a supervised background task panics, restore the terminal and save an incident report first, then show a standalone panic page. R restarts; Q, Esc, or Ctrl+C exits; arrow keys and the mouse wheel scroll long errors.
+If the Shell stops reporting progress for five seconds, the watchdog terminates the run and restores the terminal. An unresponsive AppHost can be force killed independently from the Windows panel or the watchdog CLI. An AppHost remains registered until the watchdog reaps its process and cleans up its resources. If the Shell catches a panic and reaches the standalone panic page, R restarts and Q, Esc or Ctrl+C exits.
 
 ## Common shortcuts
 

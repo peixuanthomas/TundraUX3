@@ -10,6 +10,8 @@ pub enum ShellCommand {
     PageCloseBackground(crate::PageInstanceId),
     PageCloseCancelTasks(crate::PageInstanceId),
     PageCloseStay(crate::PageInstanceId),
+    ConfirmWindowClose,
+    CancelWindowClose,
     ManagementDiscardForm(crate::PageInstanceId, bool),
     OpenLogs,
     LogsKey(KeyInput),
@@ -461,6 +463,7 @@ impl ShellCommand {
                 | Self::LauncherCancelConfirmation
                 | Self::EditorCancelClose
                 | Self::EditorCancelOpen
+                | Self::CancelWindowClose
                 | Self::ExplorerRestoreCancel
                 | Self::ExplorerConflictCancel
                 | Self::ExplorerCancelOperation

@@ -5,6 +5,9 @@ use vim_runtime::{
 };
 mod install;
 
+const VIM_PROBE_EVERY: Duration = Duration::from_secs(1);
+const VIM_PROBE_TIMEOUT: Duration = Duration::from_secs(4);
+
 pub(super) struct EditorVimHost {
     watchdog: AppWatchdog,
     host: Option<VimHost>,
@@ -24,6 +27,11 @@ pub(super) struct EditorVimHost {
     window_focused: bool,
     cell_size: (u16, u16),
     terminal: Option<Arc<terminal_runtime::snapshot::TerminalSnapshot>>,
+    probe: Option<(u64, Instant)>,
+    next_probe_id: u64,
+    last_probe: Instant,
+    unresponsive: bool,
+    minimum_offset: (u16, u16),
 }
 
 #[derive(PartialEq, Eq)]
@@ -65,11 +73,28 @@ impl EditorVimHost {
             window_focused: true,
             cell_size: (8, 16),
             terminal: None,
+            probe: None,
+            next_probe_id: 0,
+            last_probe: Instant::now(),
+            unresponsive: false,
+            minimum_offset: (0, 1),
         }
     }
 
     pub(super) fn running(&self) -> bool {
         self.installer.is_some() || self.host.as_ref().is_some_and(VimHost::is_running)
+    }
+
+    pub(super) fn unresponsive(&self) -> bool {
+        self.unresponsive && self.host.as_ref().is_some_and(VimHost::is_running)
+    }
+
+    pub(super) fn minimum_content_size(&self) -> Option<(u16, u16)> {
+        let (columns, rows) = self.host.as_ref()?.reported_minimum_size()?;
+        Some((
+            columns.saturating_add(self.minimum_offset.0),
+            rows.saturating_add(self.minimum_offset.1),
+        ))
     }
 
     pub(super) fn set_cell_size(&mut self, width: u16, height: u16) {
@@ -105,8 +130,7 @@ impl EditorVimHost {
             return Ok(());
         }
         let visible = state.content_screen() == ShellScreen::Editor;
-        let enabled = state.app.storage_config().editor.vim_mode_enabled
-            && !state.pages.editor.script.vim_suspended;
+        let enabled = state.editor_vim_enabled() && !state.pages.editor.script.vim_suspended;
         if visible
             && enabled
             && self.host.is_none()
@@ -155,6 +179,9 @@ impl EditorVimHost {
             self.selected = Some(state.content_page_id());
             self.suspended = false;
             self.started_at = Instant::now();
+            self.probe = None;
+            self.last_probe = self.started_at;
+            self.unresponsive = false;
         }
         if self.host.is_none() {
             return Ok(());
@@ -210,6 +237,14 @@ impl EditorVimHost {
                 }
             }
             let area = vim_area(state);
+            self.minimum_offset = (
+                state.terminal_size.0.saturating_sub(area.width),
+                state
+                    .terminal_size
+                    .1
+                    .saturating_sub(2)
+                    .saturating_sub(area.height),
+            );
             self.host
                 .as_ref()
                 .unwrap()
@@ -247,6 +282,9 @@ impl EditorVimHost {
         }
         self.finish_saves(state)?;
         let poll = self.host.as_mut().unwrap().poll()?;
+        if state.window_owner.is_app() && poll.exit.is_none() {
+            self.poll_responsiveness(&poll.ping_ids)?;
+        }
         self.synchronize_policies(state, &poll.state.buffers)?;
         if self.import.is_some_and(|id| poll.state.last_command >= id) {
             self.import = None;
@@ -256,6 +294,7 @@ impl EditorVimHost {
         }
         if !poll.state.ready
             && poll.exit.is_none()
+            && !state.window_owner.is_app()
             && self.started_at.elapsed() > Duration::from_secs(10)
         {
             return Err(io::Error::other(i18n::tr!("shell-vim-startup-failed")));
@@ -392,6 +431,27 @@ impl EditorVimHost {
             }
         } else {
             state.editor_vim_terminal = None;
+        }
+        Ok(())
+    }
+
+    fn poll_responsiveness(&mut self, received: &[u64]) -> io::Result<()> {
+        let now = Instant::now();
+        if let Some((nonce, sent)) = self.probe {
+            if received.contains(&nonce) {
+                self.probe = None;
+                self.unresponsive = false;
+            } else if now.duration_since(sent) >= VIM_PROBE_TIMEOUT {
+                self.unresponsive = true;
+            }
+        }
+        if self.probe.is_none() && now.duration_since(self.last_probe) >= VIM_PROBE_EVERY {
+            self.next_probe_id += 1;
+            self.last_probe = now;
+            if let Some(host) = &mut self.host {
+                host.request_ping(self.next_probe_id)?;
+                self.probe = Some((self.next_probe_id, now));
+            }
         }
         Ok(())
     }

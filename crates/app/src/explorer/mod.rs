@@ -10,6 +10,11 @@ mod controller;
 mod files;
 mod operations;
 pub use operations::ExplorerUndoMove;
+mod shared_operations;
+pub use shared_operations::{
+    ExplorerSharedOperations, ExplorerSharedRequest, ExplorerSharedSnapshot,
+    install_shared_explorer_operations,
+};
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
@@ -425,8 +430,9 @@ impl ExplorerEntryKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ExplorerClipboard {
+    #[serde(with = "workspace_protocol::native_paths")]
     pub paths: Vec<PathBuf>,
     pub mode: ExplorerClipboardMode,
 }
@@ -437,7 +443,7 @@ impl ExplorerClipboard {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ExplorerClipboardMode {
     Copy,
     Cut,
@@ -761,6 +767,7 @@ impl Default for ExplorerController {
 pub struct ExplorerFileService {
     permission_service: PermissionService,
     operations: Arc<std::sync::Mutex<operations::ExplorerFileOperations>>,
+    shared: Option<Arc<dyn ExplorerSharedOperations>>,
 }
 
 impl Default for ExplorerFileService {

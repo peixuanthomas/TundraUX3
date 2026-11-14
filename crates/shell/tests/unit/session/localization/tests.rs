@@ -384,8 +384,10 @@ fn discovered_language_rows_share_setup_render_and_mouse_geometry() {
     f.state.refresh_hit_map();
     let count = f.state.language_options().len();
     assert_eq!(count, 3);
-    let main = setup_main_rect(f.state.terminal_size).unwrap();
-    let rendered = ui::setup_language_list_area(main, count);
+    let viewport = f.state.touch_setup_viewport();
+    let rendered = viewport
+        .project(ui::setup_language_list_area(viewport.content, count))
+        .unwrap();
     let region = f
         .state
         .hit_map

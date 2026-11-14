@@ -67,7 +67,10 @@ impl ExplorerController {
             emit_explorer_event(event.clone());
             event
         });
-        let result = self.try_apply(state, command, session, platform, storage);
+        let result = self
+            .file_service
+            .refresh_shared()
+            .and_then(|()| self.try_apply(state, command, session, platform, storage));
         state.clipboard = self.file_service.clipboard();
         state.can_undo = self.file_service.can_undo();
         if let Some(started) = log {
@@ -453,7 +456,7 @@ impl ExplorerController {
                 self.file_service.set_clipboard(Some(ExplorerClipboard {
                     paths,
                     mode: ExplorerClipboardMode::Copy,
-                }));
+                }))?;
                 state.set_success(msg!("app-explorer-copied-selection"));
                 ExplorerEffect::None
             }
@@ -463,7 +466,7 @@ impl ExplorerController {
                 self.file_service.set_clipboard(Some(ExplorerClipboard {
                     paths,
                     mode: ExplorerClipboardMode::Cut,
-                }));
+                }))?;
                 state.set_success(msg!("app-explorer-cut-selection"));
                 ExplorerEffect::None
             }

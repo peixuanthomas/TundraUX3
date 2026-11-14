@@ -17,6 +17,7 @@ struct Collector {
     parent: String,
     blocked: bool,
     transform: Projection,
+    masks: Vec<Rect>,
 }
 
 #[derive(Clone, Copy)]
@@ -46,6 +47,7 @@ impl FrameCapture {
                     y: 0,
                     clip: bounds,
                 },
+                masks: Vec::new(),
             });
         });
         Self
@@ -74,12 +76,14 @@ impl FrameCapture {
         let mut capture = CAPTURE
             .with_borrow_mut(Option::take)
             .expect("active frame capture");
-        let sensitive: Vec<_> = capture
-            .nodes
-            .iter()
-            .filter(|node| node.sensitive)
-            .map(|node| area(node.rect))
-            .collect();
+        let mut sensitive = capture.masks;
+        sensitive.extend(
+            capture
+                .nodes
+                .iter()
+                .filter(|node| node.sensitive)
+                .map(|node| area(node.rect)),
+        );
         let lines = buffer_lines(buffer, capture.bounds, &sensitive);
         let full_text = lines.join("\n");
         for node in &mut capture.nodes {
@@ -107,6 +111,86 @@ impl FrameCapture {
             lines,
         }
     }
+}
+
+/// Imports metadata using the same viewport and offset used to paint the worker's cells.
+pub(crate) fn import_workspace_controls(
+    source: &workspace_protocol::WindowFrame,
+    destination: Rect,
+    clip: Rect,
+    actionable: bool,
+) {
+    CAPTURE.with_borrow_mut(|active| {
+        let Some(capture) = active.as_mut() else {
+            return;
+        };
+        let clip = clip.intersection(capture.bounds);
+        let project = |rect: workspace_protocol::Rect| {
+            Rect::new(
+                destination.x.saturating_add(rect.x),
+                destination.y.saturating_add(rect.y),
+                rect.width,
+                rect.height,
+            )
+            .intersection(clip)
+        };
+        let scope = capture.parent.as_str();
+        let legacy_ids = scope == "page";
+        let qualify = |id: &str| {
+            if id == "screen" {
+                if legacy_ids {
+                    "screen".into()
+                } else {
+                    scope.into()
+                }
+            } else if id == "page" {
+                scope.into()
+            } else if let Some(id) = id.strip_prefix("page/") {
+                format!("{scope}/{id}")
+            } else if legacy_ids {
+                id.into()
+            } else {
+                format!("{scope}/{id}")
+            }
+        };
+        capture.masks.extend(
+            source
+                .masks
+                .iter()
+                .copied()
+                .map(project)
+                .filter(|rect| !rect.is_empty()),
+        );
+        for control in &source.controls {
+            if control.id == "page" {
+                continue;
+            }
+            let rect = project(control.rect);
+            if rect.is_empty() {
+                continue;
+            }
+            let mut entry = node(qualify(&control.id), &control.role, &control.name, rect);
+            entry.parent = Some(
+                control
+                    .parent
+                    .as_deref()
+                    .map_or_else(|| scope.into(), qualify),
+            );
+            entry.enabled = control.enabled;
+            entry.selected = control.selected;
+            entry.sensitive = control.sensitive;
+            entry.actionable = actionable
+                && !capture.blocked
+                && control.actionable
+                && rect.width == control.rect.width
+                && rect.height == control.rect.height;
+            entry.focused = entry.actionable && control.focused;
+            if entry.actionable {
+                entry.actions.clone_from(&control.actions);
+            }
+            capture.nodes.push(entry);
+        }
+    });
 }
 
 impl Drop for FrameCapture {
@@ -335,7 +419,12 @@ fn buffer_lines(buffer: &Buffer, rect: Rect, sensitive: &[Rect]) -> Vec<String> 
                 let cell = &buffer[(x, y)];
                 let symbol = cell.symbol();
                 let width = cell.cell_width().max(1);
-                if sensitive.iter().any(|area| area.contains((x, y).into())) {
+                if sensitive.iter().any(|area| {
+                    y >= area.y
+                        && y < area.bottom()
+                        && x < area.right()
+                        && x.saturating_add(width) > area.x
+                }) {
                     line.push_str(&"*".repeat(usize::from(width.min(rect.right() - x))));
                 } else if symbol.contains('\u{1b}') {
                     line.push_str(&" ".repeat(usize::from(width.min(rect.right() - x))));

@@ -13,11 +13,18 @@
 | `src/motion.rs`, `surface_motion.rs` | Transition calculations for pages, dialogs, details, and the keyboard |
 | `src/automation.rs` | Capture control trees and text from actual rendered frames |
 | `src/terminal_images.rs` | Child-terminal image clipping, caching, and fallbacks |
+| `src/workspace/` | Split geometry, window controls, and composition of app-host frames |
 | `assets/` | Icons and timezone maps; see [Asset notes](assets/README.md) for sources |
 
 Pages render only the content in `ShellFrameLayout.main` and their own overlays. Shell handles the global title bar, status bar, Toast, and modal dialogs, using the same layout for rendering and clicks.
 
 The global title bar exposes Tasks for logged-in non-guest users, including running and awaiting-approval status. Title and status bars each use one row; Tasks, Help, Back, the clock, and the screen-keyboard entry share their actual render and hit-test geometry.
+
+The Windows panel and its title-bar entry use the same rectangles for painting and interaction. The panel shows foreground and background windows, their content minimums, and windows that are closing or unresponsive. Closing and force-killing remain available when the terminal cannot fit the workspace. F1 help lists the workspace shortcuts.
+
+A single pane uses all available content rows below the global title. Split panes add a title row and a one-cell gap between panes. Left/right and top/bottom layouts fit two panes when space permits. Grid capacity grows with the terminal, and the last row distributes its width among the windows it holds. All live windows contribute to the minimum content size, including those in the background.
+
+App-host frames carry content in pane-local coordinates. Composition translates and clips cells, controls, and sensitive areas together. Only the focused pane keeps the existing automation IDs. The composed snapshot masks sensitive text in every visible pane.
 
 ## Shared controls
 
@@ -103,9 +110,13 @@ Default acceleration/constant-speed/deceleration phases are page `[40, 80, 40]`,
 
 ## Child terminals and images
 
-`TerminalImageFragment` describes RGBA data, source cropping, content-area coordinates, pixel margins, and layers. `TerminalImageCache` clips and caches Kitty, Sixel, and iTerm2 images by viewport.
+`TerminalImageFragment` describes RGBA data, source cropping, content-area coordinates, pixel margins, and layers. `TerminalImageCache` clips and caches Kitty, Sixel, and iTerm2 images by viewport. An app host captures the visible image placements alongside its rasterized cells. Shell rebuilds native graphics in the pane and retires native resources when the pane moves, closes, or becomes obscured.
+
+Launcher icons use the terminal's measured cell size for layout. App hosts send icon pixels and pane-local placement to Shell, with half-block cells for frames where an overlay covers the pane. Transparent pixels blend with the tile's current background before both representations are generated.
 
 Text terminals, dialog occlusion, layout transitions, and transparent or overlapping images use character-block compositing. Snapshots preserve wide characters, italics, and native cursor shapes; the editor's Vim region shares rendering, PTY sizing, and mouse coordinates through `editor_vim_terminal_area`.
+
+Inactive rich Markdown headings use the terminal's text-sizing protocol when available. App hosts send heading text, level, style, and location as structured data. Shell generates OSC 66 only when the complete heading fits in the visible pane.
 
 Vim reserves one row for its editor-mode switch and gives the rest to the native terminal. Command Line uses the entire main region. Script output reuses Command Line terminal geometry, reserving a scrollbar column only when history is present.
 

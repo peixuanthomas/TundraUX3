@@ -779,6 +779,13 @@ impl ShellSettingsTaskRuntime {
     pub(in crate::session) fn refresh_system_status(
         &self,
     ) -> Result<(), system_services::SystemServicesError> {
+        if self.shared.system_services.is_none()
+            && let Some(client) = crate::session_services::SessionServicesClient::current()
+        {
+            return client
+                .request_system_status(None, true)
+                .map_err(|_| system_services::SystemServicesError::Shutdown);
+        }
         self.shared
             .system_services
             .as_ref()
@@ -790,6 +797,13 @@ impl ShellSettingsTaskRuntime {
         &self,
         active: bool,
     ) -> Result<(), system_services::SystemServicesError> {
+        if self.shared.system_services.is_none()
+            && let Some(client) = crate::session_services::SessionServicesClient::current()
+        {
+            return client
+                .request_system_status(Some(active), false)
+                .map_err(|_| system_services::SystemServicesError::Shutdown);
+        }
         self.shared
             .system_services
             .as_ref()

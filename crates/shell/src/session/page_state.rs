@@ -169,11 +169,13 @@ impl Default for UserManagementPageState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsPageState {
     pub(super) settings_state: Option<SettingsState>,
+    pub(super) profile_draft_revision: Option<u64>,
 }
 impl Default for SettingsPageState {
     fn default() -> Self {
         Self {
             settings_state: None,
+            profile_draft_revision: None,
         }
     }
 }
@@ -186,6 +188,7 @@ pub(super) struct SystemStatusPageState {
     pub(super) system_status_dashboard_focus: ui::SystemStatusDashboardFocus,
     pub(super) system_status_dashboard_scroll_row: u16,
     pub(super) system_status_dashboard_draft: Option<storage::SystemStatusDashboardConfig>,
+    pub(super) profile_draft_revision: Option<u64>,
     pub(super) system_status_add_picker: Option<SystemStatusAddPickerState>,
     pub(super) system_status_size_picker: Option<SystemStatusSizePickerState>,
     pub(super) system_status_discard_dialog: bool,
@@ -206,6 +209,7 @@ impl Default for SystemStatusPageState {
             system_status_dashboard_focus: ui::SystemStatusDashboardFocus::default(),
             system_status_dashboard_scroll_row: 0,
             system_status_dashboard_draft: None,
+            profile_draft_revision: None,
             system_status_add_picker: None,
             system_status_size_picker: None,
             system_status_discard_dialog: false,

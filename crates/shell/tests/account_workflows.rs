@@ -520,6 +520,7 @@ fn timezone_mouse_click_selects_visible_row_from_hit_map() {
     );
 
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, coordinates));
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, coordinates));
 
     assert_eq!(
         state.to_setup_view_model().selected_timezone_index,
@@ -547,6 +548,7 @@ fn admin_setup_text_boxes_route_mouse_clicks_inside_box() {
         assert_eq!(state.hit_target_at(coordinates), Some(component));
 
         state.apply_input(InputEvent::mouse_down(PointerButton::Left, coordinates));
+        state.apply_input(InputEvent::mouse_up(PointerButton::Left, coordinates));
 
         assert_eq!(state.focused_component(), component);
         assert_eq!(
@@ -646,10 +648,9 @@ fn first_run_setup_routes_keys_focus_and_mouse_before_home_shortcuts() {
         state.to_setup_view_model().selected_language_index,
         next_language
     );
-    state.apply_input(InputEvent::mouse_down(
-        PointerButton::Left,
-        setup_hit_map_row_coordinates(&state, ShellComponent::SetupLanguage, 0),
-    ));
+    let point = setup_hit_map_row_coordinates(&state, ShellComponent::SetupLanguage, 0);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
     assert_eq!(state.to_setup_view_model().selected_language_index, 0);
 
     state.apply_input(InputEvent::from_key_label("Enter"));
@@ -666,10 +667,9 @@ fn first_run_setup_routes_keys_focus_and_mouse_before_home_shortcuts() {
         state.to_setup_view_model().selected_timezone_index,
         last_timezone
     );
-    state.apply_input(InputEvent::mouse_down(
-        PointerButton::Left,
-        setup_hit_map_row_coordinates(&state, ShellComponent::SetupTimezone, 0),
-    ));
+    let point = setup_hit_map_row_coordinates(&state, ShellComponent::SetupTimezone, 0);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
     assert_eq!(
         state.to_setup_view_model().selected_timezone_index,
         state.to_setup_view_model().timezone_window_start
@@ -703,10 +703,9 @@ fn first_run_setup_routes_keys_focus_and_mouse_before_home_shortcuts() {
         state.focused_component(),
         ShellComponent::SetupAdminPasswordConfirm
     );
-    state.apply_input(InputEvent::mouse_down(
-        PointerButton::Left,
-        setup_hit_map_row_coordinates(&state, ShellComponent::SetupSubmit, 0),
-    ));
+    let point = setup_hit_map_row_coordinates(&state, ShellComponent::SetupSubmit, 0);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
     assert_eq!(state.to_setup_view_model().step, ui::SetupStep::Appearance);
     assert_eq!(
         state.focused_component(),
@@ -1400,7 +1399,7 @@ fn compact_user_management_supports_touch_forms_and_the_shared_escape() {
 
     state.apply_input(InputEvent::Resize {
         width: 49,
-        height: 12,
+        height: 16,
     });
     let layout = user_management_layout_for(&state);
     let create = layout
@@ -1425,10 +1424,9 @@ fn compact_user_management_supports_touch_forms_and_the_shared_escape() {
         .iter()
         .find(|field| field.field == ui::UserManagementField::DisplayName)
         .expect("visible compact text field");
-    state.apply_input(InputEvent::mouse_down(
-        PointerButton::Left,
-        rect_center(display_name.area),
-    ));
+    let point = rect_center(display_name.area);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
     assert_eq!(
         state
             .to_user_management_view_model()

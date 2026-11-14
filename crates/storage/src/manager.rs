@@ -47,6 +47,9 @@ impl StorageManager {
     }
 
     pub fn load_config(&self) -> Result<StorageConfig, StorageError> {
+        if let Some(store) = crate::session_store::session_config_store(&self.layout.config_path) {
+            return store.load_config();
+        }
         let mut config: StorageConfig =
             load_toml_document(&self.layout.config_path, CONFIG_DESCRIPTOR.name)?;
         config.normalize();
@@ -54,6 +57,9 @@ impl StorageManager {
     }
 
     pub fn save_config(&self, config: &StorageConfig) -> Result<(), StorageError> {
+        if let Some(store) = crate::session_store::session_config_store(&self.layout.config_path) {
+            return store.save_config(config);
+        }
         let mut config = config.clone();
         config.normalize();
         save_toml_document(&self.layout.config_path, CONFIG_DESCRIPTOR.name, &config)

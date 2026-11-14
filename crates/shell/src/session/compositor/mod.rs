@@ -124,20 +124,28 @@ pub(crate) struct ScreenCompositor {
     keyboard_open: bool,
     terminal_image_picker: Option<ui::EditorImagePicker>,
     terminal_images: std::collections::HashMap<(PageInstanceId, u8), ui::TerminalImageCache>,
+    workspace_images:
+        std::collections::HashMap<workspace_protocol::SessionId, ui::TerminalImageCache>,
     terminal_image_cleanup: Vec<u8>,
     pub(super) capture_enabled: bool,
+    pub(super) capture_workspace_images: bool,
     pub(super) snapshot: Option<shell_control::Snapshot>,
     sensitive_frame: bool,
     next_redraw_in: Option<Duration>,
 }
 
 impl ScreenCompositor {
+    pub(super) fn toast_visible(&self) -> bool {
+        self.toast_area.is_some()
+    }
+
     pub(super) fn set_terminal_image_picker(&mut self, picker: Option<ui::EditorImagePicker>) {
         for cache in self.terminal_images.values_mut() {
             cache.clear();
             self.terminal_image_cleanup.extend(cache.take_cleanup());
         }
         self.terminal_images.clear();
+        self.clear_workspace_images();
         self.terminal_image_picker = picker;
     }
 
@@ -145,7 +153,24 @@ impl ScreenCompositor {
         for cache in self.terminal_images.values_mut() {
             self.terminal_image_cleanup.extend(cache.take_cleanup());
         }
+        for cache in self.workspace_images.values_mut() {
+            self.terminal_image_cleanup.extend(cache.take_cleanup());
+        }
         std::mem::take(&mut self.terminal_image_cleanup)
+    }
+
+    fn clear_workspace_images(&mut self) {
+        for (_, mut cache) in self.workspace_images.drain() {
+            cache.clear();
+            self.terminal_image_cleanup.extend(cache.take_cleanup());
+        }
+    }
+
+    pub(super) fn take_workspace_images(&mut self) -> Vec<workspace_protocol::Image> {
+        self.terminal_images
+            .values_mut()
+            .flat_map(ui::TerminalImageCache::take_workspace_images)
+            .collect()
     }
 
     pub(super) fn render_screen_saver(
@@ -154,6 +179,7 @@ impl ScreenCompositor {
         display: &mut weathr::EmbeddedDisplay,
     ) -> io::Result<()> {
         self.toast_area = None;
+        self.clear_workspace_images();
         let bounds = frame.area();
         let buffer = display.render((bounds.width, bounds.height))?;
         frame.buffer_mut().merge(buffer);
@@ -243,6 +269,7 @@ impl ScreenCompositor {
         theme: &ui::TundraTheme,
     ) {
         self.toast_area = None;
+        self.clear_workspace_images();
         for cache in self.terminal_images.values_mut() {
             cache.clear();
             self.terminal_image_cleanup.extend(cache.take_cleanup());
@@ -261,6 +288,7 @@ impl ScreenCompositor {
         state: &mut ShellSession,
         prepared: &PreparedFrame,
         icons: Option<&LauncherIconRuntime>,
+        mut workspace: Option<&mut super::workspace::Workspace>,
     ) -> bool {
         let live = state.live_page_ids();
         self.terminal_images.retain(|(id, _), cache| {
@@ -273,9 +301,6 @@ impl ScreenCompositor {
             }
         });
         let bounds = frame.area();
-        let mut capture = self.capture_enabled.then(|| {
-            ui::automation::FrameCapture::begin(bounds, format!("{:?}", state.content_screen()))
-        });
         let overlays = state.interactive_overlays();
         let top_overlay = overlays.last();
         let modal = top_overlay.is_some_and(|overlay| {
@@ -288,9 +313,6 @@ impl ScreenCompositor {
             .iter()
             .filter(|overlay| overlay.category == super::overlays::ShellOverlayCategory::PageDialog)
             .count();
-        if let Some(capture) = &mut capture {
-            capture.set_group("page", "page", bounds, modal || page_overlay);
-        }
         if state.terminal_size != (bounds.width, bounds.height) {
             state.details_motion = None;
             state.screen_keyboard.pressed = None;
@@ -312,6 +334,23 @@ impl ScreenCompositor {
         let mut frame_context = prepared.context.clone();
         frame_context.motion = state.interaction_motion_frame(frame_context.motion);
         let mut chrome = prepared.chrome.clone();
+        if let Some(title) = workspace
+            .as_ref()
+            .and_then(|windows| windows.focused_title())
+        {
+            chrome.screen_stack = vec![title];
+        }
+        if let Some(status) = workspace
+            .as_ref()
+            .and_then(|windows| windows.focused_status())
+        {
+            chrome.status.status = status.to_owned();
+        }
+        if chrome.tasks_label.is_some()
+            && let Some(label) = workspace.as_ref().and_then(|windows| windows.tasks_label())
+        {
+            chrome.tasks_label = Some(label);
+        }
         chrome.terminal_size = (bounds.width, bounds.height);
         let layout = ui::ShellFrameLayout::new(
             bounds,
@@ -320,8 +359,41 @@ impl ScreenCompositor {
         )
         .with_back_shortcut(chrome.back_shortcut)
         .with_help_button(state.help_button_available())
-        .with_tasks_button(state.tasks_button_label().as_deref());
-        let layout = state.input_keyboard_content_layout(layout);
+        .with_tasks_button(chrome.tasks_label.as_deref())
+        .with_windows_button(workspace.is_some());
+        let workspace_keyboard = workspace
+            .as_ref()
+            .is_some_and(|windows| windows.keyboard_available())
+            && !modal;
+        let layout = state
+            .input_keyboard_content_layout(layout)
+            .with_keyboard_launcher(workspace_keyboard);
+        if let Some(windows) = workspace.as_deref_mut() {
+            windows.relayout(bounds, layout.main, modal);
+        }
+        let workspace_content = workspace
+            .as_ref()
+            .is_some_and(|windows| windows.hides_home());
+        let workspace_overlay = workspace
+            .as_ref()
+            .is_some_and(|windows| windows.has_overlay());
+        let mut capture = self.capture_enabled.then(|| {
+            let page = workspace
+                .as_ref()
+                .and_then(|windows| windows.focused_page())
+                .map_or_else(|| format!("{:?}", state.content_screen()), str::to_owned);
+            ui::automation::FrameCapture::begin(bounds, page)
+        });
+        if let Some(capture) = &mut capture
+            && !workspace_content
+        {
+            capture.set_group(
+                "page",
+                "page",
+                bounds,
+                modal || page_overlay || workspace_overlay,
+            );
+        }
         let toast_area = self
             .toast
             .as_ref()
@@ -372,9 +444,44 @@ impl ScreenCompositor {
             .map(ui::ScreenContent::Script)
             .or_else(|| management.as_ref().map(ui::ScreenContent::Management))
             .unwrap_or_else(|| prepared.page.content());
-        let visible_content = !layout.is_compact() || content.renders_in_compact();
+        let visible_content =
+            !workspace_content && (!layout.is_compact() || content.renders_in_compact());
         let icons = icons.filter(|_| state.graphical_icons_enabled());
-        if visible_content {
+        let native_images_allowed = overlays.is_empty()
+            && !keyboard_animating
+            && !details_animating
+            && !script_animating
+            && !state.input_keyboard_open()
+            && toast_area.is_none();
+        if self.capture_workspace_images && native_images_allowed && visible_content {
+            let page = state.content_page_id();
+            let pane = Rect::new(0, 1, bounds.width, bounds.height.saturating_sub(2));
+            for slot in 0..=2 {
+                self.terminal_images
+                    .entry((page, slot))
+                    .or_default()
+                    .capture_workspace(pane);
+            }
+        }
+        if let Some(windows) = workspace.as_deref_mut()
+            && workspace_content
+        {
+            let picker = (native_images_allowed && !workspace_overlay)
+                .then_some(self.terminal_image_picker.as_ref())
+                .flatten();
+            windows.render_panes(
+                frame,
+                layout,
+                context,
+                capture.as_ref(),
+                modal,
+                picker,
+                &mut self.workspace_images,
+                &mut self.terminal_image_cleanup,
+                native_images_allowed && !workspace_overlay && windows.text_sizing(),
+            );
+        } else if visible_content {
+            self.clear_workspace_images();
             // Raster cells compose safely while modal surfaces or layouts move.
             let picker = (overlays.is_empty() && !keyboard_animating && toast_area.is_none())
                 .then_some(self.terminal_image_picker.as_ref())
@@ -430,6 +537,7 @@ impl ScreenCompositor {
                 ),
             }
         } else {
+            self.clear_workspace_images();
             ui::render_compact_home(frame, layout.main, &chrome, &context.compatibility_theme());
         }
         if visible_content {
@@ -457,7 +565,7 @@ impl ScreenCompositor {
             content.render_overlay_top(frame, &layout, context);
         }
         if let Some(capture) = &mut capture {
-            capture.set_group("chrome", "toolbar", bounds, false);
+            capture.set_group("chrome", "toolbar", bounds, workspace_overlay || modal);
         }
         ui::render_shell_chrome_with_status_focus(
             frame,
@@ -466,6 +574,16 @@ impl ScreenCompositor {
             context,
             state.pages.common.focused_component == ShellComponent::StatusBar,
         );
+        if let Some(windows) = workspace.as_deref_mut() {
+            windows.remember_chrome(layout, toast_area);
+            windows.render_chrome(frame, &layout, context);
+        }
+        if workspace_keyboard && let Some(area) = layout.keyboard_launcher {
+            if let Some(capture) = &mut capture {
+                capture.set_group("keyboard", "keyboard", area, workspace_overlay);
+            }
+            screen_keyboard::render_keyboard_launcher(frame, area, false, false, context);
+        }
         let mut displayed_status = chrome.status.clone();
         if prepared.notification.is_none()
             && prepared.chrome.status.error.is_none()
@@ -586,12 +704,14 @@ impl ScreenCompositor {
             terminal_areas
                 .push(ui::auto_admin_layout_in(state.auto_admin_available_area(), &model).terminal);
         }
-        self.motion.process_host(
-            context.motion.scaled_delta(),
-            frame.buffer_mut(),
-            state,
-            &terminal_areas,
-        );
+        if !workspace_content || modal {
+            self.motion.process_host(
+                context.motion.scaled_delta(),
+                frame.buffer_mut(),
+                state,
+                &terminal_areas,
+            );
+        }
         if let (Some(toast), Some(area)) = (&self.toast, toast_area) {
             if let Some(capture) = &mut capture {
                 capture.set_group("toast", "status", area, false);
@@ -610,6 +730,9 @@ impl ScreenCompositor {
             capture.set_group("keyboard", "keyboard", area, false);
         }
         self.render_input_keyboard(frame, state, context);
+        if let Some(windows) = workspace.as_deref_mut() {
+            windows.render_overlay(frame, context, capture.as_ref());
+        }
         state.button_regions = buttons.regions();
         self.next_redraw_in = [
             prepared
@@ -642,18 +765,29 @@ impl ScreenCompositor {
         let animation_running = self.next_redraw_in.is_some() || prepared.rainbow_running();
         self.snapshot = capture.map(|capture| {
             let mut snapshot = capture.finish(frame.buffer_mut());
-            snapshot.animation_running = animation_running;
-            snapshot.background_tasks_running =
-                state.tasks.has_running() || state.auto_admin_running();
+            snapshot.animation_running = animation_running
+                || workspace
+                    .as_ref()
+                    .is_some_and(|windows| windows.animating());
+            snapshot.background_tasks_running = state.tasks.has_running()
+                || state.auto_admin_running()
+                || workspace.as_ref().is_some_and(|windows| windows.busy());
             for node in snapshot.nodes.iter_mut().filter(|node| node.actionable) {
                 let point = (
                     node.rect.x + node.rect.width / 2,
                     node.rect.y + node.rect.height / 2,
                 );
-                if toast_area.is_some_and(|area| area.contains(point.into())) {
+                if toast_area.is_some_and(|area| area.contains(point.into()))
+                    || (workspace.as_ref().is_some_and(|windows| windows.blocked())
+                        && node.id.starts_with("chrome/")
+                        && node.id != "chrome/shell.windows")
+                {
                     node.actionable = false;
                 } else if let Some(id) = node.id.strip_prefix("chrome/")
                     && node.role == "button"
+                    && !workspace
+                        .as_ref()
+                        .is_some_and(|windows| windows.owns_chrome_target(point))
                 {
                     node.actionable = state
                         .button_at(point)

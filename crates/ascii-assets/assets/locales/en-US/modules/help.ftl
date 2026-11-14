@@ -4,6 +4,12 @@ ui-help-navigation = Navigation
 ui-help-close = Esc Close
 ui-help-nav-back = Back
 ui-help-nav-help = Help
+ui-help-nav-windows = Open Windows
+ui-help-workspace-focus = Focus the window in that direction
+ui-help-workspace-layout = Cycle split layouts
+ui-help-workspace-maximize = Maximize or restore the window
+ui-help-workspace-kill = Force kill the window. Unsaved work may be lost.
+ui-help-workspace-send = Send Ctrl+B to the focused window
 ui-help-nav-tabs = Next area
 ui-help-nav-activate = Activate
 

@@ -91,6 +91,7 @@ pub struct ShellFrameLayout {
     pub back_button: Option<Rect>,
     pub help_button: Option<Rect>,
     pub tasks_button: Option<Rect>,
+    pub windows_button: Option<Rect>,
     pub status_message: Option<Rect>,
     pub time_button: Option<Rect>,
     pub keyboard_launcher: Option<Rect>,
@@ -136,6 +137,7 @@ impl ShellFrameLayout {
             back_button,
             help_button: None,
             tasks_button: None,
+            windows_button: None,
             status_message,
             time_button,
             keyboard_launcher: None,
@@ -220,13 +222,13 @@ impl ShellFrameLayout {
             tasks.width = tasks.width.min(right.saturating_sub(self.bounds.x + 1));
             tasks.x = right.saturating_sub(tasks.width.saturating_add(1));
         }
-        self
+        self.with_windows_button(self.windows_button.is_some())
     }
 
     pub fn with_help_button(mut self, available: bool) -> Self {
         if !available || self.is_compact() {
             self.help_button = None;
-            return self;
+            return self.with_windows_button(self.windows_button.is_some());
         }
         let Some(back) = self.back_button else {
             self.help_button = None;
@@ -238,7 +240,7 @@ impl ShellFrameLayout {
         let x = back.x.saturating_sub(width.saturating_add(1));
         self.help_button =
             (width > 0 && x >= self.bounds.x).then(|| Rect::new(x, back.y, width, back.height));
-        self
+        self.with_windows_button(self.windows_button.is_some())
     }
 
     pub fn with_tasks_button(mut self, label: Option<&str>) -> Self {
@@ -249,6 +251,23 @@ impl ShellFrameLayout {
             let x = next.x.checked_sub(width.saturating_add(1))?;
             (width > 0 && x >= self.bounds.x).then_some(Rect::new(x, next.y, width, next.height))
         });
+        self.with_windows_button(self.windows_button.is_some())
+    }
+
+    pub fn with_windows_button(mut self, available: bool) -> Self {
+        self.windows_button = available
+            .then(|| {
+                let next = self
+                    .tasks_button
+                    .or(self.help_button)
+                    .or(self.back_button)?;
+                let label = i18n::tr!("ui-workspace-button");
+                let width = usize_to_u16(crate::components::terminal_width(&label) + 2)
+                    .min(next.x.saturating_sub(self.bounds.x + 1));
+                let x = next.x.checked_sub(width + 1)?;
+                (width > 0 && x >= self.bounds.x).then_some(Rect::new(x, next.y, width, 1))
+            })
+            .flatten();
         self
     }
 

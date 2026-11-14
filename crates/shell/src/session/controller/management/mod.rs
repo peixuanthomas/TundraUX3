@@ -615,6 +615,9 @@ impl ShellSession {
         if !supported || self.app.auth_session().is_none() || self.is_strict_guest() {
             return;
         }
+        if self.route_window_launch(WindowLaunch::Management(query.clone())) {
+            return;
+        }
         self.enter_new_page(ShellScreen::Management);
         if self.pages.management.management_state.kind != Some(kind) {
             let search = kind == ManagementKind::Packages && query.scope == "search";
@@ -1635,6 +1638,20 @@ impl ShellSession {
             .pending_directory
             .take()
         {
+            if self.route_window_launch(WindowLaunch::ExplorerPath {
+                path: path.as_os_str().to_owned(),
+                diagnostics: false,
+                select: self
+                    .pages
+                    .management
+                    .management_state
+                    .pending_select
+                    .as_ref()
+                    .map(|entry| entry.as_os_str().to_owned()),
+            }) {
+                self.pages.management.management_state.pending_select = None;
+                return;
+            }
             if let Some(storage) = self.storage_manager.clone() {
                 self.open_explorer_at(platform, &storage, path, ExplorerPurpose::Browse);
             }

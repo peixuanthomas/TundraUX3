@@ -31,6 +31,7 @@ struct ImageKey {
     source_cell_size: [u16; 2],
     crop: [u32; 4],
     size: Size,
+    position: Option<(u16, u16)>,
     backend: Option<EditorGraphicsProtocol>,
     cell_size: (u16, u16),
     tmux: bool,
@@ -50,6 +51,8 @@ struct PreparedImage {
 pub struct TerminalImageCache {
     entries: HashMap<ImageKey, PreparedImage>,
     cleanup: Vec<u8>,
+    workspace_origin: Option<Rect>,
+    workspace_images: Vec<workspace_protocol::Image>,
 }
 
 impl TerminalImageCache {
@@ -87,8 +90,12 @@ impl TerminalImageCache {
         images.sort_by_key(|image| image.z_index);
         for image in images {
             let visible = image.area.intersection(viewport);
+            let pieces = visible_pieces(image, visible, terminal);
+            if !raster_layers && let Some(origin) = self.workspace_origin {
+                self.capture_workspace_image(area, origin, image, &pieces);
+            }
             let mut canvas = None;
-            for piece in visible_pieces(image, visible, terminal) {
+            for piece in pieces {
                 let cell_size = picker.map_or((1, 2), EditorImagePicker::cell_size);
                 let Some((stored, working)) = preparation_cost(image, piece.as_size(), cell_size)
                 else {
@@ -119,90 +126,209 @@ impl TerminalImageCache {
                 let Some(crop) = source_for_area(image, piece) else {
                     continue;
                 };
-                let target = Rect::new(
-                    area.x.saturating_add(piece.x),
-                    area.y.saturating_add(piece.y),
-                    piece.width,
-                    piece.height,
+                let target = offset_rect(piece, area.x, area.y);
+                let key = ImageKey::new(image, crop, target, frame, picker);
+                self.render_piece(
+                    frame,
+                    image,
+                    &mut canvas,
+                    target,
+                    key,
+                    stored,
+                    working,
+                    &mut used,
                 );
-                let key = ImageKey {
-                    id: image.image_id,
-                    data: image.rgba.as_ptr() as usize,
-                    source: image.source,
-                    image_size: (image.width, image.height),
-                    area_size: image.area.as_size(),
-                    padding: image.padding,
-                    source_cell_size: image.cell_size,
-                    crop,
-                    size: piece.as_size(),
-                    backend: picker.map(EditorImagePicker::protocol),
-                    cell_size,
-                    tmux: picker.is_some_and(EditorImagePicker::is_tmux),
-                    backgrounds: if picker.is_none() {
-                        (target.y..target.bottom())
-                            .flat_map(|y| (target.x..target.right()).map(move |x| (x, y)))
-                            .map(|position| raster_background(&frame.buffer_mut()[position]))
-                            .collect()
-                    } else {
-                        Vec::new()
-                    },
-                };
-                if !self.entries.contains_key(&key) {
-                    let needed = |cache: &Self| {
-                        let source = if cache
-                            .entries
-                            .values()
-                            .any(|entry| entry._rgba.as_ptr() == image.rgba.as_ptr())
-                        {
-                            0
-                        } else {
-                            image.rgba.len()
-                        };
-                        cache
-                            .cached_bytes()
-                            .saturating_add(source)
-                            .saturating_add(stored)
-                            .saturating_add(working)
-                    };
-                    if needed(self) > CACHE_BUDGET {
-                        self.retain_used(&used);
-                        if needed(self) > CACHE_BUDGET {
-                            continue;
-                        }
-                    }
-                    let Some(canvas) = canvas.get_or_insert_with(|| image_canvas(image)).as_ref()
-                    else {
-                        continue;
-                    };
-                    let Some(prepared) = prepare_image(image, &key, canvas, stored) else {
-                        continue;
-                    };
-                    self.entries.insert(key.clone(), prepared);
-                }
-                let prepared = &self.entries[&key];
-                used.insert(key.clone());
-                let transparent = prepared
-                    .transparent_cells
-                    .iter()
-                    .map(|&(x, y)| {
-                        let position = (target.x + x, target.y + y);
-                        (position, frame.buffer_mut()[position].clone())
-                    })
-                    .collect::<Vec<_>>();
-                if picker.is_none() {
-                    for y in target.y..target.bottom() {
-                        for x in target.x..target.right() {
-                            frame.buffer_mut()[(x, y)].reset();
-                        }
-                    }
-                }
-                frame.render_widget(Image::new(&prepared.protocol), target);
-                for (position, cell) in transparent {
-                    frame.buffer_mut()[position] = cell;
-                }
             }
         }
         self.retain_used(&used);
+    }
+
+    /// Collects native image placements in pane-local coordinates while retaining raster fallback.
+    pub fn capture_workspace(&mut self, area: Rect) {
+        self.workspace_origin = Some(area);
+        self.workspace_images.clear();
+    }
+
+    pub fn take_workspace_images(&mut self) -> Vec<workspace_protocol::Image> {
+        self.workspace_origin = None;
+        std::mem::take(&mut self.workspace_images)
+    }
+
+    fn capture_workspace_image(
+        &mut self,
+        terminal_area: Rect,
+        content: Rect,
+        image: &TerminalImageFragment,
+        pieces: &[Rect],
+    ) {
+        fn wire_rect(rect: Rect, content: Rect) -> workspace_protocol::Rect {
+            workspace_protocol::Rect {
+                x: rect.x - content.x,
+                y: rect.y - content.y,
+                width: rect.width,
+                height: rect.height,
+            }
+        }
+
+        let area = offset_rect(image.area, terminal_area.x, terminal_area.y);
+        if !content.contains((area.x, area.y).into()) {
+            return;
+        }
+        let visible = pieces
+            .iter()
+            .filter_map(|piece| {
+                let clipped =
+                    offset_rect(*piece, terminal_area.x, terminal_area.y).intersection(content);
+                (!clipped.is_empty()).then(|| wire_rect(clipped, content))
+            })
+            .collect::<Vec<_>>();
+        if visible.is_empty() {
+            return;
+        }
+        self.workspace_images.push(workspace_protocol::Image {
+            image_id: image.image_id,
+            width: image.width,
+            height: image.height,
+            rgba: image.rgba.clone(),
+            source: image.source,
+            padding: image.padding,
+            cell_size: image.cell_size,
+            area: wire_rect(area, content),
+            visible,
+            z_index: image.z_index,
+        });
+    }
+
+    /// Encodes the worker's visible image fragments with the host's native graphics protocol.
+    pub fn render_workspace(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        images: &[workspace_protocol::Image],
+        picker: &EditorImagePicker,
+    ) {
+        let viewport = area.intersection(frame.area());
+        let mut used = HashSet::new();
+        for asset in images {
+            let image = TerminalImageFragment {
+                image_id: asset.image_id,
+                width: asset.width,
+                height: asset.height,
+                rgba: asset.rgba.clone(),
+                source: asset.source,
+                padding: asset.padding,
+                cell_size: asset.cell_size,
+                area: Rect::new(
+                    asset.area.x,
+                    asset.area.y,
+                    asset.area.width,
+                    asset.area.height,
+                ),
+                z_index: asset.z_index,
+            };
+            let mut canvas = None;
+            for visible in &asset.visible {
+                let local = Rect::new(visible.x, visible.y, visible.width, visible.height);
+                let piece = offset_rect(local.intersection(image.area), area.x, area.y)
+                    .intersection(viewport);
+                if piece.is_empty() {
+                    continue;
+                }
+                let local = Rect::new(
+                    piece.x - area.x,
+                    piece.y - area.y,
+                    piece.width,
+                    piece.height,
+                );
+                let Some((stored, working)) =
+                    preparation_cost(&image, piece.as_size(), picker.cell_size())
+                else {
+                    continue;
+                };
+                let Some(crop) = source_for_area(&image, local) else {
+                    continue;
+                };
+                let key = ImageKey::new(&image, crop, piece, frame, Some(picker));
+                self.render_piece(
+                    frame,
+                    &image,
+                    &mut canvas,
+                    piece,
+                    key,
+                    stored,
+                    working,
+                    &mut used,
+                );
+            }
+        }
+        self.retain_used(&used);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_piece(
+        &mut self,
+        frame: &mut Frame<'_>,
+        image: &TerminalImageFragment,
+        canvas: &mut Option<Option<RgbaImage>>,
+        target: Rect,
+        key: ImageKey,
+        stored: usize,
+        working: usize,
+        used: &mut HashSet<ImageKey>,
+    ) {
+        if !self.entries.contains_key(&key) {
+            let needed = |cache: &Self| {
+                let source = if cache
+                    .entries
+                    .values()
+                    .any(|entry| Arc::ptr_eq(&entry._rgba, &image.rgba))
+                {
+                    0
+                } else {
+                    image.rgba.len()
+                };
+                cache
+                    .cached_bytes()
+                    .saturating_add(source)
+                    .saturating_add(stored)
+                    .saturating_add(working)
+            };
+            if needed(self) > CACHE_BUDGET {
+                self.retain_used(used);
+                if needed(self) > CACHE_BUDGET {
+                    return;
+                }
+            }
+            let Some(canvas) = canvas.get_or_insert_with(|| image_canvas(image)).as_ref() else {
+                return;
+            };
+            let Some(prepared) = prepare_image(image, &key, canvas, stored) else {
+                return;
+            };
+            self.entries.insert(key.clone(), prepared);
+        }
+        let prepared = &self.entries[&key];
+        let raster = key.backend.is_none();
+        used.insert(key);
+        let transparent = prepared
+            .transparent_cells
+            .iter()
+            .map(|&(x, y)| {
+                let position = (target.x + x, target.y + y);
+                (position, frame.buffer_mut()[position].clone())
+            })
+            .collect::<Vec<_>>();
+        if raster {
+            for y in target.y..target.bottom() {
+                for x in target.x..target.right() {
+                    frame.buffer_mut()[(x, y)].reset();
+                }
+            }
+        }
+        frame.render_widget(Image::new(&prepared.protocol), target);
+        for (position, cell) in transparent {
+            frame.buffer_mut()[position] = cell;
+        }
     }
 
     fn cached_bytes(&self) -> usize {
@@ -239,6 +365,49 @@ impl TerminalImageCache {
     pub fn take_cleanup(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.cleanup)
     }
+}
+
+impl ImageKey {
+    fn new(
+        image: &TerminalImageFragment,
+        crop: [u32; 4],
+        target: Rect,
+        frame: &mut Frame<'_>,
+        picker: Option<&EditorImagePicker>,
+    ) -> Self {
+        Self {
+            id: image.image_id,
+            data: image.rgba.as_ptr() as usize,
+            source: image.source,
+            image_size: (image.width, image.height),
+            area_size: image.area.as_size(),
+            padding: image.padding,
+            source_cell_size: image.cell_size,
+            crop,
+            size: target.as_size(),
+            position: picker.map(|_| (target.x, target.y)),
+            backend: picker.and_then(EditorImagePicker::protocol),
+            cell_size: picker.map_or((1, 2), EditorImagePicker::cell_size),
+            tmux: picker.is_some_and(EditorImagePicker::is_tmux),
+            backgrounds: if picker.is_none() {
+                (target.y..target.bottom())
+                    .flat_map(|y| (target.x..target.right()).map(move |x| (x, y)))
+                    .map(|position| raster_background(&frame.buffer_mut()[position]))
+                    .collect()
+            } else {
+                Vec::new()
+            },
+        }
+    }
+}
+
+fn offset_rect(rect: Rect, x: u16, y: u16) -> Rect {
+    Rect::new(
+        rect.x.saturating_add(x),
+        rect.y.saturating_add(y),
+        rect.width,
+        rect.height,
+    )
 }
 
 fn preparation_cost(

@@ -498,7 +498,7 @@ fn same_volume_move_returns_history_that_the_file_service_can_undo() {
     let (_, summary) = finished(&engine);
     assert_eq!(summary.undo_moves.as_ref().map(Vec::len), Some(1));
     let files = app::explorer::ExplorerFileService::default();
-    files.record_moves(summary.undo_moves);
+    files.record_moves(summary.undo_moves).unwrap();
     let controller = app::explorer::ExplorerController::new(files);
     let mut state = app::explorer::ExplorerState::new(&destination, true);
     let storage = storage::StorageManager::open(

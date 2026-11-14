@@ -116,6 +116,7 @@ impl ShellSession {
         input.set_value(value.to_string());
         input.set_focused(true);
         input.set_selection_anchor(Some(0));
+        self.pages.settings.profile_draft_revision = self.workspace_profile_revision();
         if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.form_interaction = Default::default();
             state.form_selected = 0;

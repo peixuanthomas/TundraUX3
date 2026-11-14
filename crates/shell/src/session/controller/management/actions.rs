@@ -643,15 +643,13 @@ impl ShellSession {
         }
         if action.id == "open_service" {
             if let Some(unit) = values.get("unit").cloned() {
-                self.open_management(ManagementKind::Services);
-                if let Some(query) = &mut self.pages.management.management_state.query {
-                    query.target = Some(unit);
-                    query.scope = values
-                        .get("scope")
-                        .cloned()
-                        .unwrap_or_else(|| "system".into());
-                }
-                self.refresh_management();
+                let mut query = ManagementQuery::new(ManagementKind::Services);
+                query.target = Some(unit);
+                query.scope = values
+                    .get("scope")
+                    .cloned()
+                    .unwrap_or_else(|| "system".into());
+                self.open_management_query(query);
             }
             return;
         }

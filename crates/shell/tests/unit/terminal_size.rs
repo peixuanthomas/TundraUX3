@@ -109,7 +109,7 @@ fn checked_terminal_size_rejects_before_the_caller_can_render() {
 
     let error = checked_terminal_size_with(requirement, || Ok((107, 20)))
         .expect_err("undersized detected terminal must be rejected");
-    assert!(error.to_string().contains("resize"));
+    assert!(error.to_string().contains("Resize"));
     assert_eq!(
         checked_terminal_size_with(requirement, || Ok((108, 20)))
             .expect("boundary terminal should pass"),
@@ -174,7 +174,7 @@ fn terminal_size_ui_localizes_while_diagnostics_and_raw_causes_stay_stable() {
         )
         .unwrap();
         let contents = if code == "en-US" {
-            contents.replace("terminal is too small", "CUSTOM terminal is too small")
+            contents.replace("Terminal is too small", "CUSTOM terminal is too small")
         } else {
             contents.to_string()
         };
@@ -197,7 +197,7 @@ fn terminal_size_ui_localizes_while_diagnostics_and_raw_causes_stay_stable() {
     );
     assert_eq!(
         error.to_string(),
-        "terminal is too small (80x18); resize it to at least 108x20 and try again"
+        "Terminal is too small (80x18). Resize to at least 108x20 and try again."
     );
     {
         let chinese = i18n::LanguageSnapshot::load(&root.0, "zh-CN", 2)
@@ -206,11 +206,11 @@ fn terminal_size_ui_localizes_while_diagnostics_and_raw_causes_stay_stable() {
         let _chinese = i18n::enter_snapshot(Arc::new(chinese));
         assert_eq!(
             error.localized_message().render_current(),
-            "终端尺寸过小（80x18）；请将终端调整为至少 108x20 后重试"
+            "终端尺寸过小（80x18）。请调整到至少 108x20 后重试。"
         );
         assert_eq!(
             error.to_string(),
-            "terminal is too small (80x18); resize it to at least 108x20 and try again"
+            "Terminal is too small (80x18). Resize to at least 108x20 and try again."
         );
         let detected = checked_terminal_size_with(requirement, || {
             Err(io::Error::new(
@@ -239,5 +239,5 @@ fn terminal_size_ui_localizes_while_diagnostics_and_raw_causes_stay_stable() {
             "raw OS detail /dev/tty"
         );
     }
-    assert!(error.to_string().contains("resize"));
+    assert!(error.to_string().contains("Resize"));
 }

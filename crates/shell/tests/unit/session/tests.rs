@@ -2972,6 +2972,8 @@ fn system_status_live_service_home_open_refresh_and_background_close() {
         startup,
         ui::RuntimeAsciiAssets::load_default().unwrap(),
         ShellRuntimeServices {
+            window_owner: Default::default(),
+            inherited_auth: None,
             language: None,
             terminal_image_support: false,
             explorer: None,

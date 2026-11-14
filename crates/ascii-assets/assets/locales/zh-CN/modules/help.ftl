@@ -4,6 +4,12 @@ ui-help-navigation = 全局导航
 ui-help-close = Esc 关闭
 ui-help-nav-back = 返回
 ui-help-nav-help = 帮助
+ui-help-nav-windows = 打开窗口列表
+ui-help-workspace-focus = 聚焦该方向的窗口
+ui-help-workspace-layout = 切换分屏布局
+ui-help-workspace-maximize = 最大化或还原窗口
+ui-help-workspace-kill = 强制终止当前窗口。未保存的内容可能丢失。
+ui-help-workspace-send = 向当前窗口发送 Ctrl+B
 ui-help-nav-tabs = 下一个区域
 ui-help-nav-activate = 执行
 

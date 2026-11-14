@@ -1,8 +1,13 @@
 mod input;
 pub(in crate::session) mod sync;
 use crate::session::*;
+use crate::session_services::SessionServicesClient;
+
 impl ShellSession {
     pub(in crate::session) fn open_clock(&mut self) {
+        if self.route_window_launch(WindowLaunch::Clock) {
+            return;
+        }
         self.enter_new_page(ShellScreen::Clock);
         self.pages.common.active_popup = None;
         self.pages.clock.clock_create_state = None;
@@ -29,6 +34,10 @@ impl ShellSession {
         self.clock_pending_due_summary = None;
         self.clock_profile_pending_sync = None;
 
+        if SessionServicesClient::current().is_some() {
+            self.reset_workspace_clock_profile();
+            return;
+        }
         let Some(storage) = self.storage_manager.clone() else {
             return;
         };
@@ -75,6 +84,9 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn restore_clock_profile_after_initial_sync(&mut self) {
+        if SessionServicesClient::current().is_some() {
+            return;
+        }
         if self.app.auth_session().is_none() {
             self.clock_profile_pending_sync = None;
             return;
@@ -86,10 +98,13 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn persist_clock_scheduler_at(
-        &self,
+        &mut self,
         snapshot: &time::ClockSnapshot,
         now: Instant,
     ) -> Result<(), i18n::LocalizedText> {
+        if let Some(services) = SessionServicesClient::current() {
+            return self.write_workspace_clock_profile(services, None, true, snapshot, now);
+        }
         let storage = self.storage_manager.as_ref().ok_or_else(|| {
             i18n::LocalizedText::from(i18n::msg!("shell-clock-storage-is-unavailable"))
         })?;
@@ -165,7 +180,12 @@ impl ShellSession {
         snapshot: &time::ClockSnapshot,
         now: Instant,
     ) -> Result<(), i18n::LocalizedText> {
-        match self.persist_clock_scheduler_at(snapshot, now) {
+        let result = if let Some(services) = SessionServicesClient::current() {
+            self.write_workspace_clock_profile(services, Some(&previous), false, snapshot, now)
+        } else {
+            self.persist_clock_scheduler_at(snapshot, now)
+        };
+        match result {
             Ok(()) => {
                 self.clock_persist_pending = false;
                 self.clock_pending_due_summary = None;
@@ -191,6 +211,13 @@ impl ShellSession {
         now: Instant,
     ) {
         self.notification_expire(now);
+        if self.window_owner.is_app() {
+            return;
+        }
+        if let Some(services) = SessionServicesClient::current() {
+            self.advance_workspace_clock(services, snapshot, now);
+            return;
+        }
         let due = self
             .clock_scheduler
             .as_mut()

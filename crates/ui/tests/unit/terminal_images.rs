@@ -100,6 +100,122 @@ fn native_backends_encode_only_the_clipped_picture_area() {
 }
 
 #[test]
+fn workspace_round_trip_clips_native_picture_and_cleans_up_kitty() {
+    use workspace_protocol::transport::Framed;
+
+    let mut source = CommandLineTerminalSnapshot::blank(4, 2);
+    source.images.push(fragment());
+    let mut worker_cache = TerminalImageCache::default();
+    let mut worker = Terminal::new(TestBackend::new(10, 5)).unwrap();
+    worker_cache.capture_workspace(Rect::new(2, 1, 4, 3));
+    worker
+        .draw(|frame| {
+            worker_cache.render(frame, Rect::new(2, 1, 2, 2), &source, None);
+        })
+        .unwrap();
+    let images = worker_cache.take_workspace_images();
+    assert_eq!(worker.backend().buffer()[(3, 2)].bg, Color::Rgb(255, 0, 0));
+    assert_eq!(images[0].area.width, 2);
+    assert_eq!(images[0].visible[0].width, 1);
+    #[cfg(unix)]
+    use std::os::unix::net::UnixStream;
+    #[cfg(unix)]
+    let (sender, receiver) = UnixStream::pair().unwrap();
+    #[cfg(windows)]
+    let (sender, receiver) = {
+        use std::net::{TcpListener, TcpStream};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let sender = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        (sender, listener.accept().unwrap().0)
+    };
+    sender.set_nonblocking(true).unwrap();
+    receiver.set_nonblocking(true).unwrap();
+    let mut sender = Framed::new(sender, 4096);
+    let mut receiver = Framed::new(receiver, 4096);
+    sender.queue(&images).unwrap();
+    sender.poll::<Vec<workspace_protocol::Image>>().unwrap();
+    let mut images = receiver.poll::<Vec<workspace_protocol::Image>>().unwrap();
+    let images = images.pop().unwrap();
+
+    for (protocol, prefix) in [
+        (EditorGraphicsProtocol::Kitty, "\x1b_G"),
+        (EditorGraphicsProtocol::Sixel, "\x1bP"),
+        (EditorGraphicsProtocol::Iterm2, "\x1b]1337;File=inline=1"),
+    ] {
+        let mut shell_cache = TerminalImageCache::default();
+        let mut shell = Terminal::new(TestBackend::new(12, 7)).unwrap();
+        let pane = Rect::new(5, 3, 4, 3);
+        let picker = picker(protocol, false);
+        shell
+            .draw(|frame| {
+                frame.buffer_mut()[(7, 4)].set_symbol("X");
+                shell_cache.render_workspace(frame, pane, &images, &picker);
+            })
+            .unwrap();
+        assert!(
+            shell.backend().buffer()[(6, 4)].symbol().contains(prefix),
+            "{protocol:?}"
+        );
+        assert_eq!(shell.backend().buffer()[(7, 4)].symbol(), "X");
+
+        if protocol == EditorGraphicsProtocol::Kitty {
+            let id = shell_cache
+                .entries
+                .values()
+                .next()
+                .unwrap()
+                .kitty
+                .unwrap()
+                .0;
+            shell
+                .draw(|frame| shell_cache.render_workspace(frame, pane, &images, &picker))
+                .unwrap();
+            assert!(shell_cache.take_cleanup().is_empty());
+            shell
+                .draw(|frame| {
+                    shell_cache.render_workspace(frame, Rect::new(6, 3, 4, 3), &images, &picker);
+                })
+                .unwrap();
+            assert_eq!(
+                shell_cache.take_cleanup(),
+                format!("\x1b_Ga=d,d=I,i={id}\x1b\\").as_bytes()
+            );
+            let next = shell_cache
+                .entries
+                .values()
+                .next()
+                .unwrap()
+                .kitty
+                .unwrap()
+                .0;
+            assert_ne!(next, id);
+            shell_cache.clear();
+            assert_eq!(
+                shell_cache.take_cleanup(),
+                format!("\x1b_Ga=d,d=I,i={next}\x1b\\").as_bytes()
+            );
+        }
+    }
+}
+
+#[test]
+fn workspace_captures_only_native_safe_images() {
+    let mut source = CommandLineTerminalSnapshot::blank(4, 2);
+    let mut image = fragment();
+    Arc::make_mut(&mut image.rgba)[3] = 0;
+    source.images.push(image);
+    let mut cache = TerminalImageCache::default();
+    let mut screen = Terminal::new(TestBackend::new(6, 4)).unwrap();
+    let size = Rect::new(0, 0, 4, 2);
+    cache.capture_workspace(size);
+    screen
+        .draw(|frame| cache.render(frame, size, &source, None))
+        .unwrap();
+    assert!(cache.take_workspace_images().is_empty());
+    assert_ne!(screen.backend().buffer()[(1, 1)].bg, Color::Reset);
+}
+
+#[test]
 fn clearing_or_replacing_a_picture_retires_only_its_owned_native_resource() {
     let mut snapshot = CommandLineTerminalSnapshot::blank(4, 2);
     snapshot.images.push(fragment());

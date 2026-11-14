@@ -14,7 +14,7 @@
 | `clock.v1.json` | JSON, schema 1 | Clock, alarms, and timer items |
 | `trash/trash.v1.json` | JSON, schema 1 | Application trash manifest |
 
-`StorageManager` and `StorageLayout` manage document locations and loading, `StorageDescriptor` describes formats, and `StorageLoadReport` returns migration and recovery results.
+`StorageManager` and `StorageLayout` manage document locations and loading, `StorageDescriptor` describes formats, and `StorageLoadReport` returns migration and recovery results. Shell and app workers install a `SessionConfigStore` for their run's configuration path; its shared services process serializes configuration writes and rejects stale revisions. Other paths and standalone tools retain ordinary local storage.
 
 ## Safe saving and recovery
 
@@ -29,7 +29,7 @@ Future schemas are rejected outright. If a current or older format cannot be par
 - `[automation].enabled` stores external CLI control, defaulting to `false`.
 - `[appearance].icon_display_mode` defaults to `ascii` on Linux and `image` on other platforms. User profiles use the same default when the field is missing.
 - `screen_timeout_seconds` stores the idle-weather timeout; `0` means never, and the default is 300 seconds.
-- `[editor].vim_mode_enabled` stores the Vim toggle, disabled by default.
+- `[editor].vim_mode_enabled` stores the default for newly opened editor sessions, disabled by default. F8 changes only the current editor session.
 - `[editor].explorer_open_extensions` controls the suffixes handed to the built-in editor; custom lists and empty lists take precedence.
 - `animation_timings` stores separate acceleration, constant-speed, and deceleration durations for page/dialog/menu animations, each from 1 to 2000ms.
 - Default page/dialog/menu phases are `[40, 80, 40]`, `[45, 90, 45]`, and `[30, 60, 30]` milliseconds. Existing explicit values and animation speed remain effective; reduced motion bypasses transitions.

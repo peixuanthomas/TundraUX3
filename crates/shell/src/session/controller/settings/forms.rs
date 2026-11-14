@@ -16,6 +16,7 @@ impl ShellSession {
         }
         let selected_index = self.settings_picker_initial_index(kind);
         let image_icons_supported = self.terminal_image_support;
+        self.pages.settings.profile_draft_revision = self.workspace_profile_revision();
         if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.picker = Some(SettingsPickerState {
                 editing: Default::default(),

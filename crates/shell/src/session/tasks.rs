@@ -159,6 +159,24 @@ impl ShellTasks {
         self.history_pages.get(id).copied()
     }
 
+    pub(in crate::session) fn window_task_ids(&self) -> Vec<String> {
+        self.history_pages
+            .iter()
+            .filter(|(_, (domain, request, page))| {
+                page.is_some() || self.owner(*domain, *request).is_some()
+            })
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    pub(in crate::session) fn remove_window_page(&mut self, page: PageInstanceId) {
+        for (_, _, owner) in self.history_pages.values_mut() {
+            if *owner == Some(page) {
+                *owner = None;
+            }
+        }
+    }
+
     pub(in crate::session) fn known_active_history(&mut self, ids: BTreeSet<String>) {
         self.known_active = ids;
     }

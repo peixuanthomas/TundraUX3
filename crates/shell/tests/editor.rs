@@ -29,7 +29,7 @@ fn default_config() -> ShellLaunchConfig {
 }
 
 #[test]
-fn vim_toggle_persists_without_interpreting_keys_before_the_engine_starts() {
+fn vim_toggle_stays_in_the_current_editor_and_waits_for_the_engine() {
     let fixture = FixtureRoot::new("vim-mode");
     let platform = mock_platform(fixture.path());
     let mut state = new_user_home_state(&platform);
@@ -57,8 +57,9 @@ fn vim_toggle_persists_without_interpreting_keys_before_the_engine_starts() {
 
     let mut reopened = logged_in_state(&platform);
     open_editor_from_home(&mut reopened, &platform);
+    assert_eq!(reopened.to_editor_view_model().vim_mode, None);
     assert_eq!(
-        reopened.to_editor_view_model().vim_mode,
+        state.to_editor_view_model().vim_mode,
         Some(ui::EditorVimMode::Normal)
     );
     let toggle = current_editor_layout(&reopened).vim_toggle;
@@ -74,6 +75,11 @@ fn vim_toggle_persists_without_interpreting_keys_before_the_engine_starts() {
         InputEvent::mouse_up(PointerButton::Left, (toggle.x, toggle.y)),
         &platform,
     );
+    assert_eq!(
+        reopened.to_editor_view_model().vim_mode,
+        Some(ui::EditorVimMode::Normal)
+    );
+    reopened.apply_input_with_platform(InputEvent::key(InputKey::F(8)), &platform);
     assert_eq!(reopened.to_editor_view_model().vim_mode, None);
     let stored = storage::StorageManager::open(app_paths(fixture.path()))
         .unwrap()

@@ -78,6 +78,8 @@ impl ShellSession {
                 diagnostics: diagnostics_task_runtime,
                 editor: editor_task_runtime,
                 settings: settings_task_runtime,
+                window_owner: Default::default(),
+                inherited_auth: None,
             },
         )
     }
@@ -156,11 +158,20 @@ impl ShellSession {
 
         let ui = UiSessionState {
             pages: ShellPages::default(),
+            window_owner: runtime_services.window_owner,
+            window_launches: VecDeque::new(),
+            window_close: Default::default(),
+            window_global_request: None,
+            windows_active: false,
+            window_task_ids: HashSet::new(),
+            window_task_action: None,
+            window_tasks_requested: false,
             command_line_close_request: None,
             script_requests: VecDeque::new(),
             editor_vim_terminal: None,
             editor_vim_install: None,
             editor_vim_toggle_requested: false,
+            editor_vim_enabled: None,
             editor_vim_script_export: None,
             editor_vim_close_requested: false,
             language,
@@ -173,6 +184,7 @@ impl ShellSession {
             storage_manager: startup.storage_manager.clone(),
             last_time_sync_utc: None,
             clock_scheduler: None,
+            workspace_clock: Default::default(),
 
             clock_persist_pending: false,
             clock_pending_due_summary: None,
@@ -310,8 +322,15 @@ impl ShellSession {
                 ui::NotificationTone::Error,
             );
         }
+        if state.window_owner.is_app() {
+            if let Some(session) = runtime_services.inherited_auth {
+                state.attach_window_profile(session);
+            }
+        }
         #[cfg(target_os = "linux")]
-        if state.identity_backend == identity::IdentityBackend::Linux {
+        if !state.window_owner.is_app()
+            && state.identity_backend == identity::IdentityBackend::Linux
+        {
             if let Some(storage) = state.storage_manager.clone() {
                 match SessionService::new(storage)
                     .with_backend(identity::IdentityBackend::Linux)
@@ -330,6 +349,43 @@ impl ShellSession {
             state.apply_restored_session(restored_session);
         }
         state
+    }
+
+    fn attach_window_profile(&mut self, session: AuthSession) {
+        let profile = self
+            .storage_manager
+            .as_ref()
+            .and_then(|storage| storage.load_users().ok())
+            .and_then(|document| {
+                document
+                    .users
+                    .into_iter()
+                    .find(|user| user.id == session.user_id)
+            });
+        if let Some(profile) = profile {
+            self.app.dispatch_at(
+                app::AppCommand::SetActiveAppearance(Some(profile.appearance)),
+                Instant::now(),
+            );
+            self.app.dispatch_at(
+                app::AppCommand::SetActiveSystemStatusDashboard(Some(
+                    profile.system_status_dashboard,
+                )),
+                Instant::now(),
+            );
+        }
+        self.pages.login.login_username = session.username.clone();
+        self.reset_navigation(ShellScreen::Home);
+        self.app.dispatch_at(
+            app::AppCommand::SetAuthSession(Some(session.clone())),
+            Instant::now(),
+        );
+        if self.window_owner
+            == window_launch::WindowOwner::App(window_launch::WindowApplication::Clock)
+            && crate::session_services::SessionServicesClient::current().is_none()
+        {
+            self.load_clock_for_session(&session);
+        }
     }
 
     pub fn sanitized_session_state(&self) -> ShellRestoredSession {

@@ -667,9 +667,12 @@ impl ShellSession {
             .map(|session| session.user_id.clone())
             .unwrap_or_else(|| "Guest".to_string());
         let operation = plan.operation();
+        if let Err(error) = self.app.explorer_operation_started() {
+            self.report_explorer_task_error(error.localized().message);
+            return;
+        }
         match runtime.submit(plan, kind, actor) {
             Ok(id) => {
-                self.app.explorer_operation_started();
                 let cancel = runtime.clone();
                 let finished = runtime.clone();
                 self.register_page_task(
@@ -721,7 +724,10 @@ impl ShellSession {
                     ui::NotificationTone::Error,
                 );
             }
-            Err(error) => self.report_explorer_task_error(error.localized().message),
+            Err(error) => {
+                self.app.explorer_operation_finished(&[]);
+                self.report_explorer_task_error(error.localized().message);
+            }
         }
     }
     pub(in crate::session) fn preflight_explorer_permissions(

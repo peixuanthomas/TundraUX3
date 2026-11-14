@@ -1,7 +1,9 @@
 use chrono::{DateTime, Utc};
 
 /// Storage pressure ordered from least actionable to most severe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum StoragePressure {
     Unknown,
     Normal,
@@ -9,7 +11,7 @@ pub enum StoragePressure {
     Critical,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StorageThresholds {
     pub low_available_bytes: u64,
     pub low_percentage: u8,
@@ -45,27 +47,27 @@ impl StorageThresholds {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum StorageVolumeKind {
     Fixed,
     Removable,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum StorageVolumeAccess {
     ReadWrite,
     ReadOnly,
     Unavailable,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SystemVolumeSource {
     Detected,
     FixedVolumeFallback,
     Unavailable,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StorageVolumeSnapshot {
     pub identifier: String,
     pub label: Option<String>,
@@ -77,7 +79,7 @@ pub struct StorageVolumeSnapshot {
     pub pressure: StoragePressure,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StorageSnapshot {
     pub volumes: Vec<StorageVolumeSnapshot>,
     pub overall_pressure: StoragePressure,
@@ -86,7 +88,7 @@ pub struct StorageSnapshot {
     pub sampled_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum StorageState {
     Loading,
     Ready(StorageSnapshot),

@@ -43,6 +43,7 @@
 | [system-services](../crates/system-services/README.md) | System and weather snapshots, background services |
 | [runtime-log](../crates/runtime-log/README.md) | Logging, queries, and incident reports |
 | [watchdog](../crates/watchdog/README.md) | Process and task supervision, recovery records |
+| [workspace-protocol](../crates/workspace-protocol/README.md) | Bounded guardian, app-window, and shared-services IPC |
 
 See the [complete responsibility table](README-TECHNICAL.md#crate-responsibilities) for the remaining crates. Implementation details are in `crates/<crate>/README.md` or its `docs/` directory.
 

@@ -86,6 +86,9 @@ impl ShellSession {
         {
             return;
         }
+        if self.route_window_launch(WindowLaunch::Logs) {
+            return;
+        }
         self.enter_new_page(ShellScreen::Logs);
         self.request_logs_job(None);
         self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-logs")));
@@ -109,6 +112,15 @@ impl ShellSession {
             .auth_session()
             .is_none_or(|session| session.role == UserRole::Guest)
         {
+            return;
+        }
+        if self.route_window_launch(WindowLaunch::ServiceLogs {
+            unit: unit.to_owned(),
+            scope: scope.to_owned(),
+            boot_id: boot_id.map(String::from),
+            invocation_id: invocation_id.map(String::from),
+            since_usec,
+        }) {
             return;
         }
         let Some(mut query) = service_log_query(unit, scope) else {

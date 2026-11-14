@@ -4,6 +4,8 @@
 
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct UiId(String);
 
@@ -39,7 +41,7 @@ impl fmt::Display for UiId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Point {
     pub column: u16,
     pub row: u16,
@@ -51,7 +53,7 @@ impl Point {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Key {
     Char(char),
     Enter,
@@ -86,7 +88,7 @@ pub enum Key {
 
 pub type KeyCode = Key;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum MediaKey {
     Play,
     Pause,
@@ -103,7 +105,7 @@ pub enum MediaKey {
     MuteVolume,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum ModifierKey {
     LeftShift,
     LeftControl,
@@ -121,7 +123,9 @@ pub enum ModifierKey {
     IsoLevel5Shift,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 pub struct KeyModifiers {
     pub shift: bool,
     /// Preferred spelling for the Control modifier.
@@ -279,7 +283,7 @@ impl KeyStroke {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum InputPhase {
     Press,
     Repeat,
@@ -292,7 +296,7 @@ impl InputPhase {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct KeyEvent {
     pub key: Key,
     pub modifiers: KeyModifiers,
@@ -300,7 +304,9 @@ pub struct KeyEvent {
     pub state: KeyEventState,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 pub struct KeyEventState {
     pub keypad: bool,
     pub caps_lock: bool,
@@ -442,7 +448,7 @@ impl Key {
 /// Compatibility alias for the component interaction API.
 pub type KeyInput = KeyEvent;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MouseButton {
     Left,
     Right,
@@ -458,7 +464,7 @@ impl MouseButton {
         }
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ScrollDirection {
     Up,
     Down,
@@ -466,7 +472,7 @@ pub enum ScrollDirection {
     Right,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MouseEventKind {
     Moved,
     Down(MouseButton),
@@ -497,7 +503,7 @@ impl MouseEventKind {
     pub const ScrollRight: Self = Self::Scroll(ScrollDirection::Right);
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MouseEvent {
     pub position: Point,
     pub kind: MouseEventKind,
@@ -621,7 +627,7 @@ impl MouseEvent {
 /// Compatibility alias for the component interaction API.
 pub type MouseInput = MouseEvent;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InputEvent {
     Key(KeyEvent),
     Mouse(MouseEvent),

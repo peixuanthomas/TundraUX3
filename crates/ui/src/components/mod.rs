@@ -74,6 +74,7 @@ pub type TextField = TextInput;
 pub use toast::{Toast, ToastTone};
 
 pub(crate) use big_text::{BigText, heading_size_ratio};
+pub use big_text::{WorkspaceHeadingCapture, render_workspace_headings};
 pub(crate) use foundation::{
     byte_index_for_char, char_count, clamp_index, inner_area, row_style, terminal_width,
     tone_color, truncate_to_terminal_width, visible_scrolled_rect,

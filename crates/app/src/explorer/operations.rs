@@ -3,13 +3,16 @@ use super::*;
 #[derive(Debug, Default)]
 pub(super) struct ExplorerFileOperations {
     pub clipboard: Option<ExplorerClipboard>,
-    history: Vec<Vec<ExplorerUndoMove>>,
+    pub(super) history: Vec<Vec<ExplorerUndoMove>>,
     pub busy: bool,
+    pub shared_can_undo: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ExplorerUndoMove {
+    #[serde(with = "workspace_protocol::native_path")]
     source: PathBuf,
+    #[serde(with = "workspace_protocol::native_path")]
     target: PathBuf,
     source_parent: platform::FileIdentity,
     target_parent: platform::FileIdentity,
@@ -65,7 +68,7 @@ impl ExplorerFileService {
             .operations
             .lock()
             .expect("Explorer operations lock poisoned");
-        !operations.busy && !operations.history.is_empty()
+        !operations.busy && (operations.shared_can_undo || !operations.history.is_empty())
     }
 
     pub fn clipboard(&self) -> Option<ExplorerClipboard> {
@@ -76,14 +79,24 @@ impl ExplorerFileService {
             .clone()
     }
 
-    pub(super) fn set_clipboard(&self, clipboard: Option<ExplorerClipboard>) {
+    pub(super) fn set_clipboard(
+        &self,
+        clipboard: Option<ExplorerClipboard>,
+    ) -> Result<(), ExplorerError> {
+        if self.apply_shared(ExplorerSharedRequest::SetClipboard(clipboard.clone()))? {
+            return Ok(());
+        }
         self.operations
             .lock()
             .expect("Explorer operations lock poisoned")
             .clipboard = clipboard;
+        Ok(())
     }
 
-    pub fn consume_cut_paths(&self, paths: &[PathBuf]) {
+    pub fn consume_cut_paths(&self, paths: &[PathBuf]) -> Result<(), ExplorerError> {
+        if self.apply_shared(ExplorerSharedRequest::ConsumeCutPaths(paths.to_vec()))? {
+            return Ok(());
+        }
         let mut operations = self
             .operations
             .lock()
@@ -96,16 +109,24 @@ impl ExplorerFileService {
                 operations.clipboard = None;
             }
         }
+        Ok(())
     }
 
-    pub fn set_operation_busy(&self, busy: bool) {
+    pub fn set_operation_busy(&self, busy: bool) -> Result<(), ExplorerError> {
+        if self.apply_shared(ExplorerSharedRequest::SetBusy(busy))? {
+            return Ok(());
+        }
         self.operations
             .lock()
             .expect("Explorer operations lock poisoned")
             .busy = busy;
+        Ok(())
     }
 
-    pub fn record_moves(&self, moves: Option<Vec<ExplorerUndoMove>>) {
+    pub fn record_moves(&self, moves: Option<Vec<ExplorerUndoMove>>) -> Result<(), ExplorerError> {
+        if self.apply_shared(ExplorerSharedRequest::RecordMoves(moves.clone()))? {
+            return Ok(());
+        }
         let mut operations = self
             .operations
             .lock()
@@ -115,6 +136,7 @@ impl ExplorerFileService {
             None => operations.history.clear(),
             _ => {}
         }
+        Ok(())
     }
 
     pub(super) fn undo(
@@ -124,6 +146,23 @@ impl ExplorerFileService {
         platform: &dyn Platform,
         storage: &StorageManager,
     ) -> Result<(), ExplorerError> {
+        let count = if let Some(shared) = &self.shared {
+            let snapshot = shared.execute(ExplorerSharedRequest::Undo)?;
+            let count = snapshot.undone;
+            self.apply_shared_snapshot(snapshot);
+            count
+        } else {
+            self.undo_batch(session, platform)?
+        };
+        state.set_success(msg!("app-explorer-undone", count = count as i64));
+        self.refresh(state, session, platform, storage)
+    }
+
+    pub fn undo_batch(
+        &self,
+        session: Option<&AuthSession>,
+        platform: &dyn Platform,
+    ) -> Result<usize, ExplorerError> {
         let mut operations = self
             .operations
             .lock()
@@ -153,7 +192,6 @@ impl ExplorerFileService {
         }
         operations.history.pop();
         drop(operations);
-        state.set_success(msg!("app-explorer-undone", count = count as i64));
-        self.refresh(state, session, platform, storage)
+        Ok(count)
     }
 }

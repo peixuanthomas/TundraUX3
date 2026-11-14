@@ -63,10 +63,8 @@ fn runtime_size_notice_renders_in_english_and_chinese_at_small_sizes() {
     let theme = ui::TundraTheme::default_dark();
     let requirement =
         ShellTerminalSizeRequirement::from_assets(&ui::RuntimeAsciiAssets::load_default().unwrap());
-    for (language, expected) in [
-        ("en-US", "Background tasks continue"),
-        ("zh-CN", "后台任务继续运行"),
-    ] {
+    for (language, expected) in [("en-US", "Enlarge to at least"), ("zh-CN", "请扩大到至少")]
+    {
         let snapshot = i18n::LanguageSnapshot::load(&assets, language, 1)
             .unwrap()
             .snapshot;

@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Utc};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum NetworkInterfaceKind {
     Wired,
     Wireless,
@@ -10,14 +10,14 @@ pub enum NetworkInterfaceKind {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum NetworkLinkState {
     Up,
     Down,
     Unknown,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NetworkInterfaceSnapshot {
     pub name: String,
     pub display_name: Option<String>,
@@ -26,7 +26,7 @@ pub struct NetworkInterfaceSnapshot {
     pub addresses: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NetworkSnapshot {
     pub interfaces: Vec<NetworkInterfaceSnapshot>,
     pub active_link_count: usize,
@@ -34,7 +34,7 @@ pub struct NetworkSnapshot {
     pub sampled_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum NetworkState {
     Loading,
     Ready(NetworkSnapshot),

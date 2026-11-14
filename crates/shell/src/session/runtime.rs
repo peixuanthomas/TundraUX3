@@ -1,7 +1,11 @@
+use super::window_launch::WindowOwner;
+use super::workspace::Workspace;
 use super::*;
 use crate::input::terminal_batch::{
     read_ready_child_terminal_event_batch, read_ready_terminal_event_batch,
 };
+use crate::process_host::WorkerConnection;
+use crate::session_services::SessionServicesClient;
 use std::panic::AssertUnwindSafe;
 use watchdog::{
     AppCriticality, AppDescriptor, AppId, AppWatchdog, BoundaryKind, BoundarySpec, CaughtPanic,
@@ -190,6 +194,12 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
     let diagnostics_watchdog = process
         .register_app(app::diagnostics::diagnostics_watchdog_descriptor())
         .map_err(io::Error::other)?;
+    let workspace_services = WorkerConnection::current()
+        .map(SessionServicesClient::connect)
+        .transpose()?;
+    if let Some(services) = &workspace_services {
+        services.install();
+    }
     let initial_startup = prepare_shell_startup(platform.as_ref()).map_err(io::Error::other)?;
     let control_directory = platform
         .app_paths()
@@ -267,7 +277,8 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
                 i18n::tr!("ui-control-unavailable", reason = error.to_string())
             );
         }
-        if explorer_task_runtime.is_none()
+        if workspace_services.is_none()
+            && explorer_task_runtime.is_none()
             && let Some(storage) = startup.storage_manager.as_ref()
         {
             let explorer_watchdog = process
@@ -312,7 +323,7 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
                 BoundarySpec::new("shell-lockscreen-ui-session", BoundaryKind::UiSession)
                     .terminal_owner(),
                 AssertUnwindSafe(|| {
-                    if control.enabled() {
+                    if control.enabled() || WorkerConnection::current().is_some() {
                         weathr::run_display_blocking_with_control(lockscreen_input, &mut control)
                     } else {
                         weathr::run_display_blocking(lockscreen_input)
@@ -353,6 +364,7 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
                     cached_time_sync: &mut cached_time_sync,
                     time_sync_worker: &time_sync_worker,
                     system_services: &system_services,
+                    workspace_services: workspace_services.as_deref(),
                     terminal_control: &terminal_control,
                     shell_watchdog: &shell_watchdog,
                     process_watchdog: &process,
@@ -461,7 +473,7 @@ pub(super) struct LauncherIconRuntime {
 }
 
 impl LauncherIconRuntime {
-    fn spawn(
+    pub(super) fn spawn(
         platform: std::sync::Arc<dyn Platform>,
         picker: ui::EditorImagePicker,
         watchdog: &AppWatchdog,
@@ -512,7 +524,7 @@ impl LauncherIconRuntime {
         })
     }
 
-    fn poll_results(&mut self) -> bool {
+    pub(super) fn poll_results(&mut self) -> bool {
         let mut changed = false;
         while let Ok(result) = self.results.try_recv() {
             changed = true;
@@ -747,7 +759,7 @@ pub(super) struct UserThemeReloader {
 }
 
 impl UserThemeReloader {
-    fn new(storage: Option<StorageManager>, now: Instant) -> Self {
+    pub(super) fn new(storage: Option<StorageManager>, now: Instant) -> Self {
         let last_observed = storage.as_ref().map(users_file_signature);
         Self {
             storage,
@@ -757,7 +769,12 @@ impl UserThemeReloader {
         }
     }
 
-    fn poll_at(&mut self, now: Instant, theme: &mut ui::TundraTheme, state: &mut ShellSession) {
+    pub(super) fn poll_at(
+        &mut self,
+        now: Instant,
+        theme: &mut ui::TundraTheme,
+        state: &mut ShellSession,
+    ) {
         let active_user_id = state.auth_session().map(|session| session.user_id.clone());
         let user_changed = self.active_user_id != active_user_id;
         if !user_changed && now < self.next_check {
@@ -885,6 +902,7 @@ pub(super) struct FullscreenShellSessionInput<'a, W> {
     cached_time_sync: &'a mut Option<CachedTimeSyncResult>,
     time_sync_worker: &'a TimeSyncWorker,
     system_services: &'a system_services::SystemServicesHandle,
+    workspace_services: Option<&'a SessionServicesClient>,
     terminal_control: &'a TerminalControlHandler,
     shell_watchdog: &'a AppWatchdog,
     process_watchdog: &'a ProcessWatchdog,
@@ -910,6 +928,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         cached_time_sync,
         time_sync_worker,
         system_services,
+        workspace_services,
         terminal_control,
         shell_watchdog,
         process_watchdog,
@@ -923,6 +942,17 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
     let terminal_size_requirement = ShellTerminalSizeRequirement::from_assets(&ascii_assets);
     let initial_size = checked_current_terminal_size(terminal_size_requirement)?;
     let mut guard = TerminalGuard::enter(output)?;
+    let mut workspace = WorkerConnection::current().map(|connection| {
+        let image_cell_size = terminal_graphics_probe.picker().map(|picker| {
+            let (width, height) = picker.cell_size();
+            [width, height]
+        });
+        Workspace::new(
+            connection,
+            image_cell_size,
+            terminal_graphics_probe.text_sizing_protocol(),
+        )
+    });
     guard.enable_keyboard_reporting()?;
     if let Some(diagnostics) = diagnostics_task_runtime.as_ref() {
         diagnostics.set_terminal_graphics_probe(terminal_graphics_probe.status().clone());
@@ -961,6 +991,12 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 settings_services_config,
                 Some(std::sync::Arc::clone(&platform)),
             ),
+            window_owner: if workspace.is_some() {
+                WindowOwner::Shell
+            } else {
+                WindowOwner::Local
+            },
+            inherited_auth: None,
         },
     );
     if let Some(report) = startup_resource_report {
@@ -984,10 +1020,12 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
     if show_terminal_graphics_notice {
         state.apply_terminal_graphics_startup_policy(terminal_graphics_probe.status());
     }
-    state.launcher_task_runtime = Some(ShellLauncherTaskRuntime::new_managed(
-        std::sync::Arc::clone(&platform),
-        shell_watchdog.clone(),
-    ));
+    if workspace.is_none() {
+        state.launcher_task_runtime = Some(ShellLauncherTaskRuntime::new_managed(
+            std::sync::Arc::clone(&platform),
+            shell_watchdog.clone(),
+        ));
+    }
     let mut command_line_hosts = CommandLineHosts::new(shell_watchdog.clone());
     let terminal_cell_size = terminal_graphics_probe
         .picker()
@@ -997,12 +1035,13 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
     script_hosts.set_cell_size(terminal_cell_size.0, terminal_cell_size.1);
     let mut editor_vim = super::vim_host::EditorVimHost::new(shell_watchdog.clone());
     editor_vim.set_cell_size(terminal_cell_size.0, terminal_cell_size.1);
-    let mut vim_cursor_style = ui::CommandLineCursorStyle::Default;
+    let mut vim_cursor_style = crossterm::cursor::SetCursorStyle::DefaultUserShape;
     let mut reset_requested = false;
     if let Some(cached) = cached_time_sync.as_ref() {
         cached.apply_to_state_at(&mut state, Instant::now());
     }
     let runtime_origin = Instant::now();
+    let mut last_workspace_sync = runtime_origin;
     let mut theme_reloader = UserThemeReloader::new(theme_storage, runtime_origin);
     let mut redraw = RedrawScheduler::new(
         runtime_origin,
@@ -1020,6 +1059,34 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
 
     let execution = std::panic::catch_unwind(AssertUnwindSafe(|| -> io::Result<Option<String>> {
         loop {
+            if let Some(windows) = &mut workspace {
+                if windows.poll(&mut state)? {
+                    redraw.request_redraw();
+                }
+                if windows.reset_requested() {
+                    reset_requested = true;
+                    break;
+                }
+                if let Some(path) = windows.take_update() {
+                    state.update_apply_manifest = Some(path);
+                    break;
+                }
+                if windows.shutdown_requested() {
+                    state.apply_input_with_platform(InputEvent::Shutdown, platform.as_ref());
+                }
+                let next_sync = Instant::now();
+                if next_sync.duration_since(last_workspace_sync) >= BACKGROUND_POLL_INTERVAL
+                    || !state.window_launches.is_empty()
+                {
+                    if let Some(services) = workspace_services {
+                        services.sync_session(&mut state);
+                    }
+                    last_workspace_sync = next_sync;
+                }
+                if windows.launch_pending(&mut state)? {
+                    redraw.request_redraw();
+                }
+            }
             if state.poll_auto_admin() {
                 redraw.request_redraw();
             }
@@ -1064,6 +1131,9 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                         state.apply_input_with_platform(InputEvent::Shutdown, platform.as_ref());
                     }
                     PlatformLifecycleEvent::PrepareForSleep if !terminal_suspended => {
+                        if let Some(windows) = &mut workspace {
+                            windows.set_suspend(true);
+                        }
                         let _ = state.persist_all_editor_recovery_now(Instant::now());
                         if let Some(routed) = compositor.cancel_for_suspend(&state) {
                             state.apply_routed_event(routed, platform.as_ref(), Instant::now());
@@ -1081,6 +1151,9 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                         terminal_suspended = true;
                     }
                     PlatformLifecycleEvent::Resumed => {
+                        if let Some(windows) = &mut workspace {
+                            windows.set_suspend(false);
+                        }
                         if terminal_suspended {
                             guard.resume()?;
                             compositor.set_terminal_image_picker(
@@ -1231,6 +1304,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     }
                     if let Err(error) =
                         terminal_size_requirement.validate((bounds.width, bounds.height))
+                        && workspace.is_none()
                     {
                         compositor.render_size_notice(frame, error, &theme);
                     } else if state.screen_saver_active() {
@@ -1263,6 +1337,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                             &mut state,
                             prepared.as_ref().expect("normal frame was prepared"),
                             launcher_icons.as_ref(),
+                            workspace.as_mut(),
                         );
                     }
                 })?;
@@ -1271,40 +1346,48 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 }
                 write_terminal_image_cleanup(&mut compositor, guard.terminal_mut().backend_mut())?;
                 next_weather_frame = frame_now + Duration::from_millis(33);
-                let cursor_style = if state.active_screen() == ShellScreen::CommandLine
+                let cursor_style = if let Some(windows) = &workspace
+                    && let Some(shape) = windows.cursor_shape()
+                {
+                    workspace_cursor_style(shape)
+                } else if state.active_screen() == ShellScreen::CommandLine
                     && state.interactive_overlays().is_empty()
                     && !state.screen_saver_active()
                 {
-                    command_line_hosts
-                        .visible_host(&state)
-                        .view_model()
-                        .terminal
-                        .cursor_style
+                    vim_terminal_cursor_style(
+                        command_line_hosts
+                            .visible_host(&state)
+                            .view_model()
+                            .terminal
+                            .cursor_style,
+                    )
                 } else {
-                    state
-                        .editor_vim_terminal
-                        .as_ref()
-                        .filter(|_| {
-                            state.active_screen() == ShellScreen::Editor
-                                && state.interactive_overlays().is_empty()
-                                && !state.screen_saver_active()
-                        })
-                        .map_or(ui::CommandLineCursorStyle::Default, |terminal| {
-                            terminal.cursor_style
-                        })
+                    vim_terminal_cursor_style(
+                        state
+                            .editor_vim_terminal
+                            .as_ref()
+                            .filter(|_| {
+                                state.active_screen() == ShellScreen::Editor
+                                    && state.interactive_overlays().is_empty()
+                                    && !state.screen_saver_active()
+                            })
+                            .map_or(ui::CommandLineCursorStyle::Default, |terminal| {
+                                terminal.cursor_style
+                            }),
+                    )
                 };
                 if cursor_style != vim_cursor_style {
-                    crossterm::execute!(
-                        guard.terminal_mut().backend_mut(),
-                        vim_terminal_cursor_style(cursor_style)
-                    )?;
+                    crossterm::execute!(guard.terminal_mut().backend_mut(), cursor_style)?;
                     vim_cursor_style = cursor_style;
                 }
                 if let Some(mut snapshot) = compositor.snapshot.take() {
                     snapshot.background_tasks_running |= command_line_hosts.has_running_processes()
                         || editor_vim.running()
                         || script_hosts.running();
-                    control.publish(snapshot);
+                    let ready = workspace
+                        .as_ref()
+                        .is_none_or(Workspace::external_snapshot_ready);
+                    control.publish_when_ready(snapshot, ready);
                 }
                 if !update_ready_marked {
                     app::update::mark_update_ready_from_env().map_err(io::Error::other)?;
@@ -1383,18 +1466,21 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 poll_timeout
             };
             let poll_timeout = control.poll_timeout(Instant::now(), poll_timeout);
+            let poll_timeout = workspace.as_ref().map_or(poll_timeout, |windows| {
+                poll_timeout.min(windows.poll_timeout())
+            });
             let mut action = None;
             let mut terminal_events = Vec::new();
             if event::poll(poll_timeout)? {
                 let first = event::read()?;
                 let native_input = matches!(&first, event::Event::Key(_) | event::Event::Paste(_))
-                    && !state.input_keyboard_open()
-                    && {
-                        let input = crossterm_event_to_input(first.clone());
-                        editor_vim.captures_input(&state, &input)
-                            || (command_line_hosts.visible_host(&state).is_running()
-                                && command_line_captures_input(&state, &input))
-                    };
+                    && (workspace.as_ref().is_some_and(Workspace::has_native_input)
+                        || (!state.input_keyboard_open() && {
+                            let input = crossterm_event_to_input(first.clone());
+                            editor_vim.captures_input(&state, &input)
+                                || (command_line_hosts.visible_host(&state).is_running()
+                                    && command_line_captures_input(&state, &input))
+                        }));
                 terminal_events.extend(if native_input {
                     read_ready_child_terminal_event_batch(first)?
                 } else {
@@ -1405,9 +1491,14 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             for event in &terminal_events {
                 user_operated |= control.observe_user_input(event);
             }
-            if !user_operated {
-                terminal_events.extend(control.poll_batch(Instant::now()));
-            }
+            let has_external_input = if !user_operated {
+                let external_events = control.poll_batch(Instant::now());
+                let received = !external_events.is_empty();
+                terminal_events.extend(external_events);
+                received
+            } else {
+                false
+            };
             let terminal_event_received = !terminal_events.is_empty();
             if terminal_event_received {
                 redraw.request_input_redraw();
@@ -1419,12 +1510,19 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                         state.details_motion = None;
                         state.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
                         resize_runtime_session(&mut state, (*width, *height), platform.as_ref());
+                        if let Some(windows) = workspace.as_mut() {
+                            windows.invalidate_layout();
+                        }
                         redraw.request_redraw();
+                        if workspace.is_some() {
+                            break;
+                        }
                         continue;
                     }
-                    if terminal_size_requirement
-                        .validate(state.terminal_size())
-                        .is_err()
+                    if workspace.is_none()
+                        && terminal_size_requirement
+                            .validate(state.terminal_size())
+                            .is_err()
                     {
                         continue;
                     }
@@ -1435,6 +1533,14 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                         state.screen_keyboard.physical.observe(*key, received_at);
                     }
                     let input = crossterm_event_to_input(terminal_event);
+                    if let Some(windows) = workspace.as_mut()
+                        && !state.screen_saver_active()
+                        && windows.input(&input, !state.interactive_overlays().is_empty())?
+                    {
+                        state.consume_screen_saver_input(&input, received_at);
+                        action = Some(ShellAction::Redraw);
+                        continue;
+                    }
                     if matches!(input, InputEvent::FocusGained | InputEvent::FocusLost) {
                         let focused = matches!(input, InputEvent::FocusGained);
                         command_line_hosts.observe_window_focus(focused);
@@ -1524,6 +1630,9 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
 
             if reset_requested {
                 break;
+            }
+            if let Some(windows) = workspace.as_mut() {
+                windows.finish_input_batch(has_external_input);
             }
 
             if control.needs_frame() {
@@ -1655,7 +1764,7 @@ fn finish_session_execution<T>(
     }
 }
 
-fn stop_fullscreen_session_tasks(
+pub(super) fn stop_fullscreen_session_tasks(
     state: &mut ShellSession,
     command_line_hosts: &mut CommandLineHosts,
     platform: &dyn Platform,
@@ -1781,7 +1890,7 @@ fn command_line_poll_timeout(
     }
 }
 
-fn reduced_motion_enabled(state: &ShellSession) -> bool {
+pub(super) fn reduced_motion_enabled(state: &ShellSession) -> bool {
     state.app.active_appearance().is_some_and(|appearance| {
         matches!(
             appearance.motion_preference,
@@ -1790,7 +1899,7 @@ fn reduced_motion_enabled(state: &ShellSession) -> bool {
     })
 }
 
-fn animation_speed_percent(state: &ShellSession) -> u16 {
+pub(super) fn animation_speed_percent(state: &ShellSession) -> u16 {
     state
         .app
         .active_appearance()
@@ -1798,7 +1907,7 @@ fn animation_speed_percent(state: &ShellSession) -> u16 {
         .unwrap_or(storage::DEFAULT_ANIMATION_SPEED_PERCENT)
 }
 
-fn synchronize_motion_hit_map_after_input(
+pub(super) fn synchronize_motion_hit_map_after_input(
     state: &mut ShellSession,
     redraw: &mut RedrawScheduler,
     identity_before_input: RedrawIdentity,
@@ -1868,7 +1977,7 @@ fn shell_render_capabilities(
     capabilities
 }
 
-fn command_line_captures_input(state: &ShellSession, input: &InputEvent) -> bool {
+pub(super) fn command_line_captures_input(state: &ShellSession, input: &InputEvent) -> bool {
     if !state.interactive_overlays().is_empty() || state.active_screen() != ShellScreen::CommandLine
     {
         return false;
@@ -1913,6 +2022,22 @@ fn vim_terminal_cursor_style(
         Shape::SteadyUnderline => Native::SteadyUnderScore,
         Shape::BlinkingBar => Native::BlinkingBar,
         Shape::SteadyBar => Native::SteadyBar,
+    }
+}
+
+fn workspace_cursor_style(
+    shape: workspace_protocol::CursorShape,
+) -> crossterm::cursor::SetCursorStyle {
+    use crossterm::cursor::SetCursorStyle as Native;
+    use workspace_protocol::CursorShape;
+    match shape {
+        CursorShape::Default => Native::DefaultUserShape,
+        CursorShape::BlinkingBlock => Native::BlinkingBlock,
+        CursorShape::SteadyBlock => Native::SteadyBlock,
+        CursorShape::BlinkingUnderline => Native::BlinkingUnderScore,
+        CursorShape::SteadyUnderline => Native::SteadyUnderScore,
+        CursorShape::BlinkingBar => Native::BlinkingBar,
+        CursorShape::SteadyBar => Native::SteadyBar,
     }
 }
 
@@ -1996,6 +2121,19 @@ fn run_panic_screen(
     let mut screen = ui::PanicScreen::new(message);
     let mut redraw = true;
     let outcome = loop {
+        if let Some(connection) = WorkerConnection::current() {
+            connection.progress()?;
+            while let Some(message) = connection.try_recv()? {
+                if matches!(
+                    message,
+                    workspace_protocol::SupervisorToWorker::Close
+                        | workspace_protocol::SupervisorToWorker::Exit
+                ) {
+                    guard.restore()?;
+                    return Ok(ShellRunOutcome::Exit);
+                }
+            }
+        }
         let _ = platform.poll_lifecycle_event();
         if terminal_control.shutdown_requested() {
             break ShellRunOutcome::Exit;

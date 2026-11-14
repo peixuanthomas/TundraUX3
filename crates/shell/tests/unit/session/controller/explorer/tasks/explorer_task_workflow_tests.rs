@@ -118,7 +118,7 @@ fn completed_move_from_an_old_session_cannot_change_new_clipboard_or_undo_histor
         TaskClass::Operation,
         TaskControl::new(|| {}, || true),
     );
-    state.app.explorer_operation_started();
+    state.app.explorer_operation_started().unwrap();
     let summary = wait_for_summary(&runtime);
     assert_eq!(summary.undo_moves.as_ref().map(Vec::len), Some(1));
     state.tasks.reset();

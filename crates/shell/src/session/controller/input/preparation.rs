@@ -129,7 +129,7 @@ impl ShellSession {
                 return input;
             }
             if self.active_screen() == ShellScreen::Editor
-                && self.app.storage_config().editor.vim_mode_enabled
+                && self.editor_vim_enabled()
                 && self.pages.editor.editor_focus == ui::EditorFocus::Canvas
                 && self.pages.editor.editor_load_state.is_none()
                 && self.pages.editor.editor_save_state.is_none()

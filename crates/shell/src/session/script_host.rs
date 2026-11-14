@@ -498,12 +498,16 @@ impl ScriptHosts {
         }
     }
 
+    pub(super) fn captures_terminal_input(&self, state: &ShellSession) -> bool {
+        state.active_screen() == ShellScreen::Editor
+            && state.pages.editor.script.enabled
+            && state.pages.editor.script.focus == ui::ScriptPane::Output
+            && state.interactive_overlays().is_empty()
+            && self.hosts.contains_key(&state.content_page_id())
+    }
+
     pub(super) fn handle_input(&mut self, state: &ShellSession, input: &InputEvent) -> bool {
-        if state.active_screen() != ShellScreen::Editor
-            || !state.pages.editor.script.enabled
-            || state.pages.editor.script.focus != ui::ScriptPane::Output
-            || !state.interactive_overlays().is_empty()
-        {
+        if !self.captures_terminal_input(state) {
             return false;
         }
         let Some(host) = self.hosts.get(&state.content_page_id()) else {
@@ -529,6 +533,20 @@ impl ScriptHosts {
     }
     pub(super) fn running(&self) -> bool {
         !self.hosts.is_empty()
+    }
+
+    pub(super) fn minimum_content_size(&self) -> Option<(u16, u16)> {
+        self.hosts
+            .values()
+            .filter_map(|host| {
+                let (columns, rows) = host.session.terminal().reported_minimum_size()?;
+                // The Script layout gives output the trailing two fifths (one third when wide).
+                Some((
+                    columns.saturating_add(1),
+                    rows.saturating_add(1).saturating_mul(3).saturating_add(4),
+                ))
+            })
+            .reduce(|left, right| (left.0.max(right.0), left.1.max(right.1)))
     }
     pub(super) fn stop_all(&mut self) {
         for (_, host) in self.hosts.drain() {

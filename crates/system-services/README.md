@@ -7,7 +7,7 @@
 | Default, no features | Shared data in `model/` | app, weathr |
 | `features = ["runtime"]` | Shared data and `runtime/` services | Shell |
 
-Data consumers do not need to pull in `reqwest`, `platform`, `watchdog`, or `time`. Cargo unifies features in workspace builds, so Shell uses the full runtime.
+Data consumers do not need to pull in `reqwest`, `platform`, `watchdog`, or `time`. Cargo unifies features in workspace builds, so Shell uses the full runtime. Storage, network, and metric snapshots support serialization so isolated app hosts consume the same sampled state; requests for active sampling and immediate refresh are forwarded to the Shell through the shared services process.
 
 ```mermaid
 flowchart LR

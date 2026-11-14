@@ -635,7 +635,7 @@ fn vim_launch_keeps_its_export_owner_when_another_document_becomes_visible() {
     assert!(state.script_requests.is_empty());
     assert!(state.pages.editor.get(owner).unwrap().script.vim_pending);
     assert!(!state.pages.editor.get(other).unwrap().script.vim_pending);
-    assert!(state.app.storage_config().editor.vim_mode_enabled);
+    assert!(state.editor_vim_enabled());
 }
 
 #[test]

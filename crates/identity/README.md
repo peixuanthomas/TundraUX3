@@ -21,7 +21,7 @@ The following rules apply to Windows/macOS and test backends:
 - Passwords use Argon2 hashes with random salts. They must contain 10–256 characters and cannot consist entirely of whitespace or equal the normalized username.
 - Username matching is case-insensitive. Unknown users and incorrect passwords return the same invalid-credentials result.
 - Five consecutive authentication failures cause a five-minute lockout. Failure and lockout information is persisted.
-- Authentication sessions are kept only in memory.
+- Authentication sessions are kept only in memory. Their serialized form is used over the run's authenticated local IPC to initialize app workers; it is not a persisted login token.
 
 UX roles are Guest, User, and Admin. File and profile operations are available to User/Admin; user management, Command Line, Launcher management, diagnostic repairs, and settings management require Admin.
 

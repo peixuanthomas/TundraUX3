@@ -24,8 +24,7 @@ pub(in crate::session) fn build_shell_hit_map(
     content_screen: ShellScreen,
     exit_confirmation_visible: bool,
     active_popup: Option<ShellPopup>,
-    setup_step: ui::SetupStep,
-    language_count: usize,
+    setup_model: Option<&ui::SetupViewModel>,
     setup_custom_color_dialog_visible: bool,
     generation: u64,
     time_sync_dialog_visible: bool,
@@ -96,13 +95,28 @@ pub(in crate::session) fn build_shell_hit_map(
             });
             match content_screen {
                 ShellScreen::FirstRunSetup => {
-                    regions.extend(setup_hit_regions(main, setup_step, language_count));
-                    if setup_custom_color_dialog_visible {
-                        regions.push(ShellHitRegion {
-                            component: ShellComponent::SetupCustomColorDialog,
-                            area: ui::setup_custom_color_dialog_area(main),
-                            layer: ShellHitLayer::AppOverlay,
-                        });
+                    if let Some(model) = setup_model {
+                        let viewport = ui::setup_viewport(main, model);
+                        regions.extend(
+                            setup_hit_regions(viewport.content, model.step, model.languages.len())
+                                .into_iter()
+                                .filter_map(|region| {
+                                    let area = viewport.project(region.area)?;
+                                    Some(ShellHitRegion { area, ..region })
+                                }),
+                        );
+                        if setup_custom_color_dialog_visible {
+                            let dialog = ui::setup_color_viewport(main, model);
+                            if let Some(area) =
+                                dialog.project(ui::setup_custom_color_dialog_area(dialog.content))
+                            {
+                                regions.push(ShellHitRegion {
+                                    component: ShellComponent::SetupCustomColorDialog,
+                                    area,
+                                    layer: ShellHitLayer::AppOverlay,
+                                });
+                            }
+                        }
                     }
                 }
                 ShellScreen::Login => {
@@ -544,7 +558,7 @@ pub(in crate::session) fn setup_hit_regions(
     match setup_step {
         ui::SetupStep::Language => vec![ShellHitRegion {
             component: ShellComponent::SetupLanguage,
-            area: setup_language_list_rect(main, language_count),
+            area: ui::setup_language_list_area(main, language_count),
             layer: ShellHitLayer::AppContent,
         }],
         ui::SetupStep::Timezone => vec![ShellHitRegion {
@@ -614,23 +628,6 @@ pub(in crate::session) fn setup_hit_regions(
     }
 }
 
-pub(in crate::session) fn setup_language_list_row_at(
-    terminal_size: CellPosition,
-    language_count: usize,
-    coordinates: CellPosition,
-) -> Option<usize> {
-    let main = setup_main_rect(terminal_size)?;
-    setup_row_at(setup_language_list_rect(main, language_count), coordinates)
-}
-
-pub(in crate::session) fn setup_timezone_list_row_at(
-    terminal_size: CellPosition,
-    coordinates: CellPosition,
-) -> Option<usize> {
-    let main = setup_main_rect(terminal_size)?;
-    setup_row_at(ui::setup_timezone_list_area(main), coordinates)
-}
-
 pub(in crate::session) fn setup_main_rect(terminal_size: CellPosition) -> Option<Rect> {
     let area = Rect::new(0, 0, terminal_size.0, terminal_size.1);
     let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
@@ -638,10 +635,6 @@ pub(in crate::session) fn setup_main_rect(terminal_size: CellPosition) -> Option
     };
 
     Some(main)
-}
-
-pub(in crate::session) fn setup_language_list_rect(main: Rect, language_count: usize) -> Rect {
-    ui::setup_language_list_area(main, language_count)
 }
 
 pub(in crate::session) fn setup_row_at(rect: Rect, coordinates: CellPosition) -> Option<usize> {

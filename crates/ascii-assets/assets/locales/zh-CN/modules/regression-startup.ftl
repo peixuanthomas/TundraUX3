@@ -38,6 +38,7 @@ startup-cli-help = TundraUX3 命令行
     { "  " }operations                    操作状态与授权
     { "  " }logs [query|incidents|export|follow]  日志与诊断
     { "  " }ui [sessions|snapshot|click|move|drag|scroll|key|text|wait]  操作 Shell
+    { "  " }watchdog [list|kill]          查看或强制终止受管进程
     { "  " }debug <command>               调试工具，见 debug --help
     { "  " }cls                           清空终端
     { "  " }new                           重置已保存的 TundraUX3 数据

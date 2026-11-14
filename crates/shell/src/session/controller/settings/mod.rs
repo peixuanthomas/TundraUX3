@@ -83,6 +83,9 @@ impl ShellSession {
                 Some(i18n::msg!("settings-storage-unavailable").into());
             return;
         };
+        if self.route_window_launch(WindowLaunch::Settings) {
+            return;
+        }
         let config = match storage.load_config() {
             Ok(config) => config,
             Err(error) => {
@@ -884,6 +887,31 @@ impl ShellSession {
         appearance: storage::AppearanceConfig,
         message: impl Into<i18n::LocalizedText>,
     ) -> bool {
+        let editing = self
+            .pages
+            .settings
+            .settings_state
+            .as_ref()
+            .is_some_and(|state| {
+                state.picker.is_some()
+                    || state.color_editor.is_some()
+                    || state.number_editor.is_some()
+                    || state.animation_editor.is_some()
+            });
+        let revision = if editing {
+            self.pages.settings.profile_draft_revision
+        } else {
+            self.workspace_profile_revision()
+        };
+        self.save_settings_appearance_at_revision(appearance, message, revision)
+    }
+
+    fn save_settings_appearance_at_revision(
+        &mut self,
+        appearance: storage::AppearanceConfig,
+        message: impl Into<i18n::LocalizedText>,
+        revision: Option<u64>,
+    ) -> bool {
         let message = message.into();
         if appearance.border_color == appearance.accent_color {
             self.set_settings_error(i18n::msg!("settings-accent-distinct"));
@@ -897,14 +925,32 @@ impl ShellSession {
             self.set_settings_error(i18n::msg!("settings-login-required"));
             return false;
         };
-        let users = UserService::with_debug_policy(storage, self.debug_policy)
-            .with_backend(self.identity_backend);
-        match users.update_user_appearance(&actor, &actor.username, appearance) {
-            Ok(account) => {
-                self.app.dispatch_at(
-                    app::AppCommand::SetActiveAppearance(Some(account.appearance)),
-                    Instant::now(),
-                );
+        let saved =
+            if let Some(services) = crate::session_services::SessionServicesClient::current() {
+                services
+                    .save_workspace_profile(
+                        self,
+                        revision,
+                        crate::session_services::SessionProfile {
+                            appearance: Some(appearance),
+                            dashboard: None,
+                        },
+                    )
+                    .map_err(|error| error.to_string())
+            } else {
+                UserService::with_debug_policy(storage, self.debug_policy)
+                    .with_backend(self.identity_backend)
+                    .update_user_appearance(&actor, &actor.username, appearance)
+                    .map(|account| {
+                        self.app.dispatch_at(
+                            app::AppCommand::SetActiveAppearance(Some(account.appearance)),
+                            Instant::now(),
+                        );
+                    })
+                    .map_err(|error| error.to_string())
+            };
+        match saved {
+            Ok(()) => {
                 if let Some(state) = self.pages.settings.settings_state.as_mut() {
                     state.status = message.clone();
                 }
@@ -914,7 +960,7 @@ impl ShellSession {
             Err(error) => {
                 self.set_settings_error(i18n::msg!(
                     "settings-appearance-save-failed",
-                    reason = error.to_string()
+                    reason = error
                 ));
                 false
             }
@@ -964,6 +1010,9 @@ impl ShellSession {
             self.set_settings_error(i18n::msg!("settings-admin-required"));
             return;
         }
+        if category == ui::SettingsCategory::Appearance {
+            self.pages.settings.profile_draft_revision = self.workspace_profile_revision();
+        }
         let notification = ShellNotification::modal(
             i18n::msg!("settings-restore-defaults"),
             i18n::msg!("settings-restore-confirmation", category = category_name),
@@ -995,12 +1044,13 @@ impl ShellSession {
             return;
         }
         if category == ui::SettingsCategory::Appearance {
-            self.save_settings_appearance(
+            self.save_settings_appearance_at_revision(
                 storage::AppearanceConfig {
                     icon_display_mode: self.default_icon_display_mode,
                     ..Default::default()
                 },
                 i18n::msg!("settings-saved-appearance-defaults"),
+                self.pages.settings.profile_draft_revision,
             );
             return;
         }

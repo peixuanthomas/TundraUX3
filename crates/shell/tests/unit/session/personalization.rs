@@ -107,6 +107,8 @@ fn linux_startup(
         startup,
         ui::RuntimeAsciiAssets::from_store(store),
         ShellRuntimeServices {
+            window_owner: Default::default(),
+            inherited_auth: None,
             language: None,
             terminal_image_support: images,
             explorer: None,

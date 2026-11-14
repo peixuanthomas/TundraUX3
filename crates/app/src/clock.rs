@@ -1,7 +1,7 @@
 use chrono::{
     DateTime, Days, LocalResult, NaiveDate, NaiveTime, TimeDelta, TimeZone, Timelike, Utc,
 };
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::time::{Duration, Instant};
 use storage::{ClockEntryRecord, ClockProfile};
@@ -256,12 +256,21 @@ impl ClockScheduler {
         snapshot: &ClockSnapshot,
         now: Instant,
     ) -> (Self, Vec<DueEvent>) {
+        Self::read_profile(&profile, snapshot, now, false)
+    }
+
+    fn read_profile(
+        profile: &ClockProfile,
+        snapshot: &ClockSnapshot,
+        now: Instant,
+        keep_due: bool,
+    ) -> (Self, Vec<DueEvent>) {
         let mut due = Vec::new();
         let mut entries = Vec::with_capacity(profile.entries.len());
         let mut used_ids = HashSet::with_capacity(profile.entries.len());
 
-        for record in profile.entries {
-            match record {
+        for record in &profile.entries {
+            match *record {
                 ClockEntryRecord::DailyAlarm {
                     id,
                     hour,
@@ -282,7 +291,7 @@ impl ClockScheduler {
                     };
                     let snooze = snooze_deadline_epoch_ms
                         .and_then(utc_from_epoch_millis)
-                        .and_then(|deadline| RuntimeDeadline::from_utc(deadline, snapshot, now));
+                        .and_then(|deadline| read_deadline(deadline, snapshot, now, keep_due));
                     entries.push(RuntimeEntry::DailyAlarm {
                         id,
                         time,
@@ -302,11 +311,11 @@ impl ClockScheduler {
                     let Some(id) = normalize_record_id(id, &mut used_ids) else {
                         continue;
                     };
-                    if deadline <= snapshot.utc {
+                    if !keep_due && deadline <= snapshot.utc {
                         due.push(DueEvent::countdown(id, strong));
                         continue;
                     }
-                    if let Some(deadline) = RuntimeDeadline::from_utc(deadline, snapshot, now) {
+                    if let Some(deadline) = read_deadline(deadline, snapshot, now, keep_due) {
                         entries.push(RuntimeEntry::Countdown {
                             id,
                             strong,
@@ -324,6 +333,93 @@ impl ClockScheduler {
             first_available_id(|candidate| used_ids.contains(&candidate)).unwrap_or(u64::MAX)
         };
         (Self { next_id, entries }, due)
+    }
+
+    /// Applies changes from another window without restarting existing alarms or timers.
+    pub fn synchronize_profile(
+        &mut self,
+        previous: Option<&ClockProfile>,
+        profile: &ClockProfile,
+        alarm_dates: &BTreeMap<u64, NaiveDate>,
+        snapshot: &ClockSnapshot,
+        now: Instant,
+    ) {
+        let (mut next, _) = Self::read_profile(profile, snapshot, now, true);
+        for entry in &mut next.entries {
+            if let RuntimeEntry::DailyAlarm { id, next_date, .. } = entry
+                && let Some(date) = alarm_dates.get(id)
+            {
+                *next_date = *date;
+            }
+        }
+        if let Some(previous) = previous {
+            let previous_records = records_by_id(previous);
+            let next_records = records_by_id(profile);
+            let running: HashMap<_, _> = self
+                .entries
+                .iter()
+                .map(|entry| (entry.id(), entry))
+                .collect();
+            for entry in &mut next.entries {
+                let id = entry.id();
+                let same_deadline = previous_records
+                    .get(&id)
+                    .zip(next_records.get(&id))
+                    .is_some_and(|(old, new)| {
+                        clock_record_deadline(old) == clock_record_deadline(new)
+                    });
+                match (entry, running.get(&id)) {
+                    (
+                        RuntimeEntry::DailyAlarm {
+                            time,
+                            next_date,
+                            snooze,
+                            ..
+                        },
+                        Some(RuntimeEntry::DailyAlarm {
+                            time: old_time,
+                            next_date: old_date,
+                            snooze: old_snooze,
+                            ..
+                        }),
+                    ) if time == old_time => {
+                        *next_date = alarm_dates
+                            .get(&id)
+                            .map_or(*old_date, |date| (*date).max(*old_date));
+                        if same_deadline {
+                            snooze.clone_from(old_snooze);
+                        }
+                    }
+                    (
+                        RuntimeEntry::Countdown { deadline, .. },
+                        Some(RuntimeEntry::Countdown {
+                            deadline: old_deadline,
+                            ..
+                        }),
+                    ) if same_deadline => deadline.clone_from(old_deadline),
+                    _ => {}
+                }
+            }
+        }
+        *self = next;
+    }
+
+    /// Daily alarm dates changed by an edit or by advancing a reminder.
+    pub fn changed_alarm_dates(&self, previous: &Self) -> BTreeMap<u64, NaiveDate> {
+        let dates = |scheduler: &Self| {
+            scheduler
+                .entries
+                .iter()
+                .filter_map(|entry| match entry {
+                    RuntimeEntry::DailyAlarm { id, next_date, .. } => Some((*id, *next_date)),
+                    RuntimeEntry::Countdown { .. } => None,
+                })
+                .collect::<BTreeMap<_, _>>()
+        };
+        let previous = dates(previous);
+        let mut current = dates(self);
+        current.retain(|id, date| previous.get(id) != Some(date));
+        current
     }
 
     pub fn create_daily_alarm(
@@ -541,6 +637,52 @@ impl ClockScheduler {
         }
     }
 
+    /// Keeps absolute deadlines unchanged when a concurrent window edits unrelated fields.
+    pub fn export_profile_mutation(
+        &self,
+        previous: &Self,
+        stored: &ClockProfile,
+        snapshot: &ClockSnapshot,
+        now: Instant,
+    ) -> ClockProfile {
+        let before = previous.export_profile(snapshot, now);
+        let before = records_by_id(&before);
+        let stored = records_by_id(stored);
+        let mut profile = self.export_profile(snapshot, now);
+        for record in &mut profile.entries {
+            let id = clock_record_id(record);
+            let (Some(before), Some(stored)) = (before.get(&id), stored.get(&id)) else {
+                continue;
+            };
+            if clock_record_deadline(record) != clock_record_deadline(before) {
+                continue;
+            }
+            match (record, *stored) {
+                (
+                    ClockEntryRecord::DailyAlarm {
+                        snooze_deadline_epoch_ms,
+                        ..
+                    },
+                    ClockEntryRecord::DailyAlarm {
+                        snooze_deadline_epoch_ms: saved,
+                        ..
+                    },
+                ) => *snooze_deadline_epoch_ms = *saved,
+                (
+                    ClockEntryRecord::Countdown {
+                        deadline_epoch_ms, ..
+                    },
+                    ClockEntryRecord::Countdown {
+                        deadline_epoch_ms: saved,
+                        ..
+                    },
+                ) => *deadline_epoch_ms = *saved,
+                _ => {}
+            }
+        }
+        profile
+    }
+
     fn allocate_id(&mut self) -> Result<u64, ClockSchedulerError> {
         let id = if is_allocatable_id(self.next_id)
             && !self.entries.iter().any(|entry| entry.id() == self.next_id)
@@ -552,6 +694,42 @@ impl ClockScheduler {
         };
         self.next_id = id.saturating_add(1);
         Ok(id)
+    }
+}
+
+fn read_deadline(
+    deadline: DateTime<Utc>,
+    snapshot: &ClockSnapshot,
+    now: Instant,
+    keep_due: bool,
+) -> Option<RuntimeDeadline> {
+    RuntimeDeadline::from_utc(deadline, snapshot, now)
+        .or_else(|| keep_due.then(|| RuntimeDeadline::new(now, Duration::ZERO)))
+}
+
+fn clock_record_id(record: &ClockEntryRecord) -> u64 {
+    match *record {
+        ClockEntryRecord::DailyAlarm { id, .. } | ClockEntryRecord::Countdown { id, .. } => id,
+    }
+}
+
+fn records_by_id(profile: &ClockProfile) -> HashMap<u64, &ClockEntryRecord> {
+    profile
+        .entries
+        .iter()
+        .map(|record| (clock_record_id(record), record))
+        .collect()
+}
+
+fn clock_record_deadline(record: &ClockEntryRecord) -> Option<u64> {
+    match *record {
+        ClockEntryRecord::DailyAlarm {
+            snooze_deadline_epoch_ms,
+            ..
+        } => snooze_deadline_epoch_ms,
+        ClockEntryRecord::Countdown {
+            deadline_epoch_ms, ..
+        } => Some(deadline_epoch_ms),
     }
 }
 

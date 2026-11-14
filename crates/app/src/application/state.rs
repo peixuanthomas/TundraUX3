@@ -15,7 +15,7 @@ use crate::launcher::{LauncherCommand, LauncherController, LauncherEffect, Launc
 use identity::{AuthSession, UserAccount};
 use time::{ClockDisplay, ClockSnapshot, NetworkClock, TimeSyncResult};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AppSystemStatusSnapshot {
     pub revision: u64,
     pub observed_at: chrono::DateTime<chrono::Utc>,
@@ -414,7 +414,7 @@ impl AppState {
         (AppAction::Redraw, effect)
     }
 
-    fn sync_explorer_clipboard(&mut self) {
+    pub fn sync_explorer_clipboard(&mut self) {
         let clipboard = self.explorer_files.clipboard();
         let can_undo = self.explorer_files.can_undo();
         if let Some(state) = self.page_models.explorer.as_mut() {
@@ -429,19 +429,37 @@ impl AppState {
         }
     }
 
-    pub fn explorer_operation_started(&mut self) {
-        self.explorer_files.set_operation_busy(true);
+    pub fn refresh_shared_explorer(&mut self) -> Result<(), crate::explorer::ExplorerError> {
+        self.explorer_files.refresh_shared()?;
         self.sync_explorer_clipboard();
+        Ok(())
+    }
+
+    pub fn explorer_operation_started(&mut self) -> Result<(), crate::explorer::ExplorerError> {
+        self.explorer_files.set_operation_busy(true)?;
+        self.sync_explorer_clipboard();
+        Ok(())
     }
 
     pub fn explorer_operation_finished(&mut self, moved_sources: &[std::path::PathBuf]) {
-        self.explorer_files.set_operation_busy(false);
-        self.explorer_files.consume_cut_paths(moved_sources);
+        let result = self
+            .explorer_files
+            .consume_cut_paths(moved_sources)
+            .and_then(|()| self.explorer_files.set_operation_busy(false));
+        if let Err(error) = result
+            && let Some(state) = self.page_models.explorer.as_mut()
+        {
+            state.error = Some(error.localized().message.into());
+        }
         self.sync_explorer_clipboard();
     }
 
     pub fn record_explorer_moves(&mut self, moves: Option<Vec<crate::explorer::ExplorerUndoMove>>) {
-        self.explorer_files.record_moves(moves);
+        if let Err(error) = self.explorer_files.record_moves(moves)
+            && let Some(state) = self.page_models.explorer.as_mut()
+        {
+            state.error = Some(error.localized().message.into());
+        }
         self.sync_explorer_clipboard();
     }
     pub fn launcher_state(&self) -> Option<&LauncherState> {

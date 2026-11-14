@@ -93,6 +93,10 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn open_editor(&mut self) {
+        if self.route_window_launch(WindowLaunch::Editor) {
+            return;
+        }
+        self.initialize_editor_vim_mode();
         if self.active_screen() == ShellScreen::Editor && self.config_editor_active() {
             self.notify_toast(i18n::msg!("config-editor-finish-document"));
             return;

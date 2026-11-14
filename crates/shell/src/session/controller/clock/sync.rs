@@ -21,6 +21,9 @@ impl ShellSession {
             Err(error) => {
                 self.app
                     .dispatch_at(app::AppCommand::ApplyTimeSync(Err(error)), Instant::now());
+                if self.last_time_sync_utc.is_none() {
+                    self.publish_workspace_clock(None);
+                }
                 self.report_time_sync_fallback(i18n::msg!("time-sync-network-failed"));
             }
         }
@@ -49,6 +52,7 @@ impl ShellSession {
     ) {
         self.time_sync_attempted = true;
         if self.last_time_sync_utc.is_none() {
+            self.publish_workspace_clock(None);
             let app_snapshot = self.app.snapshot();
             let timezone_id = app_snapshot.clock_timezone_id.map(str::to_owned);
             self.app.dispatch_at(
@@ -74,8 +78,12 @@ impl ShellSession {
         self.last_time_sync_utc = Some(utc);
         self.app
             .dispatch_at(app::AppCommand::ApplyTimeSync(Ok(utc)), Instant::now());
+        self.publish_workspace_clock(Some(utc));
 
-        if self.clock_scheduler.is_some() && self.app.auth_session().is_some() {
+        if !self.window_owner.is_app()
+            && self.clock_scheduler.is_some()
+            && self.app.auth_session().is_some()
+        {
             let snapshot = self.app.snapshot().clock;
             match self.persist_clock_scheduler_at(&snapshot, Instant::now()) {
                 Ok(()) => {
@@ -155,10 +163,13 @@ impl ShellSession {
         }
         self.settings_task_runtime
             .reconfigure_system_services(&config);
+        let synchronized_utc = self
+            .last_time_sync_utc
+            .map(|_| self.app.snapshot().clock.utc);
         self.app.dispatch_at(
             app::AppCommand::SetStorageConfig {
                 config,
-                synchronized_utc: self.last_time_sync_utc,
+                synchronized_utc,
             },
             Instant::now(),
         );

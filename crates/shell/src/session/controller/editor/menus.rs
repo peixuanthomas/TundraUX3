@@ -3,6 +3,7 @@ use platform::management::ManagementField;
 
 impl ShellSession {
     pub(in crate::session) fn new_edit_document(&mut self) {
+        self.initialize_editor_vim_mode();
         if self.config_editor_active() {
             self.notify_toast(i18n::msg!("config-editor-finish-document"));
             return;

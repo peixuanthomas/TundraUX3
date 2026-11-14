@@ -120,13 +120,14 @@ impl ShellSession {
             ShellScreen::Diagnostics | ShellScreen::SystemStatus
         )
         .then(|| self.to_diagnostics_view_model());
+        let setup_model =
+            (content_screen == ShellScreen::FirstRunSetup).then(|| self.to_setup_view_model());
         self.hit_map = build_shell_hit_map(
             layout,
             content_screen,
             active_screen == ShellScreen::ExitConfirm,
             self.pages.common.active_popup,
-            self.pages.setup.setup_step,
-            self.language_catalog.options().len(),
+            setup_model.as_ref(),
             self.pages.setup.setup_custom_color_target.is_some(),
             self.hit_map_generation,
             self.time_sync_dialog_visible,

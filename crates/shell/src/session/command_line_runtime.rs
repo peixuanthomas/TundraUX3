@@ -13,8 +13,9 @@ use watchdog::{AppWatchdog, ComponentId, ManagedTaskGroup};
 const SCROLL_LINES_PER_NOTCH: usize = 3;
 const EMBEDDED_RESET_EXIT_CODE: u32 = 75;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct ExternalTerminalLaunch {
+    #[serde(with = "workspace_protocol::native_path")]
     pub program: PathBuf,
     pub args: Vec<String>,
     pub wait_for_enter: Option<bool>,
@@ -117,6 +118,12 @@ impl CommandLineHost {
                         terminal_runtime::ansi_foreground(accent).into(),
                     ),
                 ];
+                #[cfg(target_os = "linux")]
+                if let Some(worker) = crate::process_host::WorkerConnection::current()
+                    && matches!(worker.worker().role, workspace_protocol::WorkerRole::App(_))
+                {
+                    config.env.push(worker.embedded_cli_resource_environment()?);
+                }
             }
             if let Some(directory) = directory {
                 config.cwd = Some(directory.to_path_buf());
@@ -389,6 +396,13 @@ impl CommandLineHost {
         matches!(self.state, CommandLineHostState::Running(_))
     }
 
+    pub fn reported_minimum_size(&self) -> Option<(u16, u16)> {
+        match &self.state {
+            CommandLineHostState::Running(pty) => pty.reported_minimum_size(),
+            _ => None,
+        }
+    }
+
     /// A confirmed close must report a failure instead of hiding a live child.
     pub fn try_terminate(&mut self) -> io::Result<()> {
         if let CommandLineHostState::Running(pty) = &self.state {
@@ -646,6 +660,23 @@ impl CommandLineHosts {
 
     pub(super) fn has_running_processes(&self) -> bool {
         self.hosts.values().any(CommandLineHost::is_running)
+    }
+
+    pub(super) fn minimum_content_size(&self) -> Option<(u16, u16)> {
+        self.hosts
+            .values()
+            .filter_map(|host| {
+                let (columns, rows) = host.reported_minimum_size()?;
+                let snapshot = host.view_model();
+                let area = Rect::new(0, 0, snapshot.terminal.columns, snapshot.terminal.rows);
+                let output = snapshot.output_area(area);
+                let content = ui::command_line_content_area(output, &snapshot.terminal);
+                Some((
+                    columns.saturating_add(area.width.saturating_sub(content.width)),
+                    rows.saturating_add(area.height.saturating_sub(content.height)),
+                ))
+            })
+            .reduce(|left, right| (left.0.max(right.0), left.1.max(right.1)))
     }
 
     pub(super) fn set_cell_size(&mut self, width: u16, height: u16) {

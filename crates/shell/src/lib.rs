@@ -65,7 +65,10 @@ pub use terminal_size::{ShellTerminalSizeError, ShellTerminalSizeRequirement};
 pub(crate) use banner::asset_io_error;
 pub(crate) use terminal_size::checked_current_terminal_size;
 
+#[doc(hidden)]
+pub mod process_host;
 mod session;
+pub(crate) mod session_services;
 
 pub use session::*;
 

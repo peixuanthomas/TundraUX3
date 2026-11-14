@@ -42,7 +42,7 @@ fn draw(
 ) -> bool {
     let mut running = false;
     terminal
-        .draw(|target| running = compositor.render(target, state, frame, None))
+        .draw(|target| running = compositor.render(target, state, frame, None, None))
         .unwrap();
     running
 }

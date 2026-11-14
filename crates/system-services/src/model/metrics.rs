@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Utc};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum MetricState<T> {
     Loading,
     Ready(T),
@@ -10,7 +10,7 @@ pub enum MetricState<T> {
     Unavailable { reason: String },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CpuSnapshot {
     pub usage_percent: f32,
     pub per_core_percent: Vec<f32>,
@@ -18,7 +18,7 @@ pub struct CpuSnapshot {
     pub physical_core_count: Option<usize>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MemorySnapshot {
     pub total_bytes: u64,
     pub used_bytes: u64,
@@ -27,19 +27,19 @@ pub struct MemorySnapshot {
     pub swap_used_bytes: u64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LoadSnapshot {
     pub one: f64,
     pub five: f64,
     pub fifteen: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UptimeSnapshot {
     pub seconds: u64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NetworkIoInterfaceSnapshot {
     pub name: String,
     pub received_bytes: u64,
@@ -48,7 +48,7 @@ pub struct NetworkIoInterfaceSnapshot {
     pub transmitted_bytes_per_second: f64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NetworkIoSnapshot {
     pub interfaces: Vec<NetworkIoInterfaceSnapshot>,
     pub total_received_bytes: u64,
@@ -57,14 +57,14 @@ pub struct NetworkIoSnapshot {
     pub total_transmitted_bytes_per_second: f64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ThermalSensorSnapshot {
     pub label: String,
     pub temperature_celsius: f32,
     pub critical_celsius: Option<f32>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BatteryState {
     Charging,
     Discharging,
@@ -73,7 +73,7 @@ pub enum BatteryState {
     Unknown,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BatterySnapshot {
     pub vendor: Option<String>,
     pub model: Option<String>,
@@ -85,7 +85,7 @@ pub struct BatterySnapshot {
     pub time_to_full_seconds: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ProcessMetricSnapshot {
     pub pid: u32,
     pub name: String,
@@ -93,13 +93,13 @@ pub struct ProcessMetricSnapshot {
     pub memory_bytes: u64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ProcessRankingsSnapshot {
     pub top_cpu: Vec<ProcessMetricSnapshot>,
     pub top_memory: Vec<ProcessMetricSnapshot>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SystemIdentitySnapshot {
     pub host_name: Option<String>,
     pub os_name: Option<String>,
@@ -107,7 +107,7 @@ pub struct SystemIdentitySnapshot {
     pub kernel_version: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SystemMetricsSnapshot {
     pub identity: MetricState<SystemIdentitySnapshot>,
     pub cpu: MetricState<CpuSnapshot>,

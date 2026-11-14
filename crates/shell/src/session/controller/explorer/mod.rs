@@ -203,6 +203,11 @@ impl ShellSession {
             return;
         };
 
+        if self.active_screen() != ShellScreen::Editor
+            && self.route_window_launch(WindowLaunch::Explorer)
+        {
+            return;
+        }
         let user_dirs = match self.explorer_user_dirs(platform) {
             Ok(dirs) => dirs,
             Err(error) => {
@@ -255,6 +260,15 @@ impl ShellSession {
         start_path: std::path::PathBuf,
         purpose: ExplorerPurpose,
     ) {
+        if self.active_screen() != ShellScreen::Editor
+            && self.route_window_launch(WindowLaunch::ExplorerPath {
+                path: start_path.as_os_str().to_owned(),
+                diagnostics: matches!(purpose, ExplorerPurpose::DiagnosticsLogs),
+                select: None,
+            })
+        {
+            return;
+        }
         self.enter_new_page(ShellScreen::Explorer);
         let explorer_config = self.app.storage_config().explorer.clone();
         self.replace_explorer_state(Some(ExplorerState::with_config(
@@ -295,11 +309,18 @@ impl ShellSession {
                 picker.explorer_purpose,
                 ExplorerPurpose::EditorSaveAs { .. }
             );
-        if let Some(editor) = self.pages.editor.get_mut(owner) {
-            editor.editor_discard_for_open = false;
-            if cancelled_save {
-                editor.editor_close_after_save = false;
-                editor.editor_open_after_save = false;
+        let Some(editor) = self.pages.editor.get_mut(owner) else {
+            return;
+        };
+        editor.editor_discard_for_open = false;
+        if cancelled_save {
+            let close_after_save = std::mem::take(&mut editor.editor_close_after_save);
+            editor.editor_open_after_save = false;
+            if close_after_save
+                && self.window_close == crate::session::app_host::WindowClose::Checking
+            {
+                self.window_close = crate::session::app_host::WindowClose::Cancelled;
+                self.approved_editor_closes.clear();
             }
         }
     }

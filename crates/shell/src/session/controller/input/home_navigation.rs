@@ -56,6 +56,10 @@ impl ShellSession {
         if self.identity_backend == identity::IdentityBackend::Linux {
             return;
         }
+        if self.window_owner.is_app() || self.windows_active {
+            self.window_global_request = Some(ShellCommand::Logout);
+            return;
+        }
         // Account disable/delete may force a return to login without passing
         // through the ordinary Logout command. Preserve any dirty editor text
         // before the authenticated recovery context is cleared.
