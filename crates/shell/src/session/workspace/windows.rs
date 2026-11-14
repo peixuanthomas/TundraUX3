@@ -261,7 +261,9 @@ impl Workspace {
         if let Some(taskbar) = &mut self.taskbar {
             taskbar
                 .hits
-                .retain(|(action, _)| *action != WorkspaceTaskbarAction::Activate(id));
+                .retain(|(action, _)| {
+                    !matches!(action, WorkspaceTaskbarAction::Activate(window) | WorkspaceTaskbarAction::Close(window) if *window == id)
+                });
         }
         self.panel_hits.retain(|(action, _)| {
             !matches!(

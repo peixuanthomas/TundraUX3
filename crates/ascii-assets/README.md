@@ -49,7 +49,7 @@ The English and Chinese `modules/` files include:
 | `management-network-disks.ftl` | Connection states and reasons configuration is unavailable or read-only |
 | `settings.ftl` | Animation phase fields, validation, reset, save, and cancel actions |
 | `ui-style-preview.ftl`, `ui-test.ftl` | Neutral compact Tea preview, one-character task feedback, and primary and danger sample-action labels |
-| `workspace.ftl` | Per-window frame controls, the bottom window bar, split menus, minimum dimensions, close and cleanup prompts, and watchdog CLI messages |
+| `workspace.ftl` | Per-window frame controls, the bottom window bar and its close button, split menus, minimum dimensions, close and cleanup prompts, and watchdog CLI messages |
 | `update-progress.ftl` | Update stages and confirmation that an unchanged Vim engine is reused without rebuilding |
 
 ## Default asset repair

@@ -221,6 +221,23 @@ fn taskbar_keeps_minimized_windows_reachable_and_leaves_neighboring_status_cells
         .find(|node| node.id.ends_with("workspace.taskbar.1"))
         .unwrap();
     assert!(active.selected && active.actionable);
+    let close = snapshot
+        .nodes
+        .iter()
+        .find(|node| node.id.ends_with("workspace.taskbar.1.close"))
+        .unwrap();
+    assert!(close.actionable);
+    let close_area = first
+        .hits
+        .iter()
+        .find_map(|(action, area)| {
+            (*action == WorkspaceTaskbarAction::Close(SessionId(1))).then_some(*area)
+        })
+        .unwrap();
+    assert_eq!(
+        terminal.backend().buffer()[(close_area.right() - 1, close_area.y)].symbol(),
+        "−"
+    );
     let minimized = snapshot
         .nodes
         .iter()
@@ -228,6 +245,11 @@ fn taskbar_keeps_minimized_windows_reachable_and_leaves_neighboring_status_cells
         .unwrap();
     assert!(minimized.name.contains("Unresponsive"));
     assert!(minimized.actionable);
+    assert!(
+        last.hits
+            .iter()
+            .any(|(action, _)| *action == WorkspaceTaskbarAction::Close(SessionId(10)))
+    );
 }
 
 #[test]

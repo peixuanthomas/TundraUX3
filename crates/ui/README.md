@@ -20,7 +20,7 @@ Pages render only the content in `ShellFrameLayout.main` and their own overlays.
 
 The global title bar exposes Tasks for logged-in non-guest users, including running and awaiting-approval status. Title and status bars each use one row; Tasks, Help, Back, the clock, and the screen-keyboard entry share their actual render and hit-test geometry.
 
-Each app window has a complete frame. Its top edge shows the title and buttons for minimizing, toggling full screen, splitting, and closing. The split button opens a menu anchored at the window for selecting a layout, adding a new app, or bringing a background app into the split. The bottom window bar uses the left side of the status row. Its buttons switch to running apps and restore minimized ones. Arrows scroll the bar when its titles cannot all fit.
+Each app window has a complete frame. Its top edge shows the title and buttons for minimizing, toggling full screen, splitting, and closing. The split button opens a menu anchored at the window for selecting a layout, adding a new app, or bringing a background app into the split. The bottom window bar uses the left side of the status row. Each entry has separate title and minus targets for restoring and closing the window. Arrows scroll the bar when its titles cannot all fit.
 
 Window controls and menus share their painting and hit-test geometry. At the 108×20 terminal minimum, the global title and status rows and the four window edges leave a 106×16 content area for an app. A one-cell gap separates split windows. Left/right and top/bottom layouts fit two panes when space permits. Grid capacity grows with the terminal, and the last row distributes its width among the windows it holds.
 

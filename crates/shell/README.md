@@ -57,7 +57,7 @@ Logged-in non-guest users can open Tasks from the global title bar. Background q
 
 ## Windows
 
-Every app has a frame with its title and **Minimize**, **Full screen** or **Restore**, **Split**, and **Close** controls. Click a window in the bottom bar to focus or restore it. A minimized window returns to its previous position when the split has room. When the split is full, restoring it uses the focused slot.
+Every app has a frame with its title and **Minimize**, **Full screen** or **Restore**, **Split**, and **Close** controls. Click a title in the bottom bar to focus or restore that window. Click its minus button to close it normally. A minimized window returns to its previous position when the split has room. When the split is full, restoring it uses the focused slot.
 
 **Split** opens a menu beside the window. Choose side by side, stacked, or grid, then choose a background window or **Add window** to open another app from Home. The side-by-side and stacked layouts fit two windows. Grid adjusts to the available cells. A regular app launch uses the focused slot and moves the previous app to the background.
 

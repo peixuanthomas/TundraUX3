@@ -100,6 +100,49 @@ fn exited_window_frame_and_taskbar_hits_do_not_survive_until_redraw() {
 }
 
 #[test]
+fn taskbar_minus_closes_its_window_on_release() {
+    let mut workspace = Workspace::new(None, false);
+    let foreground = SessionId(1);
+    let target = SessionId(2);
+    for id in [target, foreground] {
+        workspace.windows.insert(id, window(Size::new(106, 16)));
+        workspace.selection.open(id);
+    }
+    let taskbar = WorkspaceTaskbar::new(
+        Rect::new(0, 19, 108, 1),
+        &[WorkspaceTaskbarItem {
+            id: target,
+            title: "Clock".into(),
+            focused: false,
+            minimized: true,
+            closing: false,
+            unresponsive: false,
+        }],
+        0,
+    );
+    workspace.taskbar = Some(taskbar);
+    let down = ui::MouseEventKind::Down(PointerButton::Left);
+    let up = ui::MouseEventKind::Up(PointerButton::Left);
+    pointer(&mut workspace, (1, 19), down);
+    pointer(&mut workspace, (4, 19), up);
+    assert_eq!(workspace.windows[&target].close, CloseProgress::Idle);
+    assert_eq!(workspace.selection.focused(), Some(foreground));
+
+    pointer(&mut workspace, (1, 19), down);
+    assert_eq!(workspace.windows[&target].close, CloseProgress::Idle);
+    pointer(&mut workspace, (1, 19), up);
+    assert!(matches!(
+        workspace.windows[&target].close,
+        CloseProgress::Requested(_)
+    ));
+    assert_eq!(workspace.windows[&foreground].close, CloseProgress::Idle);
+    assert_eq!(
+        workspace.windows[&target].queued.back(),
+        Some(&ShellToApp::RequestClose)
+    );
+}
+
+#[test]
 fn stale_window_list_keyboard_focus_does_not_restore_an_exited_window() {
     let id = SessionId(1);
     let mut workspace = Workspace::new(None, false);

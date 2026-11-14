@@ -487,6 +487,7 @@ impl Workspace {
                     self.selection.activate(id, self.layout.capacity);
                 }
             }
+            WorkspaceTaskbarAction::Close(id) => self.request_close(id),
             WorkspaceTaskbarAction::ScrollLeft => {
                 self.taskbar_scroll = self.taskbar_scroll.saturating_sub(1);
             }

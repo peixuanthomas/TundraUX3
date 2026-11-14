@@ -18,15 +18,21 @@ pub struct WorkspaceTaskbarItem {
 }
 
 impl WorkspaceTaskbarItem {
-    pub(super) fn marker(&self) -> &'static str {
+    fn status_marker(&self) -> &'static str {
         if self.unresponsive {
             "! "
         } else if self.closing {
             "… "
-        } else if self.minimized {
-            "− "
         } else {
             ""
+        }
+    }
+
+    pub(super) fn marker(&self) -> &'static str {
+        if self.minimized && !self.unresponsive && !self.closing {
+            "− "
+        } else {
+            self.status_marker()
         }
     }
 
@@ -48,6 +54,7 @@ impl WorkspaceTaskbarItem {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkspaceTaskbarAction {
     Activate(SessionId),
+    Close(SessionId),
     ScrollLeft,
     ScrollRight,
 }
@@ -56,6 +63,7 @@ impl WorkspaceTaskbarAction {
     pub fn id(self) -> String {
         match self {
             Self::Activate(id) => format!("workspace.taskbar.{id}"),
+            Self::Close(id) => format!("workspace.taskbar.{id}.close"),
             Self::ScrollLeft => "workspace.taskbar.previous".into(),
             Self::ScrollRight => "workspace.taskbar.next".into(),
         }
@@ -76,8 +84,8 @@ impl WorkspaceTaskbar {
         let widths = items
             .iter()
             .map(|item| {
-                (terminal_width(&item.title) + terminal_width(item.marker()) + 2).clamp(8, 28)
-                    as u16
+                let marker_width = terminal_width(item.status_marker());
+                (terminal_width(&one_line(&item.title)) + marker_width + 4).clamp(8, 28) as u16
             })
             .collect::<Vec<_>>();
         let total = widths
@@ -125,9 +133,16 @@ impl WorkspaceTaskbar {
                 if width == 0 || width > remaining {
                     break;
                 }
+                let close_width = 2.min(width - 1);
+                if close_width > 0 {
+                    hits.push((
+                        WorkspaceTaskbarAction::Close(item.id),
+                        Rect::new(x, area.y, close_width, 1),
+                    ));
+                }
                 hits.push((
                     WorkspaceTaskbarAction::Activate(item.id),
-                    Rect::new(x, area.y, width, 1),
+                    Rect::new(x + close_width, area.y, width - close_width, 1),
                 ));
                 x = x.saturating_add(width + 1);
             }
@@ -175,25 +190,33 @@ pub fn render_workspace_taskbar(
     let mut theme = context.compatibility_theme();
     theme.buttons = None;
     for &(action, area) in &taskbar.hits {
-        let Activate(id) = action else { continue };
+        let id = match action {
+            Activate(id) | Close(id) => id,
+            _ => continue,
+        };
         let Some(item) = items.iter().find(|item| item.id == id) else {
             continue;
         };
-        let marker = item.marker();
-        let title = one_line(&item.title);
-        let label = if area.width <= 2 {
-            fit_cell(&format!("{marker}{title}"), usize::from(area.width))
+        let mut button = if matches!(action, Close(_)) {
+            Button::new(action.id(), if area.width > 1 { " −" } else { "−" })
+                .with_capture_name(i18n::tr!(
+                    "ui-workspace-close-window",
+                    window = one_line(&item.title)
+                ))
+                .with_emphasis(crate::components::ButtonEmphasis::Danger)
         } else {
-            format!(
-                " {}",
-                fit_cell(&format!("{marker}{title}"), usize::from(area.width - 2))
-            )
-        };
-        let mut button = Button::new(action.id(), label)
-            .with_label_alignment(ratatui::layout::HorizontalAlignment::Left)
-            .with_background(context.theme.raised)
-            .with_capture_name(item.label())
-            .with_current(item.focused);
+            let title = format!("{}{}", item.status_marker(), one_line(&item.title));
+            let label = if area.width <= 2 {
+                fit_cell(&title, usize::from(area.width))
+            } else {
+                format!(" {}", fit_cell(&title, usize::from(area.width - 2)))
+            };
+            Button::new(action.id(), label).with_capture_name(item.label())
+        }
+        .with_label_alignment(ratatui::layout::HorizontalAlignment::Left)
+        .with_background(context.theme.raised)
+        .with_current(item.focused);
+        button.set_disabled(matches!(action, Close(_)) && item.closing);
         button.state.hovered = hovered == Some(action);
         button.state.active = pressed == Some(action);
         button.render_borderless_frame(frame, area, &theme);

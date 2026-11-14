@@ -14,6 +14,7 @@ ui-workspace-taskbar = Running windows
 ui-workspace-scroll-left = Scroll left
 ui-workspace-scroll-right = Scroll right
 ui-workspace-close = Close window
+ui-workspace-close-window = Close { $window }
 ui-workspace-force-kill = Force kill
 ui-workspace-dismiss = Back
 ui-workspace-scroll-up = Scroll up

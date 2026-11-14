@@ -14,6 +14,7 @@ ui-workspace-taskbar = 运行窗口
 ui-workspace-scroll-left = 向左滚动
 ui-workspace-scroll-right = 向右滚动
 ui-workspace-close = 关闭窗口
+ui-workspace-close-window = 关闭 { $window }
 ui-workspace-force-kill = 强制终止
 ui-workspace-dismiss = 返回
 ui-workspace-scroll-up = 向上滚动
