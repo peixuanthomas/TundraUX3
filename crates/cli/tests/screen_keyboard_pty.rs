@@ -22,10 +22,9 @@ const ACCENT: vt100::Color = vt100::Color::Rgb(12, 34, 56);
 // Held keycaps use the configured accent fill and contrasting white legends.
 const PRESSED: vt100::Color = vt100::Color::Idx(15);
 const TEXT: vt100::Color = vt100::Color::Rgb(140, 160, 180);
-// The demo's surrounding AA controls retain ordinary page button colors.
-const PAGE_TEXT: vt100::Color = vt100::Color::Rgb(230, 230, 230);
-const PAGE_PRESSED: vt100::Color = vt100::Color::Rgb(97, 111, 125);
-const CANVAS: vt100::Color = vt100::Color::Rgb(16, 16, 16);
+// AA controls follow the Glacier Night palette used by ordinary pages.
+const PAGE_TEXT: vt100::Color = vt100::Color::Rgb(230, 241, 244);
+const CANVAS: vt100::Color = vt100::Color::Rgb(7, 17, 22);
 const SEEDED_CLIPBOARD: &str = "Seed中文\nλZ\u{1}";
 const COPIED_TEXT: &str = "Seed中文\nλZ\nΩ\nTail\nPaste汉!";
 
@@ -371,7 +370,7 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
     });
     assert!(
         started.elapsed() >= Duration::from_millis(320),
-        "saved 50% speed must slow the 220ms transition"
+        "saved 50% speed must extend the configured 220ms transition"
     );
     terminal.click(
         ScreenKeyboardAction::ToggleKeyboard,
@@ -919,6 +918,7 @@ impl Fixture {
         config.appearance.border_color = storage::BorderColor::Rgb(140, 160, 180);
         config.appearance.motion_preference = storage::MotionPreference::Full;
         config.appearance.animation_speed_percent = 50;
+        config.appearance.animation_timings.page = [55, 110, 55];
         storage.save_config(&config).unwrap();
         fixture
     }
@@ -1015,14 +1015,8 @@ impl PtySession {
         expected: impl Fn(&vt100::Screen) -> bool,
     ) {
         let position = button_position(self.parser.screen(), collapsed, action);
-        let layout = layout(self.parser.screen(), collapsed);
-        let pressed = if layout.aa_dialog.contains((position.1, position.0).into()) {
-            PAGE_PRESSED
-        } else {
-            PRESSED
-        };
         self.mouse(0, position, false);
-        self.wait_for(description, |screen| color_at(screen, position) == pressed);
+        self.wait_for(description, |screen| color_at(screen, position) == PRESSED);
         self.mouse(0, position, true);
         // A modifier can change labels after release. Consume that redraw before
         // locating the next button, even when its resulting state is checked later.
@@ -1035,7 +1029,7 @@ impl PtySession {
                 ScreenKeyboardAction::Alt => Some("Alt"),
                 _ => None,
             };
-            (color_at(screen, position) != pressed
+            (color_at(screen, position) != PRESSED
                 || modifier.is_some_and(|name| last_key(screen, collapsed).contains(name)))
                 && expected(screen)
         });
@@ -1210,10 +1204,7 @@ fn visible_button_position(
         for col in area.x..area.right() {
             let cell = screen.cell(row, col).unwrap();
             if !cell.contents().trim().is_empty()
-                && matches!(
-                    cell.fgcolor(),
-                    TEXT | ACCENT | PRESSED | PAGE_TEXT | PAGE_PRESSED
-                )
+                && matches!(cell.fgcolor(), TEXT | ACCENT | PRESSED | PAGE_TEXT)
             {
                 return Some((row, col));
             }

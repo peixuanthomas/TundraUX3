@@ -342,7 +342,7 @@ fn stopped_and_failed_cli_states_offer_restart_and_the_return_button() {
     for (state, expected) in [
         (
             CommandLineProcessState::Exited { code: 75 },
-            "CLI exited (75); Enter restart · use the top-right button to return",
+            "Command Line exited (75)",
         ),
         (
             CommandLineProcessState::Failed {
@@ -365,15 +365,20 @@ fn stopped_and_failed_cli_states_offer_restart_and_the_return_button() {
                 );
             })
             .unwrap();
-        let output = screen
-            .backend()
-            .buffer()
+        let buffer = screen.backend().buffer();
+        let output = buffer
             .content()
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
 
-        assert!(output.contains(expected));
+        assert!(output.contains(expected), "{output}");
+        assert!(output.contains("Enter restart · use the top-right button to return"));
+        let title_bar = buffer.content()[..usize::from(buffer.area.width)]
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(title_bar.trim_end().ends_with("Esc"), "{title_bar}");
         assert!(!output.contains("Esc Launcher"));
         assert!(!output.contains("Ctrl+Shift+X"));
         assert!(output.contains("Ready"));

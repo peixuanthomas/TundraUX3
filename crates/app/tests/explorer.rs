@@ -303,7 +303,7 @@ fn guest_permissions_are_denied_without_mutating_files() {
 }
 
 #[test]
-fn lnk_files_are_blocked_before_platform_open() {
+fn lnk_files_require_launcher_before_platform_open() {
     let fixture = Fixture::new("blocked-lnk");
     let shortcut = fixture.documents.join("tool.lnk");
     fs::write(&shortcut, "shortcut").expect("shortcut fixture");
@@ -336,7 +336,7 @@ fn lnk_files_are_blocked_before_platform_open() {
             .as_ref()
             .map(i18n::LocalizedText::render_current)
             .unwrap_or_default()
-            .contains("blocked")
+            .contains("must be opened through Launcher")
     );
     assert!(
         !fixture

@@ -94,7 +94,7 @@ fn setup_admin_page_is_step_specific_and_masks_password() {
 
     assert!(output.contains("Step: Admin"));
     assert!(output.contains("Create the first Tundra application administrator account."));
-    assert!(output.contains("This does not create an operating system administrator."));
+    assert!(output.contains("This account is not used for operating system login."));
     assert!(output.contains("Admin username"));
     assert!(output.contains("AdminUser"));
     assert!(output.contains("Admin password"));

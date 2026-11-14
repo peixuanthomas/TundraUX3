@@ -133,7 +133,7 @@ fn structured_task_errors_keep_identity_across_languages() {
     .localized();
     assert_eq!(error.event_code, "EXPLORER_PARTIAL_MOVE");
     assert!(english.render(&error.message).contains("partially moved"));
-    assert!(chinese.render(&error.message).contains("仅部分移动"));
+    assert!(chinese.render(&error.message).contains("只移动了一部分"));
     let plan = ExplorerTaskError::InvalidPlan {
         message: msg!("app-tasks-source-required").into(),
     }
@@ -141,7 +141,7 @@ fn structured_task_errors_keep_identity_across_languages() {
     assert_eq!(plan.message.id, "app-tasks-source-required");
     assert_eq!(chinese.render(&plan.message), "传输至少需要一个源项目");
     let submit = ExplorerTaskSubmitError::RecoveryRequired.localized();
-    assert!(chinese.render(&submit.message).contains("中断的操作"));
+    assert!(chinese.render(&submit.message).contains("中断操作"));
 }
 
 #[test]
