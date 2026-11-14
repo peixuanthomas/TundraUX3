@@ -1,7 +1,6 @@
 use super::*;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) struct TaskFixture {
     runtime: Option<watchdog::WatchdogRuntime>,
@@ -11,14 +10,9 @@ pub(crate) struct TaskFixture {
 
 impl TaskFixture {
     pub(crate) fn new() -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "tundra-aa-task-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root =
+            platform::create_temp_dir(&std::env::temp_dir().join("TundraUX3"), "aa-task-test")
+                .unwrap();
         let config = watchdog::WatchdogConfig::new(
             root.join("reports"),
             root.join("fallback"),
