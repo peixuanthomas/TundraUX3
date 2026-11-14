@@ -1,6 +1,6 @@
 # cli
 
-`cli` provides `tundra-cli`: configuration, diagnostics, logs, Linux operations commands, Shell interface control, and an interactive command line. It also hosts update and authorization helper entry points; these internal entry points are not part of the public scripting interface.
+`cli` provides `tundra-cli`: configuration, diagnostics, logs, Linux operations commands, Shell interface control, managed-process recovery, and an interactive command line. It also hosts update and authorization helper entry points; these internal entry points are not part of the public scripting interface.
 
 ## Common entry points
 
@@ -14,10 +14,12 @@
 
 Normal REPL input is passed to the system command interpreter; Tundra commands use the `/` prefix. The session retains its working directory and exported environment variables without changing the Tundra main process or system environment configuration.
 
+On Linux the embedded REPL registers child process resources through its Command Line window's guardian. The guardian verifies the embedded CLI's process ancestry and tracks registered authorization helpers through cleanup if the window dies.
+
 ## Modules and responsibilities
 
 - `src/arguments.rs` parses public arguments and configuration fields.
-- `src/commands/` groups commands such as asset, config, debug, doctor, launcher, logs, management, and ui.
+- `src/commands/` groups commands such as asset, config, debug, doctor, launcher, logs, management, ui, and watchdog.
 - `src/management_client.rs` reuses platform's management connection.
 - `src/repl/` provides the interactive command line, completion, and embedded-host protocol.
 - `src/runner.rs` coordinates configuration, storage, watchdog, and command execution.
@@ -35,6 +37,10 @@ tundra-cli ui wake
 ```
 
 Results use protocol version 1 JSON. Multiple sessions require `--session`; snapshots must be read again after real user input, and timed-out input is not automatically resent. See [UI control](docs/ui-control.md).
+
+## Watchdog recovery
+
+`tundra-cli watchdog list` shows runs and workers owned by the current OS user. Use a run ID and an application session number from that list to force kill one window, or use `--shell` to end the entire run. These commands contact the watchdog directly and work when the Shell interface stops responding. See [watchdog commands](docs/commands.md#watchdog) for arguments and result states.
 
 ## Documentation
 

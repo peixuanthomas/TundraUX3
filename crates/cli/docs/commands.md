@@ -24,6 +24,7 @@ Shell/CLI help and version queries do not start watchdog, read configuration, or
 | `launcher pin <path>` | Check and pin an executable target |
 | `launcher unpin <id>` | Remove a pinned entry while keeping the application files |
 | `ui …` | Shell sessions, snapshots, and input control; see [UI control](ui-control.md) |
+| `watchdog list/kill` | List managed processes or force kill a specified window or Shell run |
 | `services` / `processes` / `packages` / `network` / `disks` | Linux management commands |
 | `users` / `system-config` / `operations` | Account, configuration, and task commands |
 | `firewall` / `ssh` / `backups` / `scheduled-tasks` | Firewall, SSH, backups, and scheduled tasks |
@@ -101,6 +102,22 @@ The Windows equivalents are `set PROJECT_MODE=dev` and `cd /d "C:\path with spac
 Linux/macOS select a valid Shell on first execution, and subsequent commands retain the session state; Windows uses cmd.exe. Unexported local variables, functions, aliases, and Shell options are not preserved across commands. Use `. script` or `call script.cmd` when a script needs to change the current environment.
 
 Each embedded Command Line page has its own child terminal and directory. The prompt shows the current absolute path, and command-completion markers remain in scrollback. A normal `exit` closes the current page; the Back button only cleans up the current instance.
+
+## Watchdog
+
+Use another terminal under the same OS account when a window or Shell stops responding. The commands connect to its independent watchdog, including with **External CLI control** disabled.
+
+```sh
+tundra-cli watchdog list
+tundra-cli watchdog kill --run RUN_ID --session SESSION_ID
+tundra-cli watchdog kill --run RUN_ID --shell
+```
+
+Copy the 32-character run ID from `runs[].run`. For an application window, use the number in `workers[].worker.role.app` from that run. Each worker entry includes the application, current process state, generation, and informational PID. A worker still being cleaned up may also include `cleanup_error`. The command binds the request to the selected process generation.
+
+Both `kill` forms force termination without an interactive confirmation. Force killing can lose unsaved work. `--shell` ends the entire run, including its applications and Services.
+
+Standard output contains one JSON result. `list` returns `runs`, which is empty when no watchdog is available. For `kill`, `status: "kill_requested"` means the watchdog accepted the force-kill request. `status: "killed"` confirms the process exited and includes its exit code when available. Both statuses return exit code 0. Errors are written to standard error and return 1, or 2 for invalid arguments. The CLI sends each force-kill request once. If the response is interrupted, use `list` to check the current state.
 
 ## Diagnostics and failure tests
 

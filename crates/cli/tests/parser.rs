@@ -98,6 +98,7 @@ fn root_help_lists_every_public_command_and_doctor_is_outside_debug() {
         "operations",
         "logs",
         "ui",
+        "watchdog",
         "debug",
         "cls",
         "new",

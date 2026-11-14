@@ -12,7 +12,7 @@ fn main() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     // External control must not write pasted text into startup diagnostics.
     // Help and previews also work without storage or watchdog initialization.
-    if args.first().is_some_and(|arg| arg == "ui")
+    if matches!(args.first().map(String::as_str), Some("ui" | "watchdog"))
         || cli::parse_args(&args).is_ok_and(|command| {
             command.is_help_or_version()
                 || matches!(
@@ -50,6 +50,18 @@ fn main() {
                     i18n::tr!("platform-management-invalid-caller"),
                 )),
             }
+        } else if args[0] == "__privilege-session"
+            && args.len() == 3
+            && args[2] == "--watchdog-owner"
+        {
+            args[1]
+                .parse::<u32>()
+                .map_err(|_| {
+                    platform::management::ManagementError::InvalidInput(
+                        "Invalid operation owner".into(),
+                    )
+                })
+                .and_then(|actor| platform::linux::privilege_session::entry_with_owner(actor, true))
         } else if args.len() != 2 {
             Err(platform::management::ManagementError::InvalidInput(
                 "Invalid internal operation arguments".into(),
@@ -123,9 +135,13 @@ fn main() {
     }
     let parent_managed = is_parent_managed_command_line(&args);
     #[cfg(target_os = "linux")]
-    if parent_managed && let Err(error) = embedded_children_linux::enable() {
-        eprintln!("tundra-cli could not contain embedded commands: {error}");
-        std::process::exit(3);
+    if parent_managed {
+        // SAFETY: embedded-session variables are consumed before starting any workers.
+        let resources = unsafe { shell::process_host::install_delegated_worker_resources() };
+        if let Err(error) = resources.and_then(|()| embedded_children_linux::enable()) {
+            eprintln!("tundra-cli could not contain embedded commands: {error}");
+            std::process::exit(3);
+        }
     }
     let (watchdog_runtime, process_watchdog) = match start_watchdog(parent_managed) {
         Ok(value) => value,

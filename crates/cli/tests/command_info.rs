@@ -26,6 +26,10 @@ fn help_and_version_work_without_startup_or_writable_watchdog_paths() {
         &["help", "ui", "text"],
         &["ui", "click", "--help"],
         &["ui", "wake", "--help"],
+        &["watchdog"],
+        &["watchdog", "--help"],
+        &["help", "watchdog", "kill"],
+        &["watchdog", "list", "--help"],
         &["debug"],
         &["debug", "asset"],
         &["debug", "clear-logs"],
@@ -71,6 +75,7 @@ fn help_and_version_work_without_startup_or_writable_watchdog_paths() {
         &["debug", "test-watchdog-panic"],
         &["repl"],
         &["config", "get"],
+        &["watchdog", "list"],
     ] {
         assert!(
             !cli::parse_args(args.iter().copied())

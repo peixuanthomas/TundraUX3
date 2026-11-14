@@ -16,6 +16,7 @@ pub(super) fn system_candidates(mut names: Vec<String>) -> Vec<String> {
 const COMMANDS: &[&str] = &[
     "help",
     "ui",
+    "watchdog",
     "config",
     "doctor",
     "launcher",
@@ -391,6 +392,7 @@ fn next_words(words: &[String]) -> Vec<String> {
                 verbs.push("help".into());
                 verbs
             }
+            "watchdog" => strings(&["list", "kill", "help"]),
             "debug" => strings(&[
                 "asset",
                 "clear-logs",
@@ -444,6 +446,23 @@ fn next_words(words: &[String]) -> Vec<String> {
             });
         }
         ["/packages", "sources"] => return strings(&["add", "enable", "disable", "remove"]),
+        ["/watchdog", "kill", ..] => {
+            if matches!(words.last(), Some(&("--run" | "--session"))) {
+                return Vec::new();
+            }
+            return ["--run", "--session", "--shell"]
+                .into_iter()
+                .filter(|option| {
+                    !words.contains(option)
+                        && match *option {
+                            "--session" => !words.contains(&"--shell"),
+                            "--shell" => !words.contains(&"--session"),
+                            _ => true,
+                        }
+                })
+                .map(str::to_string)
+                .collect();
+        }
         ["/debug", "view-ui-style"] => return strings(&["1", "2", "3", "help"]),
         ["/debug", "asset"] => {
             return ascii_assets::required_assets()

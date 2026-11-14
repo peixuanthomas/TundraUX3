@@ -142,6 +142,9 @@ pub(crate) fn parse_help_topic(args: &[String]) -> Result<crate::CliCommand, cra
         "logs" | "logs query" | "logs incidents" | "logs export" | "logs follow" => {
             CliCommand::Logs(LogsAction::Help)
         }
+        "watchdog" | "watchdog list" | "watchdog kill" => {
+            CliCommand::Watchdog(crate::WatchdogCommand::Help)
+        }
         "config"
         | "config get"
         | "config set"
@@ -238,6 +241,7 @@ pub(crate) fn write_error_help(output: &mut impl Write, args: &[String]) -> std:
         }
         Some("config") => write_config_help(output),
         Some("ui") => crate::ui_command::help(output),
+        Some("watchdog") => crate::watchdog_command::help(output),
         Some("launcher") => write_topic_help(output, "launcher"),
         Some("debug") => match args.get(1).map(String::as_str) {
             Some("asset") => write_asset_help(output),

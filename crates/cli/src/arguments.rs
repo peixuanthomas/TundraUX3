@@ -3,6 +3,7 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
     Ui(crate::UiCommand),
+    Watchdog(crate::WatchdogCommand),
     Management(crate::ManagementCli),
     ClearLogs(crate::ClearLogsAction),
     Logs(crate::logs_command::LogsAction),
@@ -59,6 +60,7 @@ impl CliCommand {
                 | Self::Logs(crate::LogsAction::Help)
                 | Self::Management(crate::ManagementCli::Help(_))
                 | Self::Ui(crate::UiCommand::Help)
+                | Self::Watchdog(crate::WatchdogCommand::Help)
         )
     }
 }
@@ -120,6 +122,7 @@ pub enum ConfigUpdate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliError {
     InvalidUiArgument,
+    InvalidWatchdogArgument,
     InvalidManagementArgument(String),
     InvalidLogsArgument(String),
     ForbiddenConfigField(String),
@@ -141,6 +144,9 @@ impl fmt::Display for CliError {
         match self {
             Self::InvalidUiArgument => {
                 write!(formatter, "{}", i18n::tr!("ui-control-invalid-arguments"))
+            }
+            Self::InvalidWatchdogArgument => {
+                write!(formatter, "{}", i18n::tr!("watchdog-cli-invalid-arguments"))
             }
             Self::InvalidManagementArgument(message) => write!(formatter, "{message}"),
             Self::InvalidLauncherArgument(message) => {
@@ -228,6 +234,7 @@ where
         }
         "launcher" => crate::launcher_command::parse_launcher(&args).map(CliCommand::Launcher),
         "logs" => crate::logs_command::parse_logs(&args).map(CliCommand::Logs),
+        "watchdog" => crate::watchdog_command::parse_watchdog(&args).map(CliCommand::Watchdog),
         "debug" => parse_debug_args(&args),
         "doctor" => parse_no_extra_args(&args, CliCommand::Doctor),
         "cls" => parse_no_extra_args(&args, CliCommand::Cls),

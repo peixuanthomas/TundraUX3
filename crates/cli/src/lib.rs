@@ -19,7 +19,9 @@ mod repl;
 mod runner;
 pub(crate) use commands::storage_reset;
 pub(crate) use commands::ui as ui_command;
+pub(crate) use commands::watchdog as watchdog_command;
 pub use ui_command::{UiAction, UiCommand, UiRequest, WaitState};
+pub use watchdog_command::WatchdogCommand;
 
 pub use arguments::{
     AssetAction, AssetOutput, CliCommand, CliError, ConfigAction, ConfigField, ConfigUpdate,

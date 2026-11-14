@@ -150,6 +150,9 @@ where
         .collect::<Vec<_>>();
     match parse_args(&args) {
         Ok(CliCommand::Ui(action)) => crate::ui_command::run_ui(platform, stdout, action),
+        Ok(CliCommand::Watchdog(command)) => {
+            crate::watchdog_command::run_watchdog(platform, stdout, stderr, command)
+        }
         Ok(CliCommand::Management(action)) => crate::management_client::run(action, stdout, stderr),
         Ok(CliCommand::TopicHelp(topic)) => {
             let _ = crate::help_text::write_topic_help(stdout, &topic);
