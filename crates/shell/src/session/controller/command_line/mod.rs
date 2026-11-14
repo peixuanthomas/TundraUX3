@@ -57,13 +57,20 @@ impl ShellSession {
             return;
         }
         let (width, height) = self.terminal_size;
-        if width < ui::MIN_COMMAND_LINE_TERMINAL_WIDTH
-            || height < ui::MIN_COMMAND_LINE_TERMINAL_HEIGHT
-        {
+        let (minimum_width, minimum_height) = if self.window_owner.is_app() {
+            let minimum = workspace_protocol::MIN_CONTENT_SIZE;
+            (minimum.width, minimum.height + 2)
+        } else {
+            (
+                ui::MIN_COMMAND_LINE_TERMINAL_WIDTH,
+                ui::MIN_COMMAND_LINE_TERMINAL_HEIGHT,
+            )
+        };
+        if width < minimum_width || height < minimum_height {
             let message = i18n::LocalizedText::from(i18n::msg!(
                 "shell-command-line-needs-at-least-arg1xarg2-terminal-cells-current-widthxheight",
-                arg1 = ui::MIN_COMMAND_LINE_TERMINAL_WIDTH,
-                arg2 = ui::MIN_COMMAND_LINE_TERMINAL_HEIGHT,
+                arg1 = minimum_width,
+                arg2 = minimum_height,
                 width = width,
                 height = height
             ));

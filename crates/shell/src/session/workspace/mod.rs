@@ -4,8 +4,11 @@ use crate::process_host::{WindowConnection, WorkerConnection};
 use platform::management::ManagementKind;
 use ratatui::Frame;
 use ui::{
-    WorkspaceAction as Action, WorkspaceCloseWait, WorkspaceLayout, WorkspacePanePlaceholder,
-    WorkspacePanel, WorkspacePanelViewModel, WorkspaceSplitMode, WorkspaceWindowViewModel,
+    WorkspaceAction as Action, WorkspaceCloseWait, WorkspaceLayout, WorkspacePaneLayout,
+    WorkspacePanePlaceholder, WorkspacePanel, WorkspacePanelViewModel, WorkspaceSplitMenu,
+    WorkspaceSplitMenuViewModel, WorkspaceSplitMode, WorkspaceTaskbar, WorkspaceTaskbarAction,
+    WorkspaceTaskbarItem, WorkspaceWindowAction, WorkspaceWindowButtonsState,
+    WorkspaceWindowViewModel,
 };
 use workspace_protocol::{
     AppToShell, CursorShape, LayoutGeneration, ProcessState, SessionId, ShellAction as HostAction,
@@ -59,7 +62,9 @@ enum CloseProgress {
     #[default]
     Idle,
     Requested(Instant),
-    Confirmation,
+    Confirmation {
+        size_notice_dismissed: bool,
+    },
     Cleaning(Instant),
     Waiting,
     Exiting,
@@ -67,7 +72,6 @@ enum CloseProgress {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChromeAction {
-    Windows,
     Back,
     Help,
     Tasks,
@@ -77,7 +81,9 @@ enum ChromeAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PointerTarget {
     Pane(SessionId),
-    PaneTitle(SessionId),
+    PaneFrame(SessionId),
+    WindowButton(SessionId, WorkspaceWindowAction),
+    Taskbar(WorkspaceTaskbarAction),
     Overlay(Action),
     Chrome(ChromeAction),
 }
@@ -90,7 +96,6 @@ struct PointerCapture {
 }
 
 pub(super) struct Workspace {
-    connection: &'static WorkerConnection,
     image_cell_size: Option<[u16; 2]>,
     text_sizing: bool,
     windows: BTreeMap<SessionId, Window>,
@@ -103,7 +108,9 @@ pub(super) struct Workspace {
     input_focus: Option<SessionId>,
     terminal_focused: bool,
     last_pointer: Option<CellPosition>,
+    pointer_hovered: bool,
     capture: Option<PointerCapture>,
+    suppress_release: Option<PointerButton>,
     prefix: WindowPrefix,
     panel: Option<WorkspacePanelViewModel>,
     panel_hits: Vec<(Action, Rect)>,
@@ -112,6 +119,12 @@ pub(super) struct Workspace {
     wait_for: Option<SessionId>,
     modal_focus: Option<Action>,
     panel_key_focus: bool,
+    split_window: Option<SessionId>,
+    split_model: WorkspaceSplitMenuViewModel,
+    split_menu: Option<WorkspaceSplitMenu>,
+    taskbar: Option<WorkspaceTaskbar>,
+    taskbar_scroll: usize,
+    taskbar_focus: Option<SessionId>,
     chrome_layout: Option<ui::ShellFrameLayout>,
     toast_area: Option<Rect>,
     pending_global: Option<ShellCommand>,
@@ -128,13 +141,8 @@ pub(super) struct Workspace {
 }
 
 impl Workspace {
-    pub(super) fn new(
-        connection: &'static WorkerConnection,
-        image_cell_size: Option<[u16; 2]>,
-        text_sizing: bool,
-    ) -> Self {
+    pub(super) fn new(image_cell_size: Option<[u16; 2]>, text_sizing: bool) -> Self {
         Self {
-            connection,
             image_cell_size,
             text_sizing,
             windows: BTreeMap::new(),
@@ -154,7 +162,9 @@ impl Workspace {
             input_focus: None,
             terminal_focused: true,
             last_pointer: None,
+            pointer_hovered: false,
             capture: None,
+            suppress_release: None,
             prefix: WindowPrefix::default(),
             panel: None,
             panel_hits: Vec::new(),
@@ -163,6 +173,12 @@ impl Workspace {
             wait_for: None,
             modal_focus: None,
             panel_key_focus: true,
+            split_window: None,
+            split_model: Default::default(),
+            split_menu: None,
+            taskbar: None,
+            taskbar_scroll: 0,
+            taskbar_focus: None,
             chrome_layout: None,
             toast_area: None,
             pending_global: None,
@@ -228,8 +244,11 @@ impl Workspace {
 
     pub(super) fn invalidate_layout(&mut self) {
         self.cancel_capture();
+        self.pointer_hovered = false;
         self.chrome_layout = None;
         self.toast_area = None;
+        self.taskbar = None;
+        self.close_split_menu();
         self.input_focus = None;
         self.layout.panes.clear();
         self.generation.0 += 1;
@@ -293,15 +312,6 @@ impl Workspace {
         window.frame.as_ref().map(|frame| frame.page.as_str())
     }
 
-    pub(super) fn focused_title(&self) -> Option<String> {
-        if self.layout.panes.is_empty() {
-            return None;
-        }
-        self.windows
-            .get(&self.selection.focused()?)
-            .map(|window| window.launch.title())
-    }
-
     pub(super) fn focused_status(&self) -> Option<&str> {
         if self.layout.blocked || self.layout.panes.is_empty() {
             return None;
@@ -356,7 +366,7 @@ impl Workspace {
     }
 
     pub(super) fn cursor_shape(&self) -> Option<CursorShape> {
-        if self.panel.is_some() || self.wait_for.is_some() {
+        if self.has_overlay() {
             return None;
         }
         let window = self.windows.get(&self.input_focus?)?;
@@ -384,11 +394,42 @@ impl Workspace {
         let visible = self.selection.visible(capacity);
         let layout =
             WorkspaceLayout::new(bounds, available, &minimums, &visible, focused, self.mode);
+        let dimensions_changed = self.width != bounds.width
+            || self.height != bounds.height
+            || self.layout.available != available;
+        if modal || dimensions_changed {
+            self.close_split_menu();
+        }
+        let mut overlay_changed = false;
+        if let Some(id) = self.wait_for
+            && !layout.blocked
+            && self
+                .windows
+                .get(&id)
+                .is_some_and(|window| matches!(window.close, CloseProgress::Confirmation { .. }))
+        {
+            self.hide_close_wait(id);
+            overlay_changed = true;
+        }
+        if let Some(id) = focused
+            && layout.blocked
+            && self.wait_for.is_none()
+            && self.windows.get(&id).is_some_and(|window| {
+                matches!(
+                    window.close,
+                    CloseProgress::Confirmation {
+                        size_notice_dismissed: false
+                    }
+                )
+            })
+        {
+            self.show_close_wait(id);
+            overlay_changed = true;
+        }
         let input_focus = focused.filter(|id| {
             !modal
                 && self.terminal_focused
-                && self.panel.is_none()
-                && self.wait_for.is_none()
+                && !self.has_overlay()
                 && layout.panes.iter().any(|pane| pane.id == *id)
         });
         let frozen = layout.blocked || self.frozen;
@@ -398,6 +439,9 @@ impl Workspace {
             || self.height != bounds.height;
         self.width = bounds.width;
         self.height = bounds.height;
+        if dimensions_changed {
+            self.pointer_hovered = false;
+        }
         if changed {
             self.cancel_capture();
             self.generation.0 += 1;
@@ -426,7 +470,37 @@ impl Workspace {
                 updated = true;
             }
         }
-        changed || updated
+        changed || updated || overlay_changed
+    }
+
+    fn blocked_pane(&self) -> Option<WorkspacePaneLayout> {
+        if !self.layout.blocked {
+            return None;
+        }
+        WorkspacePaneLayout::for_blocked_window(self.selection.focused()?, self.layout.available)
+    }
+
+    fn close_split_menu(&mut self) {
+        if self.split_window.take().is_some() {
+            self.split_menu = None;
+            self.cancel_capture();
+        }
+    }
+
+    fn show_close_wait(&mut self, id: SessionId) {
+        self.close_split_menu();
+        self.cancel_capture();
+        self.wait_for = Some(id);
+        self.modal_focus = Some(Action::Dismiss);
+    }
+
+    fn hide_close_wait(&mut self, id: SessionId) {
+        if self.wait_for == Some(id) {
+            self.wait_for = None;
+            self.modal_focus = None;
+            self.panel_hits.clear();
+            self.cancel_capture();
+        }
     }
 
     pub(super) fn set_suspend(&mut self, suspended: bool) {

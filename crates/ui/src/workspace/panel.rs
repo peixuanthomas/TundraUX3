@@ -10,9 +10,9 @@ use crate::components::{
     row_style, terminal_width,
 };
 use crate::screens::shell::{centered_rect, fit_cell};
-use crate::{RenderContext, ShellFrameLayout, TundraTheme, dim_modal_backdrop};
+use crate::{RenderContext, TundraTheme, dim_modal_backdrop};
 
-use super::{WorkspacePaneLayout, WorkspaceSplitMode};
+use super::WorkspaceSplitMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkspaceAction {
@@ -335,7 +335,7 @@ pub struct WorkspaceCloseWait {
 }
 
 impl WorkspaceCloseWait {
-    pub fn new(available: Rect, window: &str, id: SessionId) -> Self {
+    pub fn new(available: Rect, window: &str, id: SessionId, size_blocked: bool) -> Self {
         let width = available.width.min(64);
         let body_width = DialogLayout::content_width(width);
         let buttons = vec![
@@ -352,7 +352,11 @@ impl WorkspaceCloseWait {
         ];
         let bar = action_bar(&buttons);
         let footer_rows = bar.height(body_width);
-        let message = i18n::tr!("workspace-close-wait-message");
+        let message = if size_blocked {
+            i18n::tr!("workspace-close-size-message")
+        } else {
+            i18n::tr!("workspace-close-wait-message")
+        };
         let lines = crate::management_wrapped_lines(&message, body_width);
         let height = available.height.min(
             footer_rows
@@ -415,40 +419,6 @@ pub enum WorkspacePanePlaceholder {
     Unavailable,
 }
 
-pub fn render_workspace_pane_title(
-    frame: &mut Frame<'_>,
-    pane: &WorkspacePaneLayout,
-    title: &str,
-    focused: bool,
-    context: &RenderContext,
-) {
-    let Some(area) = pane.title else { return };
-    let background = if focused {
-        context.theme.raised
-    } else {
-        context.theme.surface
-    };
-    let foreground = if focused {
-        context.theme.accent
-    } else {
-        context.theme.muted
-    };
-    let style = Style::default()
-        .fg(crate::theme::readable_foreground(foreground, background))
-        .bg(background);
-    let title = one_line(title);
-    crate::automation::control(
-        &format!("workspace.title.{}", pane.id),
-        "button",
-        &title,
-        area,
-        ComponentState::default().selected(focused),
-        &["click"],
-    );
-    let text = fit_cell(&format!(" {title}"), usize::from(area.width));
-    frame.render_widget(Paragraph::new(text).style(style), area);
-}
-
 pub fn render_workspace_pane_placeholder(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -486,27 +456,6 @@ pub fn render_workspace_resize_notice(
     render_notice(frame, area, &text, context.theme.warning, context);
 }
 
-pub fn render_workspace_chrome_button(
-    frame: &mut Frame<'_>,
-    layout: &ShellFrameLayout,
-    context: &RenderContext,
-    state: impl Into<ComponentState>,
-) {
-    if let Some(area) = layout.windows_button {
-        let label = i18n::tr!("ui-workspace-button");
-        let mut button = Button::new(
-            "shell.windows",
-            fit_cell(&label, usize::from(area.width)).trim(),
-        )
-        .with_centered_label(true)
-        .with_capture_name(label);
-        button.state = state.into();
-        let mut theme = context.compatibility_theme();
-        theme.buttons = None;
-        button.render_borderless_frame(frame, area, &theme);
-    }
-}
-
 fn render_notice(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -537,8 +486,8 @@ fn workspace_resize_message(size: Size) -> String {
     )
 }
 
-fn one_line(text: &str) -> String {
-    text.split(['\r', '\n', '\t']).collect::<Vec<_>>().join(" ")
+pub(super) fn one_line(text: &str) -> String {
+    text.replace(char::is_control, " ")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

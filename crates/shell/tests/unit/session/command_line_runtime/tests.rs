@@ -322,11 +322,9 @@ fn windows_conpty_receives_initial_and_typed_output() {
         reader_tasks,
     };
 
-    // The smallest valid outer Shell (108x22) leaves a 106x14 inner
-    // terminal.  This guards against accidentally applying the outer
-    // minimum to the already-inset PTY dimensions.
-    host.resize_terminal(106, 14);
-    assert_eq!((host.ui_snapshot.columns, host.ui_snapshot.rows), (106, 14));
+    // The 108×20 host leaves a 106×16 Command Line viewport.
+    host.resize_terminal(106, 16);
+    assert_eq!((host.ui_snapshot.columns, host.ui_snapshot.rows), (106, 16));
     let pty = match &host.state {
         CommandLineHostState::Running(pty) => pty,
         state => panic!("expected running ConPTY host, got {state:?}"),
@@ -743,6 +741,81 @@ fn snapshot_text(snapshot: &ui::CommandLineTerminalSnapshot) -> String {
         .iter()
         .map(|cell| cell.symbol.as_str())
         .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn command_line_app_host_launches_a_live_pty_at_the_minimum_window_size() {
+    use crate::session::window_launch::{WindowApplication, WindowOwner};
+    use std::time::Instant;
+
+    let fixture = PtyFixture::new("minimum-window");
+    let mut state = crate::ShellSession::new(crate::ShellLaunchConfig::default(), (106, 18));
+    state.window_owner = WindowOwner::App(WindowApplication::CommandLine);
+    state.app.dispatch_at(
+        app::AppCommand::SetAuthSession(Some(identity::AuthSession {
+            source: identity::IdentitySource::LocalAccount,
+            session_id: "terminal-size-test-session".into(),
+            user_id: "terminal-size-test-user".into(),
+            username: "terminal-size-test".into(),
+            role: identity::UserRole::Admin,
+            started_at_epoch_ms: 1,
+        })),
+        Instant::now(),
+    );
+    state.open_external_terminal(
+        "/bin/sh".into(),
+        vec![
+            "-c".into(),
+            concat!(
+                "stty -echo; stty size; ",
+                "IFS= read -r input; printf 'TYPED:%s\\n' \"$input\"; ",
+                "printf '\\033]1337;SetUserVar=TUNDRA_MIN_SIZE=MTEweDE3\\007'; ",
+                "IFS= read -r done",
+            )
+            .into(),
+        ],
+        Some(fixture.root.clone()),
+        Some(true),
+    );
+    assert_eq!(state.content_screen(), crate::ShellScreen::CommandLine);
+    let viewport = state.command_line_input_area().unwrap();
+    assert_eq!(viewport, Rect::new(0, 1, 106, 16));
+
+    let platform = platform::native_platform();
+    let mut hosts = CommandLineHosts::new(fixture.app.clone());
+    hosts.poll(&mut state, platform.as_ref(), ratatui::style::Color::Blue);
+    assert_snapshot_contains(
+        running_pty(hosts.visible_host(&state)),
+        "16 106",
+        Duration::from_secs(5),
+        "child terminal geometry",
+    );
+    for input in [
+        InputEvent::key(InputKey::Char('x')),
+        InputEvent::key(InputKey::Enter),
+    ] {
+        hosts.handle_input(&state, &input, Some(viewport));
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        hosts.poll(&mut state, platform.as_ref(), ratatui::style::Color::Blue);
+        if hosts.minimum_content_size() == Some((110, 17)) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the custom PTY minimum must be kept above the built-in minimum"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_snapshot_contains(
+        running_pty(hosts.visible_host(&state)),
+        "TYPED:x",
+        Duration::from_secs(5),
+        "forwarded keyboard input",
+    );
+    hosts.terminate_all().unwrap();
 }
 
 #[test]

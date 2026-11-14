@@ -25,7 +25,7 @@ impl Size {
     }
 }
 
-pub const MIN_CONTENT_SIZE: Size = Size::new(108, 18);
+pub const MIN_CONTENT_SIZE: Size = Size::new(106, 16);
 
 pub const MAX_IMAGE_BYTES: usize = 80_000_000;
 

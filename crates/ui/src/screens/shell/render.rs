@@ -174,8 +174,7 @@ pub fn render_shell_chrome_with_status_focus(
         top.x,
         top.y,
         layout
-            .windows_button
-            .or(layout.tasks_button)
+            .tasks_button
             .or(layout.help_button)
             .or(layout.back_button)
             .map_or(top.width, |button| button.x.saturating_sub(top.x)),

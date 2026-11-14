@@ -73,6 +73,38 @@ fn mouse_motion_flood_is_consumed_in_a_few_render_batches() {
 }
 
 #[test]
+fn dragging_out_of_a_button_and_back_preserves_the_cancellation_boundary() {
+    let events = [
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            5,
+            5,
+            KeyModifiers::NONE,
+        ),
+        mouse_event(
+            MouseEventKind::Drag(MouseButton::Left),
+            20,
+            5,
+            KeyModifiers::NONE,
+        ),
+        mouse_event(
+            MouseEventKind::Drag(MouseButton::Left),
+            5,
+            5,
+            KeyModifiers::NONE,
+        ),
+        mouse_event(
+            MouseEventKind::Up(MouseButton::Left),
+            5,
+            5,
+            KeyModifiers::NONE,
+        ),
+    ];
+    let source = Rc::new(RefCell::new(VecDeque::from(events.clone())));
+    assert_eq!(collect_one_test_batch(&source), events);
+}
+
+#[test]
 fn mouse_coalescing_preserves_semantic_event_boundaries() {
     let source = Rc::new(RefCell::new(VecDeque::from([
         mouse_event(MouseEventKind::Moved, 1, 1, KeyModifiers::NONE),
@@ -132,6 +164,12 @@ fn mouse_coalescing_preserves_semantic_event_boundaries() {
                 MouseEventKind::Down(MouseButton::Left),
                 5,
                 5,
+                KeyModifiers::NONE,
+            ),
+            mouse_event(
+                MouseEventKind::Drag(MouseButton::Left),
+                6,
+                6,
                 KeyModifiers::NONE,
             ),
             mouse_event(

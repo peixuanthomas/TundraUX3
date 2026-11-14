@@ -49,13 +49,8 @@ fn collect_ready_terminal_event_batch(
     mut poll_ready: impl FnMut() -> io::Result<bool>,
     mut read_ready: impl FnMut() -> io::Result<event::Event>,
 ) -> io::Result<Vec<event::Event>> {
-    // Crossterm's all-motion mode can enqueue many coordinates while one
-    // Ratatui frame is being built, especially through a WSL ConPTY bridge.
-    // Drain that ready backlog before drawing again and retain only the newest
-    // point in each uninterrupted motion/resize run. Semantic boundaries such
-    // as clicks, releases, wheel steps, and focus stay ordered. A key or paste
-    // ends the batch immediately so a continuously-ready WSL mouse stream
-    // cannot delay keyboard input after Crossterm has already decoded it.
+    // Coalesce hover and resize backlogs, but retain drag paths for pointer cancellation.
+    // Dispatch keys and paste immediately so motion floods cannot delay typing.
     let mut events = Vec::new();
     let first_requires_dispatch = terminal_event_requires_immediate_dispatch(&first);
     push_coalesced_terminal_event(&mut events, first);
@@ -98,14 +93,10 @@ fn terminal_event_can_replace(previous: &event::Event, next: &event::Event) -> b
         (event::Event::Mouse(previous), event::Event::Mouse(next))
             if previous.modifiers == next.modifiers =>
         {
-            match (&previous.kind, &next.kind) {
-                (event::MouseEventKind::Moved, event::MouseEventKind::Moved) => true,
-                (
-                    event::MouseEventKind::Drag(previous_button),
-                    event::MouseEventKind::Drag(next_button),
-                ) => previous_button == next_button,
-                _ => false,
-            }
+            matches!(
+                (&previous.kind, &next.kind),
+                (event::MouseEventKind::Moved, event::MouseEventKind::Moved)
+            )
         }
         (event::Event::Resize(_, _), event::Event::Resize(_, _)) => true,
         _ => false,

@@ -1,9 +1,11 @@
 use crate::{InputKey, InputPhase, KeyInput};
+use std::collections::HashSet;
 use workspace_protocol::SessionId;
 
 #[derive(Default)]
 pub(super) struct WindowSelection {
     requested: Vec<SessionId>,
+    minimized: HashSet<SessionId>,
     focused: Option<SessionId>,
     maximized: Option<SessionId>,
     adding: bool,
@@ -15,7 +17,11 @@ impl WindowSelection {
     }
 
     pub(super) fn includes(&self, id: SessionId) -> bool {
-        self.requested.contains(&id)
+        self.requested.contains(&id) && !self.minimized.contains(&id)
+    }
+
+    pub(super) fn maximized(&self) -> Option<SessionId> {
+        self.maximized
     }
 
     pub(super) fn visible(&self, capacity: usize) -> Vec<SessionId> {
@@ -29,6 +35,7 @@ impl WindowSelection {
             .requested
             .iter()
             .copied()
+            .filter(|id| !self.minimized.contains(id))
             .take(capacity)
             .collect::<Vec<_>>();
         if let Some(focused) = self.focused
@@ -51,6 +58,9 @@ impl WindowSelection {
     pub(super) fn switch(&mut self, id: SessionId) {
         self.adding = false;
         if !self.includes(id) {
+            if self.minimized.remove(&id) {
+                self.requested.retain(|&window| window != id);
+            }
             if let Some(slot) = self
                 .requested
                 .iter_mut()
@@ -67,6 +77,13 @@ impl WindowSelection {
         self.focused = Some(id);
     }
 
+    pub(super) fn activate(&mut self, id: SessionId, capacity: usize) {
+        if self.requested.len() - self.minimized.len() < capacity.max(1) {
+            self.minimized.remove(&id);
+        }
+        self.switch(id);
+    }
+
     pub(super) fn focus(&mut self, id: SessionId) {
         if self.includes(id) {
             self.focused = Some(id);
@@ -76,6 +93,7 @@ impl WindowSelection {
     pub(super) fn show(&mut self, id: SessionId) {
         self.adding = false;
         self.maximized = None;
+        self.minimized.remove(&id);
         if !self.includes(id) {
             self.requested.push(id);
         }
@@ -90,21 +108,31 @@ impl WindowSelection {
         std::mem::take(&mut self.adding)
     }
 
-    pub(super) fn background(&mut self, id: SessionId) {
+    pub(super) fn minimize(&mut self, id: SessionId) {
         let Some(index) = self.requested.iter().position(|candidate| *candidate == id) else {
             return;
         };
-        self.requested.remove(index);
+        self.minimized.insert(id);
         if self.maximized == Some(id) {
             self.maximized = None;
         }
         if self.focused == Some(id) {
-            self.focused = self
-                .requested
-                .get(index)
-                .or_else(|| self.requested.last())
-                .copied();
+            self.focused = self.requested[index + 1..]
+                .iter()
+                .chain(self.requested[..index].iter().rev())
+                .copied()
+                .find(|candidate| !self.minimized.contains(candidate));
         }
+    }
+
+    pub(super) fn remove(&mut self, id: SessionId) {
+        self.minimize(id);
+        self.minimized.remove(&id);
+        self.requested.retain(|&window| window != id);
+    }
+
+    pub(super) fn restore_split(&mut self) {
+        self.maximized = None;
     }
 
     pub(super) fn toggle_maximized(&mut self, id: SessionId) {

@@ -12,6 +12,19 @@ fn minimum_outer_size_uses_the_standard_shell_main_panel() {
 }
 
 #[test]
+fn workspace_command_line_uses_the_full_virtual_content_at_106_by_18() {
+    let layout = crate::ShellFrameLayout::new(
+        Rect::new(0, 0, 106, 18),
+        None,
+        &crate::RenderContext::default(),
+    );
+    assert_eq!(
+        crate::command_line_terminal_area_in(&layout),
+        Some(Rect::new(0, 1, 106, 16)),
+    );
+}
+
+#[test]
 fn snapshot_handles_partial_cell_vectors_without_panicking() {
     let snapshot = CommandLineTerminalSnapshot {
         columns: 2,

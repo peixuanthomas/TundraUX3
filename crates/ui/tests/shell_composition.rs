@@ -538,3 +538,49 @@ fn keyboard_entry_shares_status_row_and_sliding_keyboard_does_not_reserve_old_ch
         }
     }
 }
+
+#[test]
+fn running_windows_reuse_the_status_row_without_hiding_errors_or_global_controls() {
+    for (width, height) in [(108, 20), (120, 36), (180, 50)] {
+        for error in [false, true] {
+            let model = chrome(width, height);
+            let theme = TundraTheme::default();
+            let buttons = components::ButtonFrame::new(None, None, &theme);
+            let mut context = RenderContext::default();
+            context.buttons = Some(buttons.clone());
+            let original = ShellFrameLayout::new(
+                Rect::new(0, 0, width, height),
+                model.status.time_button_label.as_deref(),
+                &context,
+            )
+            .with_keyboard_launcher(true);
+            let layout = original.with_workspace_taskbar(true, error);
+            let taskbar = layout.workspace_taskbar.unwrap();
+            assert_eq!(layout.main, original.main);
+            assert_eq!(taskbar.y, height - 1);
+            assert_eq!(taskbar.height, 1);
+            assert_eq!(taskbar.right(), layout.keyboard_launcher.unwrap().x);
+            assert_eq!(layout.keyboard_launcher, original.keyboard_launcher);
+            assert_eq!(layout.time_button, original.time_button);
+            assert_eq!(layout.modal_area(), layout.bounds);
+            assert_eq!(layout.with_workspace_taskbar(true, error), layout);
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| render_shell_chrome(frame, &layout, &model, &context))
+                .unwrap();
+            let regions = buttons.regions();
+            assert_eq!(
+                regions.iter().any(|r| r.id.as_str() == "shell.status"),
+                error
+            );
+            for region in &regions {
+                assert!(region.area.intersection(taskbar).is_empty());
+            }
+            assert!(row(&terminal, height - 1).contains("09:30"));
+            let shown = layout.with_input_keyboard(Rect::new(0, 10, width, height - 10), 1000);
+            assert!(shown.workspace_taskbar.is_none());
+            assert!(shown.status_message.is_none());
+            assert!(shown.time_button.is_none());
+        }
+    }
+}

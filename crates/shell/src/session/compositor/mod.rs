@@ -334,12 +334,6 @@ impl ScreenCompositor {
         let mut frame_context = prepared.context.clone();
         frame_context.motion = state.interaction_motion_frame(frame_context.motion);
         let mut chrome = prepared.chrome.clone();
-        if let Some(title) = workspace
-            .as_ref()
-            .and_then(|windows| windows.focused_title())
-        {
-            chrome.screen_stack = vec![title];
-        }
         if let Some(status) = workspace
             .as_ref()
             .and_then(|windows| windows.focused_status())
@@ -359,17 +353,20 @@ impl ScreenCompositor {
         )
         .with_back_shortcut(chrome.back_shortcut)
         .with_help_button(state.help_button_available())
-        .with_tasks_button(chrome.tasks_label.as_deref())
-        .with_windows_button(workspace.is_some());
+        .with_tasks_button(chrome.tasks_label.as_deref());
         let workspace_keyboard = workspace
             .as_ref()
             .is_some_and(|windows| windows.keyboard_available())
-            && !modal;
+            && overlays.is_empty();
         let layout = state
             .input_keyboard_content_layout(layout)
-            .with_keyboard_launcher(workspace_keyboard);
+            .with_keyboard_launcher(workspace_keyboard)
+            .with_workspace_taskbar(
+                workspace.as_ref().is_some_and(|windows| windows.active()),
+                chrome.status.error.is_some(),
+            );
         if let Some(windows) = workspace.as_deref_mut() {
-            windows.relayout(bounds, layout.main, modal);
+            windows.relayout(bounds, layout.main, !overlays.is_empty());
         }
         let workspace_content = workspace
             .as_ref()
@@ -397,9 +394,16 @@ impl ScreenCompositor {
         let toast_area = self
             .toast
             .as_ref()
-            .filter(|toast| !modal && !page_overlay && toast.is_visible(frame_context.motion))
+            .filter(|toast| {
+                overlays.is_empty() && !workspace_overlay && toast.is_visible(frame_context.motion)
+            })
             .filter(|_| prepared.notification.is_none() && prepared.chrome.status.error.is_none())
-            .and_then(|toast| layout.status_message.map(|_| toast.layout(layout.main)))
+            .and_then(|toast| {
+                layout
+                    .status_message
+                    .or(layout.workspace_taskbar)
+                    .map(|_| toast.layout(layout.main))
+            })
             .filter(|area| !area.is_empty());
         self.toast_area = toast_area;
         let hover_position = state
@@ -474,7 +478,7 @@ impl ScreenCompositor {
                 layout,
                 context,
                 capture.as_ref(),
-                modal,
+                !overlays.is_empty(),
                 picker,
                 &mut self.workspace_images,
                 &mut self.terminal_image_cleanup,
@@ -576,11 +580,17 @@ impl ScreenCompositor {
         );
         if let Some(windows) = workspace.as_deref_mut() {
             windows.remember_chrome(layout, toast_area);
-            windows.render_chrome(frame, &layout, context);
+            windows.render_taskbar(
+                frame,
+                layout.workspace_taskbar,
+                context,
+                capture.as_ref(),
+                !overlays.is_empty() || workspace_overlay,
+            );
         }
         if workspace_keyboard && let Some(area) = layout.keyboard_launcher {
             if let Some(capture) = &mut capture {
-                capture.set_group("keyboard", "keyboard", area, workspace_overlay);
+                capture.set_group("keyboard", "keyboard", area, workspace_overlay || modal);
             }
             screen_keyboard::render_keyboard_launcher(frame, area, false, false, context);
         }
@@ -731,7 +741,7 @@ impl ScreenCompositor {
         }
         self.render_input_keyboard(frame, state, context);
         if let Some(windows) = workspace.as_deref_mut() {
-            windows.render_overlay(frame, context, capture.as_ref());
+            windows.render_overlay(frame, context, capture.as_ref(), !overlays.is_empty());
         }
         state.button_regions = buttons.regions();
         self.next_redraw_in = [
@@ -779,8 +789,7 @@ impl ScreenCompositor {
                 );
                 if toast_area.is_some_and(|area| area.contains(point.into()))
                     || (workspace.as_ref().is_some_and(|windows| windows.blocked())
-                        && node.id.starts_with("chrome/")
-                        && node.id != "chrome/shell.windows")
+                        && node.id.starts_with("chrome/"))
                 {
                     node.actionable = false;
                 } else if let Some(id) = node.id.strip_prefix("chrome/")

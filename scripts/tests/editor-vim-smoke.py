@@ -342,7 +342,7 @@ def main():
                 shell.drain(0.3)
                 area = shell.terminal_area()
                 assert (area["x"], area["y"], area["width"], area["height"]) == (
-                    0, 2, columns, rows - 3,
+                    1, 3, columns - 2, rows - 5,
                 ), area
                 shell.ex("call writefile([printf('%d %d', &columns, &lines)], "
                          + vim_string(probe) + ")")

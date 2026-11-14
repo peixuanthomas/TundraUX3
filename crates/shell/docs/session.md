@@ -90,7 +90,7 @@ A floating Toast leaves keyboard focus with the current page. The compositor blo
 
 presentation assembles ViewModels from `AppSnapshot` and the necessary session state. `ScreenCompositor` handles final rendering; it does not decide application state or return targets during rendering.
 
-Each frame shares `ShellFrameLayout`: the top title bar, central `main`, bottom status bar, and time button. The layout is used for rendering, mouse hit testing, PTY sizing, and effect boundaries. When the window falls below the minimum size, page input pauses and state is retained until the window is enlarged.
+The global `ShellFrameLayout` defines the title bar, central `main`, bottom window bar, and time button. Each app window adds a frame around its content. Rendering, mouse hit testing, PTY sizing, and effects use the same content rectangle. Window buttons and the bottom entries act on release inside their original target. Dragging outside, resizing, losing focus, or opening a new overlay cancels a pending press. Input batching preserves the drag path so leaving a button and returning cannot accidentally activate it.
 
 Compositing order:
 
@@ -101,11 +101,13 @@ Compositing order:
 5. Animations and effects for the current frame;
 6. Floating Toast and the on-screen keyboard.
 
-Esc first dismisses a modal or menu. An ordinary application window moves to the background on Esc. Vim and command terminals process Esc natively. The top-right Back button can return to a local subpage. Windows panel close and Ctrl+B, Q ask about unsaved documents or running operations before cleanup.
+Esc first dismisses a modal or menu. On an ordinary app page Esc minimizes its window. Vim and command terminals process Esc natively. The top-right Back button returns from local subpages. A window's Close button and Ctrl+B, Q ask about unsaved documents or running operations before cleanup.
 
-Splits add a title row per pane and a separator between adjacent panes. If a resize hides a pane, its process and state stay alive and it automatically returns when room permits. An explicit background action removes the pane from the split until it is reopened. The workspace compares all live minimum sizes before routing business inputs and keeps its management controls available below the minimum.
+The window's Split button opens a menu with layout choices, background windows, and Add window. The bottom bar switches to a running window or restores a minimized one. A restore uses the previous split position when it fits and the focused slot when the split is full.
 
-Clicking the status message area opens the full text. The dialog retains the content from the moment of the click and supports scrolling. The clock button is handled separately.
+Splits add one cell of space between adjacent frames. Windows hidden by a resize return when room permits. Minimized windows wait in the bottom bar until restored. The workspace compares the minimum of every running app before routing application input. If that minimum does not fit, the selected frame and window controls stay available. A close that needs an app confirmation displays a Shell prompt until there is room for the original confirmation.
+
+Clicking the status message area, when shown, opens the full text. The dialog retains the content from the moment of the click and supports scrolling. The clock button remains separate from the bottom window bar.
 
 ## Exit, suspend, and failures
 
@@ -119,7 +121,7 @@ Clicking the status message area opens the full text. The dialog retains the con
 
 Before suspend, save editor recovery data and leave full-screen mode. On resume, reestablish the terminal, platform session, and size.
 
-If the Shell stops reporting progress for five seconds, the watchdog terminates the run and restores the terminal. An unresponsive AppHost can be force killed independently from the Windows panel or the watchdog CLI. An AppHost remains registered until the watchdog reaps its process and cleans up its resources. If the Shell catches a panic and reaches the standalone panic page, R restarts and Q, Esc or Ctrl+C exits.
+If the Shell stops reporting progress for five seconds, the watchdog terminates the run and restores the terminal. Use Ctrl+B, Shift+X, the advanced window list, or the watchdog CLI to force kill an unresponsive AppHost. An AppHost remains registered until the watchdog reaps its process and cleans up its resources. If the Shell catches a panic and reaches the standalone panic page, R restarts and Q, Esc or Ctrl+C exits.
 
 ## Common shortcuts
 

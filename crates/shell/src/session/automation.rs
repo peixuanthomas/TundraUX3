@@ -385,10 +385,10 @@ pub(super) fn action_events(
         return Ok(Vec::new());
     }
     if snapshot.page == "terminal_size"
-        && !snapshot.nodes.iter().any(|node| {
-            node.actionable
-                && (node.id == "chrome/shell.windows" || node.id.starts_with("workspace/"))
-        })
+        && !snapshot
+            .nodes
+            .iter()
+            .any(|node| node.actionable && node.id.starts_with("workspace"))
     {
         return Err("target_unavailable");
     }

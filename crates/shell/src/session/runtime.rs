@@ -942,13 +942,12 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
     let terminal_size_requirement = ShellTerminalSizeRequirement::from_assets(&ascii_assets);
     let initial_size = checked_current_terminal_size(terminal_size_requirement)?;
     let mut guard = TerminalGuard::enter(output)?;
-    let mut workspace = WorkerConnection::current().map(|connection| {
+    let mut workspace = WorkerConnection::current().map(|_| {
         let image_cell_size = terminal_graphics_probe.picker().map(|picker| {
             let (width, height) = picker.cell_size();
             [width, height]
         });
         Workspace::new(
-            connection,
             image_cell_size,
             terminal_graphics_probe.text_sizing_protocol(),
         )

@@ -13,10 +13,40 @@ fn opening_replaces_focused_slot_and_background_stays_explicit() {
     assert_eq!(windows.focused(), Some(c));
     assert!(!windows.includes(a));
 
-    windows.background(c);
+    windows.minimize(c);
     assert_eq!(windows.visible(2), [b]);
     assert_eq!(windows.focused(), Some(b));
     assert_eq!(windows.visible(4), [b]);
+}
+
+#[test]
+fn taskbar_restores_minimized_windows_in_their_original_order_when_they_fit() {
+    let mut windows = WindowSelection::default();
+    let [a, b, c] = [SessionId(1), SessionId(2), SessionId(3)];
+    windows.open(a);
+    windows.show(b);
+    windows.show(c);
+    windows.minimize(a);
+    windows.minimize(b);
+    assert_eq!(windows.visible(3), [c]);
+    windows.activate(a, 3);
+    windows.activate(b, 3);
+    assert_eq!(windows.visible(3), [a, b, c]);
+    assert_eq!(windows.focused(), Some(b));
+}
+
+#[test]
+fn taskbar_with_a_full_split_replaces_only_the_focused_slot() {
+    let mut windows = WindowSelection::default();
+    let [a, b, c] = [SessionId(1), SessionId(2), SessionId(3)];
+    windows.open(a);
+    windows.show(b);
+    windows.minimize(a);
+    windows.show(c);
+    windows.activate(a, 2);
+    assert_eq!(windows.visible(2), [b, a]);
+    assert_eq!(windows.focused(), Some(a));
+    assert!(!windows.includes(c));
 }
 
 #[test]

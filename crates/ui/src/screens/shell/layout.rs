@@ -91,8 +91,8 @@ pub struct ShellFrameLayout {
     pub back_button: Option<Rect>,
     pub help_button: Option<Rect>,
     pub tasks_button: Option<Rect>,
-    pub windows_button: Option<Rect>,
     pub status_message: Option<Rect>,
+    pub workspace_taskbar: Option<Rect>,
     pub time_button: Option<Rect>,
     pub keyboard_launcher: Option<Rect>,
 }
@@ -137,8 +137,8 @@ impl ShellFrameLayout {
             back_button,
             help_button: None,
             tasks_button: None,
-            windows_button: None,
             status_message,
+            workspace_taskbar: None,
             time_button,
             keyboard_launcher: None,
         }
@@ -167,6 +167,7 @@ impl ShellFrameLayout {
                     status,
                 };
                 self.status_message = None;
+                self.workspace_taskbar = None;
                 self.time_button = None;
                 self.keyboard_launcher = None;
             }
@@ -222,13 +223,13 @@ impl ShellFrameLayout {
             tasks.width = tasks.width.min(right.saturating_sub(self.bounds.x + 1));
             tasks.x = right.saturating_sub(tasks.width.saturating_add(1));
         }
-        self.with_windows_button(self.windows_button.is_some())
+        self
     }
 
     pub fn with_help_button(mut self, available: bool) -> Self {
         if !available || self.is_compact() {
             self.help_button = None;
-            return self.with_windows_button(self.windows_button.is_some());
+            return self;
         }
         let Some(back) = self.back_button else {
             self.help_button = None;
@@ -240,7 +241,7 @@ impl ShellFrameLayout {
         let x = back.x.saturating_sub(width.saturating_add(1));
         self.help_button =
             (width > 0 && x >= self.bounds.x).then(|| Rect::new(x, back.y, width, back.height));
-        self.with_windows_button(self.windows_button.is_some())
+        self
     }
 
     pub fn with_tasks_button(mut self, label: Option<&str>) -> Self {
@@ -251,29 +252,26 @@ impl ShellFrameLayout {
             let x = next.x.checked_sub(width.saturating_add(1))?;
             (width > 0 && x >= self.bounds.x).then_some(Rect::new(x, next.y, width, next.height))
         });
-        self.with_windows_button(self.windows_button.is_some())
+        self
     }
 
-    pub fn with_windows_button(mut self, available: bool) -> Self {
-        self.windows_button = available
-            .then(|| {
-                let next = self
-                    .tasks_button
-                    .or(self.help_button)
-                    .or(self.back_button)?;
-                let label = i18n::tr!("ui-workspace-button");
-                let width = usize_to_u16(crate::components::terminal_width(&label) + 2)
-                    .min(next.x.saturating_sub(self.bounds.x + 1));
-                let x = next.x.checked_sub(width + 1)?;
-                (width > 0 && x >= self.bounds.x).then_some(Rect::new(x, next.y, width, 1))
-            })
-            .flatten();
+    /// Running windows share the status row, keeping errors and global controls reachable.
+    pub fn with_workspace_taskbar(mut self, available: bool, status_visible: bool) -> Self {
+        if available && self.workspace_taskbar.is_none() {
+            self.workspace_taskbar = self.status_message.take();
+            if status_visible && let Some(taskbar) = self.workspace_taskbar.as_mut() {
+                let width = taskbar.width / 3;
+                self.status_message = Some(Rect::new(taskbar.x, taskbar.y, width, 1));
+                taskbar.x += width;
+                taskbar.width -= width;
+            }
+        }
         self
     }
 
     /// Keep the compact Escape button available even while a shell dialog is open.
     pub fn modal_area(self) -> Rect {
-        if self.is_compact() || self.status_message.is_none() {
+        if self.is_compact() || self.status_message.or(self.workspace_taskbar).is_none() {
             self.main
         } else {
             self.bounds
@@ -281,15 +279,23 @@ impl ShellFrameLayout {
     }
 }
 
-/// PTY and its scrollbar share the compositor's main panel geometry.
+/// PTY viewport on a standalone terminal, with the physical size limit.
 pub fn command_line_terminal_area(area: Rect) -> Option<Rect> {
+    if area.width < crate::MIN_COMMAND_LINE_TERMINAL_WIDTH
+        || area.height < crate::MIN_COMMAND_LINE_TERMINAL_HEIGHT
+    {
+        return None;
+    }
     let layout = ShellFrameLayout::new(area, None, &crate::RenderContext::default());
     command_line_terminal_area_in(&layout)
 }
 
+/// PTY and scrollbar geometry in the compositor, including AppHost virtual layouts.
 pub fn command_line_terminal_area_in(layout: &ShellFrameLayout) -> Option<Rect> {
+    let minimum = workspace_protocol::MIN_CONTENT_SIZE;
     (!layout.is_compact()
-        && layout.bounds.width >= crate::MIN_COMMAND_LINE_TERMINAL_WIDTH
-        && layout.bounds.height >= crate::MIN_COMMAND_LINE_TERMINAL_HEIGHT)
-        .then_some(layout.main)
+        && layout.bounds.width >= minimum.width
+        && layout.bounds.height >= minimum.height + 2
+        && !layout.main.is_empty())
+    .then_some(layout.main)
 }

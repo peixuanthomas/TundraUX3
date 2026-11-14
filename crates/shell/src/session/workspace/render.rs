@@ -15,23 +15,25 @@ impl Workspace {
         text_sizing: bool,
     ) {
         let mut cached_images = HashSet::new();
+        let controls_blocked = controls_blocked || self.has_overlay();
+        if let Some(capture) = capture {
+            capture.set_group("workspace", "toolbar", layout.main, controls_blocked);
+        }
         if self.layout.blocked {
+            let pane = self.blocked_pane();
+            if let Some(pane) = &pane {
+                self.render_pane_frame(frame, pane, context, controls_blocked);
+            }
             ui::render_workspace_resize_notice(
                 frame,
-                layout.main,
+                pane.map_or(layout.main, |pane| pane.content),
                 Size::new(self.width, self.height),
                 self.layout.size_needed,
                 context,
             );
         }
-        let controls_blocked = controls_blocked || self.panel.is_some() || self.wait_for.is_some();
-        if let Some(capture) = capture {
-            capture.set_group("workspace", "toolbar", layout.main, controls_blocked);
-        }
         for pane in &self.layout.panes {
-            let window = &self.windows[&pane.id];
-            let focused = Some(pane.id) == self.selection.focused();
-            ui::render_workspace_pane_title(frame, pane, &window.launch.title(), focused, context);
+            self.render_pane_frame(frame, pane, context, controls_blocked);
         }
         for pane in &self.layout.panes {
             let window = &self.windows[&pane.id];
@@ -124,24 +126,107 @@ impl Workspace {
         });
     }
 
-    pub(in crate::session) fn render_chrome(
+    fn render_pane_frame(
         &self,
         frame: &mut Frame<'_>,
-        layout: &ui::ShellFrameLayout,
+        pane: &WorkspacePaneLayout,
         context: &ui::RenderContext,
+        controls_blocked: bool,
     ) {
-        let state = ui::components::ComponentState {
-            hovered: self.last_pointer.is_some_and(|point| {
-                layout
-                    .windows_button
-                    .is_some_and(|area| area.contains(point.into()))
+        let interaction = WorkspaceWindowButtonsState {
+            hovered: self
+                .last_pointer
+                .filter(|_| self.pointer_hovered && !controls_blocked)
+                .and_then(|point| pane.controls.hit_at(point)),
+            pressed: self.capture.and_then(|capture| match capture.target {
+                PointerTarget::WindowButton(id, action) if id == pane.id => Some(action),
+                _ => None,
             }),
-            active: self.capture.is_some_and(|capture| {
-                capture.target == PointerTarget::Chrome(ChromeAction::Windows)
-            }),
+            close_disabled: self.windows[&pane.id].close != CloseProgress::Idle,
             ..Default::default()
         };
-        ui::render_workspace_chrome_button(frame, layout, context, state);
+        ui::render_workspace_pane_frame(
+            frame,
+            pane,
+            &self.windows[&pane.id].launch.title(),
+            self.selection.focused() == Some(pane.id),
+            self.selection.maximized() == Some(pane.id),
+            interaction,
+            context,
+        );
+    }
+
+    fn taskbar_items(&self) -> Vec<WorkspaceTaskbarItem> {
+        let blocked_window = self.blocked_pane().map(|pane| pane.id);
+        self.windows
+            .iter()
+            .map(|(&id, window)| WorkspaceTaskbarItem {
+                id,
+                title: window.launch.title(),
+                focused: self.selection.focused() == Some(id),
+                minimized: blocked_window != Some(id)
+                    && !self.layout.panes.iter().any(|pane| pane.id == id),
+                closing: window.close != CloseProgress::Idle,
+                unresponsive: window.state == ProcessState::Unresponsive
+                    || window.status.unresponsive,
+            })
+            .collect()
+    }
+
+    pub(in crate::session) fn render_taskbar(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Option<Rect>,
+        context: &ui::RenderContext,
+        capture: Option<&ui::automation::FrameCapture>,
+        controls_blocked: bool,
+    ) {
+        let Some(area) = area else {
+            self.taskbar = None;
+            return;
+        };
+        let items = self.taskbar_items();
+        let focused = self.selection.focused();
+        let mut taskbar = WorkspaceTaskbar::new(area, &items, self.taskbar_scroll);
+        if (self.taskbar_focus != focused
+            || self
+                .taskbar
+                .as_ref()
+                .is_none_or(|previous| previous.area != area))
+            && let Some(id) = focused
+            && !taskbar
+                .hits
+                .iter()
+                .any(|(action, _)| *action == WorkspaceTaskbarAction::Activate(id))
+            && let Some(index) = items.iter().position(|item| item.id == id)
+        {
+            taskbar = WorkspaceTaskbar::new(area, &items, index);
+        }
+        if self
+            .taskbar
+            .as_ref()
+            .is_some_and(|previous| previous.hits != taskbar.hits)
+            && self
+                .capture
+                .is_some_and(|capture| matches!(capture.target, PointerTarget::Taskbar(_)))
+        {
+            self.cancel_capture();
+        }
+        self.taskbar_focus = focused;
+        self.taskbar_scroll = taskbar.scroll;
+        if let Some(capture) = capture {
+            capture.set_group("workspace-taskbar", "toolbar", area, controls_blocked);
+        }
+        let hovered = self
+            .last_pointer
+            .filter(|_| self.pointer_hovered && !controls_blocked)
+            .and_then(|point| taskbar.hit_at(point));
+        let pressed = self.capture.and_then(|capture| match capture.target {
+            PointerTarget::Taskbar(action) => Some(action),
+            _ => None,
+        });
+        ui::render_workspace_taskbar(frame, &taskbar, &items, hovered, pressed, context);
+        self.taskbar = Some(taskbar);
     }
 
     pub(in crate::session) fn render_overlay(
@@ -149,9 +234,14 @@ impl Workspace {
         frame: &mut Frame<'_>,
         context: &ui::RenderContext,
         capture: Option<&ui::automation::FrameCapture>,
+        global_modal: bool,
     ) {
+        if global_modal {
+            self.close_split_menu();
+            return;
+        }
         let available = self.layout.available;
-        let hovered = self.last_pointer;
+        let hovered = self.last_pointer.filter(|_| self.pointer_hovered);
         let pressed = self.capture.and_then(|capture| match capture.target {
             PointerTarget::Overlay(action) => Some(action),
             _ => None,
@@ -160,9 +250,14 @@ impl Workspace {
             && let Some(window) = self.windows.get(&id)
         {
             if let Some(capture) = capture {
-                capture.set_group("workspace", "dialog", available, false);
+                capture.set_group("workspace-overlay", "dialog", available, false);
             }
-            let wait = WorkspaceCloseWait::new(available, &window.launch.title(), id);
+            let wait = WorkspaceCloseWait::new(
+                available,
+                &window.launch.title(),
+                id,
+                matches!(window.close, CloseProgress::Confirmation { .. }),
+            );
             ui::render_workspace_close_wait(
                 frame,
                 &wait,
@@ -210,10 +305,74 @@ impl Workspace {
             self.panel_hits = panel.hits;
         } else {
             self.panel_hits.clear();
+            self.render_split_menu(frame, context, capture);
         }
     }
 
+    fn render_split_menu(
+        &mut self,
+        frame: &mut Frame<'_>,
+        context: &ui::RenderContext,
+        capture: Option<&ui::automation::FrameCapture>,
+    ) {
+        let Some(id) = self.split_window else {
+            return;
+        };
+        let Some(pane) = self
+            .layout
+            .panes
+            .iter()
+            .find(|pane| pane.id == id)
+            .copied()
+            .or_else(|| self.blocked_pane().filter(|pane| pane.id == id))
+        else {
+            self.close_split_menu();
+            return;
+        };
+        self.split_model.mode = self.mode;
+        self.split_model.windows = self
+            .taskbar_items()
+            .into_iter()
+            .filter(|item| item.id != id && item.minimized)
+            .collect();
+        let menu = WorkspaceSplitMenu::new(
+            self.layout.available,
+            pane.controls.split,
+            &self.split_model,
+        );
+        if self
+            .split_menu
+            .as_ref()
+            .is_some_and(|previous| previous.hits != menu.hits)
+            && self
+                .capture
+                .is_some_and(|capture| matches!(capture.target, PointerTarget::Overlay(_)))
+        {
+            self.cancel_capture();
+        }
+        self.split_model.scroll = menu.scroll;
+        self.split_model.hovered = self
+            .last_pointer
+            .filter(|_| self.pointer_hovered)
+            .and_then(|point| menu.hit_at(point));
+        self.split_model.pressed = self.capture.and_then(|capture| match capture.target {
+            PointerTarget::Overlay(action) => Some(action),
+            _ => None,
+        });
+        if let Some(capture) = capture {
+            capture.set_group("workspace-split", "toolbar", menu.area, false);
+        }
+        if self.panel_key_focus {
+            ui::render_workspace_split_menu(frame, &menu, &self.split_model, context);
+        } else {
+            let mut model = self.split_model.clone();
+            model.focused = None;
+            ui::render_workspace_split_menu(frame, &menu, &model, context);
+        }
+        self.split_menu = Some(menu);
+    }
+
     pub(in crate::session) fn has_overlay(&self) -> bool {
-        self.panel.is_some() || self.wait_for.is_some()
+        self.panel.is_some() || self.wait_for.is_some() || self.split_window.is_some()
     }
 }

@@ -20,9 +20,11 @@ Pages render only the content in `ShellFrameLayout.main` and their own overlays.
 
 The global title bar exposes Tasks for logged-in non-guest users, including running and awaiting-approval status. Title and status bars each use one row; Tasks, Help, Back, the clock, and the screen-keyboard entry share their actual render and hit-test geometry.
 
-The Windows panel and its title-bar entry use the same rectangles for painting and interaction. The panel shows foreground and background windows, their content minimums, and windows that are closing or unresponsive. Closing and force-killing remain available when the terminal cannot fit the workspace. F1 help lists the workspace shortcuts.
+Each app window has a complete frame. Its top edge shows the title and buttons for minimizing, toggling full screen, splitting, and closing. The split button opens a menu anchored at the window for selecting a layout, adding a new app, or bringing a background app into the split. The bottom window bar uses the left side of the status row. Its buttons switch to running apps and restore minimized ones. Arrows scroll the bar when its titles cannot all fit.
 
-A single pane uses all available content rows below the global title. Split panes add a title row and a one-cell gap between panes. Left/right and top/bottom layouts fit two panes when space permits. Grid capacity grows with the terminal, and the last row distributes its width among the windows it holds. All live windows contribute to the minimum content size, including those in the background.
+Window controls and menus share their painting and hit-test geometry. At the 108×20 terminal minimum, the global title and status rows and the four window edges leave a 106×16 content area for an app. A one-cell gap separates split windows. Left/right and top/bottom layouts fit two panes when space permits. Grid capacity grows with the terminal, and the last row distributes its width among the windows it holds.
+
+All live windows contribute to the minimum content size, including those in the background. If the workspace cannot fit, the focused window keeps its controls and shows a resize notice. The advanced window panel opens with Ctrl+B then W and can close or force-kill windows while the workspace is too small. F1 help lists the keyboard controls.
 
 App-host frames carry content in pane-local coordinates. Composition translates and clips cells, controls, and sensitive areas together. Only the focused pane keeps the existing automation IDs. The composed snapshot masks sensitive text in every visible pane.
 
@@ -61,7 +63,7 @@ Enter moves to the next field and submits from the last field; Space or a tap to
 
 Selection dialogs keep this extended scrollbar hit area clear of option rows and the Close button, including the last row of long paths.
 
-Ordinary workspaces use headings, backgrounds, and whitespace instead of complete frames. Navigation entries and table rows use one line. Shared spacing is one row between groups, two columns between groups, and one cell between grid items; full rows remain clickable. A modal, menu, or input may retain one boundary.
+Inside app windows, pages use headings, backgrounds, and whitespace to separate content. Navigation entries and table rows use one line. Shared spacing is one row between groups, two columns between groups, and one cell between grid items; full rows remain clickable. A modal, menu, or input may retain one boundary.
 
 ### Page controls
 

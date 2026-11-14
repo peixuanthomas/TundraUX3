@@ -1,10 +1,10 @@
 use ratatui::layout::Rect;
-use ui::{WorkspaceLayout, WorkspaceSplitMode};
+use ui::{WorkspaceLayout, WorkspacePaneLayout, WorkspaceSplitMode, WorkspaceWindowAction};
 use workspace_protocol::{SessionId, Size};
 
 const MINIMUM: Size = Size {
-    width: 108,
-    height: 18,
+    width: 106,
+    height: 16,
 };
 
 fn areas(width: u16, height: u16) -> (Rect, Rect) {
@@ -22,7 +22,9 @@ fn grid_capacity_follows_terminal_size() {
         (180, 50, 2),
         (217, 41, 4),
         (240, 50, 4),
-        (360, 80, 9),
+        (360, 76, 9),
+        (360, 77, 12),
+        (360, 80, 12),
     ] {
         let (terminal, available) = areas(width, height);
         assert_eq!(
@@ -38,7 +40,7 @@ fn grid_capacity_follows_terminal_size() {
 }
 
 #[test]
-fn single_pane_uses_the_global_title_and_retains_the_baseline() {
+fn single_pane_reserves_all_four_window_edges_at_the_terminal_minimum() {
     let (terminal, available) = areas(108, 20);
     let id = SessionId(1);
     let layout = WorkspaceLayout::new(
@@ -52,8 +54,21 @@ fn single_pane_uses_the_global_title_and_retains_the_baseline() {
     assert!(!layout.blocked);
     assert_eq!(layout.panes.len(), 1);
     assert_eq!(layout.panes[0].id, id);
-    assert_eq!(layout.panes[0].title, None);
-    assert_eq!(layout.panes[0].content, available);
+    let pane = layout.panes[0];
+    assert_eq!(pane.area, available);
+    assert_eq!(pane.content, Rect::new(1, 2, 106, 16));
+    assert_eq!(pane.title.unwrap().y, pane.area.y);
+    assert!(pane.controls.close.right() < pane.area.right());
+    for area in [
+        pane.controls.minimize,
+        pane.controls.maximize,
+        pane.controls.split,
+        pane.controls.close,
+    ] {
+        assert_eq!(area.height, 1);
+        assert_eq!(area.y, pane.area.y);
+        assert!(area.intersection(pane.content).is_empty());
+    }
 }
 
 #[test]
@@ -71,7 +86,8 @@ fn axis_modes_have_two_slots_or_keep_one_full_pane() {
     );
     assert_eq!(horizontal.capacity, 1);
     assert_eq!(horizontal.panes[0].id, SessionId(2));
-    assert_eq!(horizontal.panes[0].content, available);
+    assert_eq!(horizontal.panes[0].area, available);
+    assert_eq!(horizontal.panes[0].content, Rect::new(1, 2, 178, 46));
 
     let vertical = WorkspaceLayout::new(
         terminal,
@@ -82,10 +98,10 @@ fn axis_modes_have_two_slots_or_keep_one_full_pane() {
         WorkspaceSplitMode::TopBottom,
     );
     assert_eq!(vertical.capacity, 2);
-    assert_eq!(vertical.panes[0].title, Some(Rect::new(0, 1, 180, 1)));
-    assert_eq!(vertical.panes[0].content, Rect::new(0, 2, 180, 23));
-    assert_eq!(vertical.panes[1].title, Some(Rect::new(0, 26, 180, 1)));
-    assert_eq!(vertical.panes[1].content, Rect::new(0, 27, 180, 22));
+    assert_eq!(vertical.panes[0].area, Rect::new(0, 1, 180, 24));
+    assert_eq!(vertical.panes[0].content, Rect::new(1, 2, 178, 22));
+    assert_eq!(vertical.panes[1].area, Rect::new(0, 26, 180, 23));
+    assert_eq!(vertical.panes[1].content, Rect::new(1, 27, 178, 21));
 
     let (terminal, available) = areas(360, 80);
     for mode in [WorkspaceSplitMode::LeftRight, WorkspaceSplitMode::TopBottom] {
@@ -109,10 +125,10 @@ fn grid_picks_the_more_square_shape_and_spreads_the_last_row() {
         None,
         WorkspaceSplitMode::Grid,
     );
-    assert_eq!(layout.panes[0].title, Some(Rect::new(0, 1, 163, 1)));
-    assert_eq!(layout.panes[1].title, Some(Rect::new(164, 1, 163, 1)));
-    assert_eq!(layout.panes[2].title, Some(Rect::new(0, 33, 327, 1)));
-    assert_eq!(layout.panes[2].content, Rect::new(0, 34, 327, 29));
+    assert_eq!(layout.panes[0].area, Rect::new(0, 1, 163, 31));
+    assert_eq!(layout.panes[1].area, Rect::new(164, 1, 163, 31));
+    assert_eq!(layout.panes[2].area, Rect::new(0, 33, 327, 30));
+    assert_eq!(layout.panes[2].content, Rect::new(1, 34, 325, 28));
 }
 
 #[test]
@@ -150,7 +166,7 @@ fn grid_breaks_shape_ties_with_fewer_unused_slots_and_then_fewer_rows() {
         square.panes[0].title.unwrap().y,
         square.panes[2].title.unwrap().y
     );
-    assert_eq!(square.panes[0].title.unwrap().width, 146);
+    assert_eq!(square.panes[0].area.width, 146);
 }
 
 #[test]
@@ -214,10 +230,65 @@ fn hidden_windows_contribute_to_both_global_minimum_dimensions() {
     assert_eq!(
         layout.size_needed,
         Size {
-            width: 240,
-            height: 56
+            width: 242,
+            height: 58
         }
     );
     assert_eq!(layout.available, available);
     assert!(layout.panes.is_empty());
+}
+
+#[test]
+fn size_blocked_workspace_can_still_show_window_controls() {
+    let id = SessionId(4);
+    let (terminal, available) = areas(108, 20);
+    let strict = Size {
+        width: 108,
+        height: 18,
+    };
+    let layout = WorkspaceLayout::new(
+        terminal,
+        available,
+        &[(id, strict)],
+        &[id],
+        Some(id),
+        WorkspaceSplitMode::Grid,
+    );
+    assert!(layout.blocked && layout.panes.is_empty());
+    assert_eq!(
+        layout.size_needed,
+        Size {
+            width: 110,
+            height: 22,
+        }
+    );
+    for area in [available, Rect::new(3, 4, 21, 3)] {
+        let pane = WorkspacePaneLayout::for_blocked_window(id, area).unwrap();
+        let close = pane.controls.close;
+        assert_eq!(pane.content.width, area.width - 2);
+        assert_eq!(close.intersection(area), close);
+        assert_eq!(
+            pane.controls.hit_at((close.x, close.y)),
+            Some(WorkspaceWindowAction::Close)
+        );
+    }
+    assert!(WorkspacePaneLayout::for_blocked_window(id, Rect::new(0, 1, 20, 18)).is_none());
+    assert!(WorkspacePaneLayout::for_blocked_window(id, Rect::new(0, 1, 108, 2)).is_none());
+}
+
+#[test]
+fn split_capacity_requires_space_for_all_window_edges_and_the_gap() {
+    let windows = [(SessionId(1), MINIMUM), (SessionId(2), MINIMUM)];
+    for (width, height, mode, capacity) in [
+        (216, 20, WorkspaceSplitMode::LeftRight, 1),
+        (217, 20, WorkspaceSplitMode::LeftRight, 2),
+        (108, 38, WorkspaceSplitMode::TopBottom, 1),
+        (108, 39, WorkspaceSplitMode::TopBottom, 2),
+    ] {
+        let (terminal, available) = areas(width, height);
+        assert_eq!(
+            WorkspaceLayout::capacity(terminal, available, &windows, mode),
+            capacity
+        );
+    }
 }

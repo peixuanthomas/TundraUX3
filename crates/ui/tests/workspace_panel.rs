@@ -109,29 +109,42 @@ fn size_blocked_panel_keeps_background_windows_and_danger_action_accessible() {
 
 #[test]
 fn close_wait_renders_wait_and_force_kill_with_shared_hit_regions() {
-    let area = Rect::new(0, 1, 80, 10);
-    let wait = WorkspaceCloseWait::new(area, "编辑器 e\u{0301}", BACKGROUND);
-    let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
-    let mut snapshot = None;
-    terminal
-        .draw(|frame| {
-            let capture = FrameCapture::begin(frame.area(), "workspace");
-            render_workspace_close_wait(frame, &wait, None, None, None, &RenderContext::default());
-            snapshot = Some(capture.finish(frame.buffer_mut()));
-        })
-        .unwrap();
-    let snapshot = snapshot.unwrap();
-    for action in [
-        WorkspaceAction::Dismiss,
-        WorkspaceAction::ForceKill(BACKGROUND),
+    let area = Rect::new(0, 1, 108, 18);
+    let mut terminal = Terminal::new(TestBackend::new(108, 20)).unwrap();
+    for (size_blocked, phrase) in [
+        (false, "Cleanup is still running."),
+        (true, "This window needs a larger terminal"),
     ] {
-        let (_, area) = wait.hits.iter().find(|(hit, _)| *hit == action).unwrap();
-        assert_eq!(wait.hit_at((area.x, area.y)), Some(action));
-        let node = snapshot
-            .nodes
-            .iter()
-            .find(|node| node.id.ends_with(&action.id()))
+        let wait = WorkspaceCloseWait::new(area, "编辑器 e\u{0301}", BACKGROUND, size_blocked);
+        let mut snapshot = None;
+        terminal
+            .draw(|frame| {
+                let capture = FrameCapture::begin(frame.area(), "workspace");
+                render_workspace_close_wait(
+                    frame,
+                    &wait,
+                    None,
+                    None,
+                    None,
+                    &RenderContext::default(),
+                );
+                snapshot = Some(capture.finish(frame.buffer_mut()));
+            })
             .unwrap();
-        assert_eq!(node.focused, action == WorkspaceAction::Dismiss);
+        let snapshot = snapshot.unwrap();
+        assert!(snapshot.lines.join("\n").contains(phrase));
+        for action in [
+            WorkspaceAction::Dismiss,
+            WorkspaceAction::ForceKill(BACKGROUND),
+        ] {
+            let (_, area) = wait.hits.iter().find(|(hit, _)| *hit == action).unwrap();
+            assert_eq!(wait.hit_at((area.x, area.y)), Some(action));
+            let node = snapshot
+                .nodes
+                .iter()
+                .find(|node| node.id.ends_with(&action.id()))
+                .unwrap();
+            assert_eq!(node.focused, action == WorkspaceAction::Dismiss);
+        }
     }
 }

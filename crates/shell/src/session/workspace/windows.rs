@@ -4,8 +4,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 impl Workspace {
     pub(in crate::session) fn poll(&mut self, state: &mut ShellSession) -> io::Result<bool> {
         let mut redraw = false;
-        self.connection.progress()?;
-        while let Some(message) = self.connection.try_recv()? {
+        let connection = WorkerConnection::current().expect("managed workspace");
+        connection.progress()?;
+        while let Some(message) = connection.try_recv()? {
             match message {
                 SupervisorToWorker::AppStarted {
                     worker,
@@ -19,7 +20,7 @@ impl Workspace {
                         && window.worker.is_none_or(|current| current == worker)
                     {
                         window.worker = Some(worker);
-                        match self.connection.connect_app(worker, pid, &endpoint) {
+                        match connection.connect_app(worker, pid, &endpoint) {
                             Ok(stream) => window.stream = Some(stream),
                             Err(error) => {
                                 report_launch_failure(state, error.to_string());
@@ -144,9 +145,7 @@ impl Workspace {
                 )
             })
         {
-            self.cancel_capture();
-            self.wait_for = Some(id);
-            self.modal_focus = Some(Action::Dismiss);
+            self.show_close_wait(id);
             redraw = true;
         }
 
@@ -222,10 +221,12 @@ impl Workspace {
             image_cell_size: self.image_cell_size,
             text_sizing: self.text_sizing,
         };
-        self.connection.send(WorkerToSupervisor::SpawnApp {
-            session: id,
-            application: launch.id().into(),
-        })?;
+        WorkerConnection::current()
+            .expect("managed workspace")
+            .send(WorkerToSupervisor::SpawnApp {
+                session: id,
+                application: launch.id().into(),
+            })?;
         self.cancel_capture();
         self.selection.open(id);
         self.windows.insert(
@@ -250,13 +251,38 @@ impl Workspace {
         Ok(id)
     }
 
-    fn remove(&mut self, id: SessionId) {
+    pub(super) fn remove(&mut self, id: SessionId) {
         let focused = self.selection.focused() == Some(id);
         self.input_fences.remove(&id);
         self.input_recipients.remove(&id);
         self.task_catalogs.remove(&id);
         self.windows.remove(&id);
-        self.selection.background(id);
+        self.layout.panes.retain(|pane| pane.id != id);
+        if let Some(taskbar) = &mut self.taskbar {
+            taskbar
+                .hits
+                .retain(|(action, _)| *action != WorkspaceTaskbarAction::Activate(id));
+        }
+        self.panel_hits.retain(|(action, _)| {
+            !matches!(
+                action,
+                Action::Select(window)
+                    | Action::Switch(window)
+                    | Action::Show(window)
+                    | Action::Background(window)
+                    | Action::Maximize(window)
+                    | Action::Close(window)
+                    | Action::ForceKill(window)
+                    if *window == id
+            )
+        });
+        if let Some(menu) = &mut self.split_menu {
+            menu.hits.retain(|(action, _)| *action != Action::Show(id));
+        }
+        self.selection.remove(id);
+        if self.split_window == Some(id) {
+            self.close_split_menu();
+        }
         if let Some((task, previous)) = self.tasks_return
             && task == id
         {
@@ -265,9 +291,7 @@ impl Workspace {
                 self.selection.switch(previous);
             }
         }
-        if self.wait_for == Some(id) {
-            self.wait_for = None;
-        }
+        self.hide_close_wait(id);
         if let Some(panel) = &mut self.panel
             && panel.selected == Some(id)
         {
@@ -366,17 +390,21 @@ impl Workspace {
                 if window.frame.as_ref() == Some(&frame) {
                     return Ok(false);
                 }
-                if window
+                let modal_changed = window
                     .frame
                     .as_ref()
-                    .is_some_and(|old| old.modal != frame.modal)
-                {
-                    window.queued.push_back(ShellToApp::CancelPointer {
-                        layout: self.generation,
-                    });
-                    self.capture = None;
-                }
+                    .is_some_and(|old| old.modal != frame.modal);
                 window.frame = Some(frame);
+                if modal_changed
+                    && self.capture.is_some_and(|capture| match capture.target {
+                        PointerTarget::Pane(target)
+                        | PointerTarget::PaneFrame(target)
+                        | PointerTarget::WindowButton(target, _) => target == id,
+                        _ => false,
+                    })
+                {
+                    self.cancel_capture();
+                }
             }
             AppToShell::InputFence { serial } => {
                 if self
@@ -413,29 +441,27 @@ impl Workspace {
                 }
             }
             AppToShell::BackgroundRequested => {
-                self.selection.background(id);
+                self.selection.minimize(id);
                 self.cancel_capture();
             }
             AppToShell::CloseRequested => {
                 self.request_close(id);
             }
             AppToShell::CloseDeferred => {
-                window.close = CloseProgress::Confirmation;
+                window.close = CloseProgress::Confirmation {
+                    size_notice_dismissed: false,
+                };
                 if self.pending_global.is_some() && self.selection.focused() != Some(id) {
                     self.selection.switch(id);
                 }
-                if self.wait_for == Some(id) {
-                    self.wait_for = None;
-                }
+                self.hide_close_wait(id);
             }
             AppToShell::CloseStarted => {
                 window.close = CloseProgress::Cleaning(Instant::now());
             }
             AppToShell::CloseCancelled => {
                 window.close = CloseProgress::Idle;
-                if self.wait_for == Some(id) {
-                    self.wait_for = None;
-                }
+                self.hide_close_wait(id);
                 self.pending_global = None;
                 self.pending_update = None;
                 self.reset = false;
@@ -443,9 +469,7 @@ impl Workspace {
             AppToShell::Closed => {
                 window.finish_cleanup();
                 self.input_fences.remove(&id);
-                if self.wait_for == Some(id) {
-                    self.wait_for = None;
-                }
+                self.hide_close_wait(id);
             }
             AppToShell::LaunchFailed(reason) => {
                 window.launch_error = true;
@@ -530,9 +554,10 @@ impl Workspace {
         window.close = CloseProgress::Requested(Instant::now());
         window.queued.push_back(ShellToApp::RequestClose);
         if self.selection.focused() != Some(id) {
-            self.selection.switch(id);
+            self.selection.activate(id, self.layout.capacity);
         }
         self.panel = None;
+        self.close_split_menu();
         self.cancel_capture();
     }
 
@@ -541,16 +566,15 @@ impl Workspace {
             return Ok(());
         };
         if let Some(worker) = window.worker {
-            self.connection
+            WorkerConnection::current()
+                .expect("managed workspace")
                 .send(WorkerToSupervisor::ForceKill { worker })?;
             window.state = ProcessState::ForceStopping;
         } else {
             window.force_when_started = true;
         }
         window.close = CloseProgress::Waiting;
-        if self.wait_for == Some(id) {
-            self.wait_for = None;
-        }
+        self.hide_close_wait(id);
         self.cancel_capture();
         Ok(())
     }

@@ -57,12 +57,14 @@ Logged-in non-guest users can open Tasks from the global title bar. Background q
 
 ## Windows
 
-Use **Windows** in the title bar or press **Ctrl+B**, then **W**. The panel lists visible and background windows, their minimum content size, and actions to switch, add to a split, close, or force kill. Opening an application normally uses the focused slot and moves the previous window to the background. **Add window** opens Home to choose a new application for the split. The side-by-side and stacked layouts fit two windows. Grid adjusts to the available cells.
+Every app has a frame with its title and **Minimize**, **Full screen** or **Restore**, **Split**, and **Close** controls. Click a window in the bottom bar to focus or restore it. A minimized window returns to its previous position when the split has room. When the split is full, restoring it uses the focused slot.
+
+**Split** opens a menu beside the window. Choose side by side, stacked, or grid, then choose a background window or **Add window** to open another app from Home. The side-by-side and stacked layouts fit two windows. Grid adjusts to the available cells. A regular app launch uses the focused slot and moves the previous app to the background.
 
 | After Ctrl+B | Action |
 | --- | --- |
 | B | Move the focused window to the background |
-| W | Toggle the Windows panel |
+| W | Open the advanced window list and process controls |
 | L | Cycle the layout |
 | Z | Maximize the focused window or restore its split |
 | Arrow keys | Focus a neighboring window |
@@ -74,7 +76,7 @@ Esc first dismisses an active dialog or menu. On an ordinary application page, i
 
 Closing a window prompts for unsaved changes or running tasks. If cleanup still runs after two seconds, the Shell offers **Keep waiting** and **Force kill**. A force kill goes directly to the watchdog.
 
-The global title and status bars each occupy one row. Window content needs at least 108 × 18 cells, plus a title row and spacing for splits. Resize hides windows that no longer fit and restores them when room returns. Windows deliberately moved to the background stay there. If the terminal is smaller than the minimum of any open window, application input and rendering are suspended while window management remains available.
+The terminal minimum is 108 × 20 cells. The global title and bottom bars each occupy one row, and a window frame reserves one cell on each edge. Built-in app content can use the remaining 106 × 16 cells. Resizing temporarily hides windows that no longer fit. A minimized window stays in the bottom bar until restored. When a running app's minimum exceeds the terminal size, window controls remain available and app content is paused. Enlarge the terminal if a normal close needs to display a save or task confirmation.
 
 Embedded terminals can raise their window minimum while running. The workspace uses the largest reported dimensions across all live windows, including the background. A window leaves this calculation when the watchdog confirms it has exited.
 

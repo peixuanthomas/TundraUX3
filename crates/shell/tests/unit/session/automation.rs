@@ -149,7 +149,7 @@ fn text_is_one_paste_event_and_coordinates_are_checked() {
         ),
         Err("target_unavailable")
     );
-    small.nodes[0].id = "chrome/shell.windows".into();
+    small.nodes[0].id = "workspace-taskbar/taskbar/workspace.taskbar.1".into();
     assert!(
         action_events(
             &Action::Key {

@@ -166,10 +166,7 @@ impl CommandLineHost {
     }
 
     pub fn resize_terminal(&mut self, columns: u16, rows: u16) {
-        // The caller has already validated the outer Shell layout.  These are
-        // the dimensions of the inner, bordered terminal panel, so comparing
-        // them with the larger outer-terminal minimum would reject every
-        // valid Command Line window (108x22 maps to 106x14).
+        // The drawable viewport already accounts for the window frame, scrollbar and keyboard.
         if columns == 0 || rows == 0 {
             return;
         }
